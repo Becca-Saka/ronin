@@ -3,6 +3,7 @@ Manages Appium server lifecycle and device connection session.
 Supports starting Appium programmatically, checking platforms, and screen recording.
 """
 
+import logging
 import os
 import time
 from pathlib import Path
@@ -13,6 +14,8 @@ from appium.webdriver.appium_service import AppiumService
 from device.adb_control import AdbControl
 from device.device_control import DeviceControl
 from utils.platform_checks import run_ios_preflight, validate_app_path_for_platform
+
+logger = logging.getLogger(__name__)
 
 
 class DeviceSession:
@@ -57,18 +60,18 @@ class DeviceSession:
         self._appium_args = {
             "host": host,
             "port": port,
-            "args": ["--log", "/tmp/ai_e2e_appium.log"],
+            "args": ["--log", "/tmp/ronin_appium.log"],
         }
 
     def _start_appium(self):
         if self._appium_service.is_running:
-            print("Appium already running")
+            logger.info("Appium already running")
             return
-        print("Starting Appium...")
+        logger.info("Starting Appium...")
         self._appium_service.start(**self._appium_args)
         if not self._appium_service.is_running:
-            raise RuntimeError("Appium failed to start. See /tmp/ai_e2e_appium.log")
-        print("Appium started")
+            raise RuntimeError("Appium failed to start. See /tmp/ronin_appium.log")
+        logger.info("Appium started")
 
     def start(self, is_headless: bool = False) -> DeviceControl:
         self._start_appium()
@@ -94,7 +97,7 @@ class DeviceSession:
             session_path = self.session_dir / f"session_{self.session_id}.mp4"
             self.device_control.stop_recording(session_path)
             self.is_recording = False
-            print(f"Session recording saved to {session_path}")
+            logger.info("Session recording saved to %s", session_path)
         if self.device_control:
             self.device_control.quit()
         if self._appium_service.is_running:

@@ -4,6 +4,7 @@ Encapsulates driver initialization, screenshots, and gesture/input execution.
 """
 
 import base64
+import logging
 import time
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from selenium.webdriver.common.actions.action_builder import ActionBuilder
 from selenium.webdriver.common.actions.pointer_input import PointerInput
 
 from device.adb_control import AdbControl
+
+logger = logging.getLogger(__name__)
 
 
 class DeviceControl:
@@ -61,8 +64,8 @@ class DeviceControl:
         size = self.driver.get_window_size()
         raw = self.driver.capabilities.get("pixelRatio", 1)
         pixel_ratio = float(str(raw)[:5])
-        print(
-            f"Screen: {size['width']}x{size['height']} dp | Pixel ratio: {pixel_ratio}"
+        logger.info(
+            "Screen: %sx%s dp | Pixel ratio: %s", size['width'], size['height'], pixel_ratio
         )
         self.device_name = self.driver.capabilities.get("deviceName")
         self.platform_name = self.driver.capabilities.get("platformName")
@@ -71,10 +74,10 @@ class DeviceControl:
         self.screen_width = size["width"]
         self.screen_height = size["height"]
         self.pixel_ratio = pixel_ratio
-        print("Device:", self.device_name)
-        print("Platform:", self.platform_name)
-        print("OS Version:", self.os_version)
-        print("Model:", self.model)
+        logger.info(
+            "Device connected. Name: %s, Platform: %s, OS Version: %s, Model: %s",
+            self.device_name, self.platform_name, self.os_version, self.model
+        )
 
     def get_screenshot(self):
         return self.driver.get_screenshot_as_png()
@@ -89,7 +92,7 @@ class DeviceControl:
             builder.pointer_action.release()
             builder.perform()
         except Exception as e:
-            print(f"  ↳ Failed to tap at ({x}, {y}): {e}")
+            logger.error("Failed to tap at (%s, %s): %s", x, y, e)
             return False
         return True
 
@@ -170,5 +173,5 @@ class DeviceControl:
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(base64.b64decode(raw))
-        print(f"  ↳ recording saved → {path}")
+        logger.info("Recording saved to %s", path)
         return path

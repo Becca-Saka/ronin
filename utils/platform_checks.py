@@ -1,8 +1,10 @@
-# device/platform_checks.py
+import logging
 import platform
 import subprocess
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 class PlatformError(Exception):
@@ -41,12 +43,10 @@ def install_xcode_cli():
     and the headless softwareupdate path for CI/SSH environments.
     """
     # Try the standard interactive install first
-    print("\n" + "=" * 60)
-    print("  Xcode Command Line Tools not found.")
-    print("  A system dialog will appear asking you to install them.")
-    print("  Please click 'Install' and accept the license agreement.")
-    print("  This may take 5-10 minutes.")
-    print("=" * 60 + "\n")
+    logger.warning("Xcode Command Line Tools not found.")
+    logger.warning("A system dialog will appear asking you to install them.")
+    logger.warning("Please click 'Install' and accept the license agreement.")
+    logger.warning("This may take 5-10 minutes.")
 
     confirm = input("Press Enter to continue or type 'skip' to abort: ").strip().lower()
     if confirm == "skip":
@@ -56,16 +56,16 @@ def install_xcode_cli():
 
     if result.returncode != 0 and "already installed" not in result.stderr:
         # Fall back to headless softwareupdate (works over SSH/CI)
-        print("GUI install unavailable, trying headless install via softwareupdate...")
+        logger.info("GUI install unavailable, trying headless install via softwareupdate...")
         _install_xcode_headless()
 
     # Block until installed (poll every 5s)
     import time
 
-    print("Waiting for Xcode CLI tools installation to complete...")
+    logger.info("Waiting for Xcode CLI tools installation to complete...")
     for _ in range(120):  # wait up to 10 minutes
         if is_xcode_installed():
-            print("✓ Xcode Command Line Tools installed successfully.")
+            logger.info("✓ Xcode Command Line Tools installed successfully.")
             return
         time.sleep(5)
 
@@ -95,7 +95,7 @@ def _install_xcode_headless():
                 "Please install manually: xcode-select --install"
             )
 
-        print(f"Installing: {package}")
+        logger.info("Installing: %s", package)
         subprocess.run(["softwareupdate", "-i", package, "--verbose"], check=True)
     finally:
         marker.unlink(missing_ok=True)
@@ -104,8 +104,8 @@ def _install_xcode_headless():
 def ensure_xcode():
     """Check for Xcode CLI tools and install if missing."""
     if is_xcode_installed():
-        print(
-            f"✓ Xcode CLI tools found at: {_run(['xcode-select', '-p']).stdout.strip()}"
+        logger.info(
+            "Xcode CLI tools found at: %s", _run(['xcode-select', '-p']).stdout.strip()
         )
         return
     install_xcode_cli()

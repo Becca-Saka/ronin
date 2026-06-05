@@ -8,6 +8,7 @@ This module processes device screenshots using:
 """
 
 import io
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import easyocr
@@ -16,6 +17,8 @@ from huggingface_hub import hf_hub_download
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel
 from ultralytics import YOLO
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -45,14 +48,14 @@ OCR_RELEVANT_TYPES = {"Text", "Button", "EditText"}
 
 class ImageDescriptor:
     def __init__(self):
-        print("Loading deki-yolo model...")
+        logger.info("Loading deki-yolo model...")
         model_path = hf_hub_download(repo_id="orasul/deki-yolo", filename="best.pt")
         self.yolo = YOLO(model_path)
         self.names = self.yolo.names
-        print("✓ Model loaded")
-        print("Loading EasyOCR...")
+        logger.info("✓ Model loaded")
+        logger.info("Loading EasyOCR...")
         self.reader = easyocr.Reader(["en"], gpu=False)
-        print("✓ OCR loaded")
+        logger.info("✓ OCR loaded")
 
     def describe(
         self,

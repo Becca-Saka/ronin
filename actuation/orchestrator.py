@@ -1,7 +1,10 @@
+import logging
 import time
 
 from actuation.actions import ActionPlan, ActionType
 from device.device_control import DeviceControl
+
+logger = logging.getLogger(__name__)
 
 
 class ActionOrchestrator:
@@ -10,7 +13,7 @@ class ActionOrchestrator:
 
     def orchestrate(self, action_plan: ActionPlan):
         for action in action_plan.actions:
-            print(f"Executing action: {action.type} because {action.reason}")
+            logger.info("Executing action: %s because %s", action.type, action.reason)
             match action.type:
                 case ActionType.TYPE:
                     coordinates = action.coordinates

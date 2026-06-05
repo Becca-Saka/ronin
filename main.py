@@ -9,8 +9,10 @@ This module coordinates:
 5. Executing those actions programmatically on the mobile device.
 """
 
+import argparse
 import io
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -24,6 +26,8 @@ from device.device_session import DeviceSession
 from llm.llm_client import LLMClient
 from llm.messages import ImageMessage, Message
 from perception.perception import ScreenPerception
+
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env
 load_dotenv()
@@ -71,6 +75,7 @@ def format_elements_for_prompt(elements) -> str:
 
 def main():
     """Main function executing the perception-planning-actuation loop."""
+
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         raise EnvironmentError("OPENROUTER_API_KEY is not set")
@@ -98,18 +103,19 @@ def main():
         clean_timestamp = time.strftime("%Y%m%d_%H%M%S")
         filepath = assets_dir / f"annotated_img_{clean_timestamp}.png"
         annotated_img.save(filepath)
-        print(f"  ↳ saved → {filepath}")
+        logger.info("Saved annotated image to %s", filepath)
 
-        for el in gui_elements:
-            print(
-                f"{el.element:20} {el.text:20} {el.confidence:20} {str(el.bounding_box):20} {el.type:20}"
-            )
+        elements_summary = "\n".join(
+            f"{el.element:20} {el.text:20} {el.confidence:20} {str(el.bounding_box):20} {el.type:20}"
+            for el in gui_elements
+        )
+        logger.info("Detected GUI Elements:\n%s", elements_summary)
 
         buf = io.BytesIO()
         annotated_img.save(buf, format="PNG")
         annotated_img_bytes = buf.getvalue()
 
-        print("Generating task plan...")
+        logger.info("Generating task plan...")
         task_plan: TaskPlan = llm.generate_response(
             [
                 ImageMessage(
@@ -124,7 +130,7 @@ Using the image attached, convert the user raw instruction into a precise sequen
             ],
             TaskPlan,
         )
-        print(f"Got task plan: {task_plan}")
+        logger.info("Got task plan: %s", task_plan)
 
         actions: ActionPlan = llm.generate_response(
             [
@@ -147,16 +153,32 @@ Using the image attached, convert the user raw instruction into a precise sequen
             ],
             ActionPlan,
         )
-        print(f"Got actions: {actions}")
+        logger.info("Got actions: %s", actions)
 
-        print("Executing Actions...")
+        logger.info("Executing Actions...")
         ActionOrchestrator(device_control).orchestrate(actions)
         time.sleep(3)
-        print("Task completed successfully!")
+        logger.info("Task completed successfully!")
 
     finally:
         session.close()
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Ronin E2E mobile testing agent")
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set the logging level (default: INFO)"
+    )
+    args = parser.parse_args()
+
+    numeric_level = getattr(logging, args.log_level.upper(), None)
+    logging.basicConfig(
+        level=numeric_level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        force=True
+    )
+
     main()

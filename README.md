@@ -1,4 +1,4 @@
-# ai_e2e
+# Ronin
 
 AI-driven Mobile (Android and iOS) end-to-end testing agent capable of automatically controlling any mobile application.
 
@@ -101,6 +101,11 @@ You can execute the automation script to start the session. Update the configura
 
 ```bash
 uv run python main.py
+```
+
+You can optionally override the log level via the CLI (choices: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`):
+```bash
+uv run python main.py --log-level DEBUG
 ```
 
 ### Configuring main.py

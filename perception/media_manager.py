@@ -1,9 +1,12 @@
 import io
+import logging
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
 from device.device_control import DeviceControl
+
+logger = logging.getLogger(__name__)
 
 CLASS_COLORS = {
     "View": "blue",
@@ -38,7 +41,7 @@ class MediaManager:
         screenshot_dir.mkdir(parents=True, exist_ok=True)
         filepath = screenshot_dir / f"{name}.png"
         Image.open(io.BytesIO(png_bytes)).save(filepath)
-        print(f"  ↳ saved → {screenshot_dir}/{name}.png")
+        logger.info("Saved screenshot to %s/%s.png", screenshot_dir, name)
 
     def capture_screenshot(
         self,

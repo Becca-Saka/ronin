@@ -1,6 +1,9 @@
+import logging
 import os
 import re
 import subprocess
+
+logger = logging.getLogger(__name__)
 
 
 class AdbControl:
@@ -34,7 +37,7 @@ class AdbControl:
 
     def get_apk_info(self, apk_path):
         aapt = self.find_aapt()
-        print(f"aapt: {aapt}")
+        logger.info("Using aapt at: %s", aapt)
         result = subprocess.run(
             [aapt, "dump", "badging", apk_path], capture_output=True, text=True
         )
@@ -66,7 +69,7 @@ class AdbControl:
                 else self.base_system + ["pointer_location", "0"]
             )
             self.run_adb_command(command)
-            print(f"Pointer location {'enabled' if enabled else 'disabled'}")
+            logger.info("Pointer location %s", 'enabled' if enabled else 'disabled')
         except Exception as e:
             raise RuntimeError(f"Failed to toggle pointer location: {e}")
 
