@@ -57,7 +57,7 @@ appium driver list --installed
 ```
 
 ### 2. Install Python Dependencies
-Sync all python packages specified in [pyproject.toml](file:///Users/becca/StudioProjects/ai_e2e/pyproject.toml) using `uv`:
+Sync all python packages specified in [pyproject.toml](pyproject.toml) using `uv`:
 ```bash
 uv sync
 ```
@@ -95,57 +95,112 @@ This produces the simulator app bundle at `example/testing_app/build/ios/iphones
 
 ---
 
-## Running the E2E Agent
+## Mode 1: Journey-Based QA Testing (Recommended)
 
-You can execute the automation script to start the session. Update the configuration inside [main.py](file:///Users/becca/StudioProjects/ai_e2e/main.py) to specify your target platform.
+Ronin's primary mode is **User Journey Testing** — you describe a user flow in plain English inside a YAML file, and Ronin automatically generates a full suite of test scenarios, executes them on the device, and produces structured reports.
+
+### 1. Write a Journey File
+
+Create a YAML file describing your user journey (see [`example/checkout_journey.yaml`](example/checkout_journey.yaml)):
+
+```yaml
+id: notification_journey_01
+name: E2E Notification Detail and Switch Toggle Journey
+
+journey: >
+  A user opens the app and lands on the sign-in screen.
+  They type 'test@email.com' in the Email field and 'secret-password123' in the Password field.
+  They click the Login button. Once logged in, they click on the first notification item.
+  On the detail screen, they type 'Awesome notification!' in the reply field,
+  toggle the 'Pin notification' switch to true, and click the Submit button.
+
+security_rules:
+  - "The logged-in user's password must never be exposed in plain text on the Home or Dashboard screens."
+  - "The reply text input must not leak password characters or unmasked sensitive strings."
+```
+
+### 2. Run the Test Journey
 
 ```bash
-uv run python main.py
+uv run main.py test-journey example/checkout_journey.yaml
 ```
 
-You can optionally override the log level via the CLI (choices: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`):
+To use a more capable primary model alongside a faster/cheaper model for execution steps:
 ```bash
-uv run python main.py --log-level DEBUG
+uv run main.py test-journey example/checkout_journey.yaml \
+  --model openrouter/google/gemini-2.5-pro \
+  --fast-model openrouter/google/gemini-2.5-flash
 ```
 
-### Configuring main.py
-In [main.py](file:///Users/becca/StudioProjects/ai_e2e/main.py), configure the `CONFIG` dictionary to match your target platform and device configuration:
+### CLI Options
 
-#### Android Configuration:
-```python
-CONFIG = {
-    "goal": "I want to sign in to the app with email 'test@email.com'",
-    "device_name": "Pixel_8a",
-    "app_path": "example/testing_app/build/app/outputs/flutter-apk/app-debug.apk",
-    "platform": Platform.ANDROID,
-    "use_multimodal_vision": False,
-    "max_steps": 15,
-}
-```
-
-#### iOS Configuration:
-```python
-CONFIG = {
-    "goal": "I want to sign in to the app with email 'test@email.com'",
-    "device_name": "iPhone 15",  # Match your iOS simulator name
-    "app_path": "example/testing_app/build/ios/iphonesimulator/Runner.app",
-    "platform": Platform.IOS,
-    "use_multimodal_vision": False,
-    "max_steps": 15,
-}
-```
+| Flag | Default | Description |
+|---|---|---|
+| `--model` | `openrouter/google/gemini-2.5-flash` | Primary LiteLLM model for scenario generation and auditing |
+| `--fast-model` | *(same as model)* | Cheaper/faster model for per-step ReAct planning |
+| `--device` | `Pixel_8a` | Emulator or simulator name |
+| `--platform` | `android` | Target platform (`android` or `ios`) |
+| `--app-path` | *(flutter debug apk)* | Path to app binary (`.apk` or `.app`) |
+| `--max-steps` | `20` | Maximum ReAct steps per scenario |
+| `--settle-time` | `2.0` | Seconds to wait after each action |
+| `--output-dir` | `assets/` | Directory to save reports and screenshots |
+| `--use-multimodal-vision` | `False` | Allow LLM to override YOLO element coordinates |
+| `--headless` | `False` | Run emulator headlessly |
+| `--log-level` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
 ### What Happens Under the Hood
-1. **Appium Startup**: The script launches the Appium server programmatically on port `4723`.
-2. **Device Connection**: It connects to the specified emulator/simulator and installs/launches the sample app.
-3. **Screen Perception**:
-   * Takes a screenshot of the current screen.
-   * Feeds the image to **YOLOv8** (automatically downloading the `deki-yolo` UI-element detection model from Hugging Face on the first run).
-   * Runs **EasyOCR** (which downloads its English language model on the first run) on text/button elements to extract visible labels.
-4. **AI Planning**:
-   * Annotates the screen image with bounding boxes.
-   * Sends the annotated image and element details to **Gemini 2.5 Flash** (via OpenRouter/LiteLLM).
-   * The LLM creates a high-level task plan and maps it to coordinates-based UI actions (e.g., tap at `(x, y)`, type text).
-5. **Execution**: The orchestrator triggers Appium inputs to perform the planned actions on the device.
-6. **Recording**: A screen recording of the session is saved as an `.mp4` file in the `assets/` directory.
+
+1. **Journey Parsing**: The YAML file is loaded and parsed into a `UserJourney` object.
+2. **Scenario Generation**: An LLM decomposes the journey description into a suite of diverse test scenarios covering happy paths, edge cases, boundary tests, destructive monkey flows, security compliance, accessibility, and performance.
+3. **Device Setup**: Appium starts, connects to the emulator/simulator, and installs the app.
+4. **ReAct Execution Loop**: For each scenario, Ronin runs a closed-loop cycle:
+   * **Perceive** — Screenshots the device screen; runs YOLOv8 to detect UI elements and EasyOCR to read text.
+   * **Audit** — The LLM generates context-specific screen assertions (e.g. "is the password field masked?") and verifies them alongside security rules.
+   * **Plan** — The LLM decides the next action to perform (tap, type, swipe, etc.).
+   * **Act** — The orchestrator executes the action on the device via Appium.
+   * **Continue** — Failures are recorded but the journey continues to the next screen. Only a hard app crash terminates early.
+5. **App Reset**: The app is restarted between each scenario for a clean state.
+
+### Outputs
+
+All outputs are saved to the `assets/` directory (configurable via `--output-dir`):
+
+| File | Description |
+|---|---|
+| `report_<id>_<timestamp>.md` | Human-readable Markdown report with per-screen passed/failed verifications and detected issues |
+| `junit_<id>_<timestamp>.xml` | Standard JUnit XML for CI systems (Jenkins, GitHub Actions, GitLab CI) |
+| `llm_usage_<timestamp>.json` | LLM token usage and estimated cost breakdown per model |
+| `scen_<id>_step<n>_*.png` | Annotated screenshots for each execution step |
+
+---
+
+## Mode 2: Single-Goal Agent
+
+For quick one-off automation tasks, you can run the agent with a hardcoded goal directly:
+
+```bash
+uv run main.py
+```
+
+Configure the goal and device in [`main.py`](main.py):
+
+```python
+goal = "Sign in with email 'test@email.com' and navigate to the settings screen."
+app_path = "example/testing_app/build/app/outputs/flutter-apk/app-debug.apk"
+
+agent = RoninAgent(
+    device_name="Pixel_8a",
+    app_path=app_path,
+    platform=Platform.ANDROID,
+    max_steps=20,
+)
+agent.execute(goal)
+```
+
+You can override the log level:
+```bash
+uv run main.py --log-level DEBUG
+```
+
+> **Note**: This mode does not generate test scenarios, produce reports, or perform QA auditing. Use `test-journey` for structured testing.
 

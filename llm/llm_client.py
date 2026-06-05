@@ -12,13 +12,15 @@ from .messages import Message
 class LLMClient:
     """Client for making calls to the OpenRouter/LiteLLM completion API."""
 
-    def __init__(self, model: str):
+    def __init__(self, model: str, usage_callback=None):
         """Initializes the LLM client.
 
         Args:
             model: The API model identifier to use for requests.
+            usage_callback: Optional callable receiving usage dictionary records.
         """
         self._model = model
+        self.usage_callback = usage_callback
 
     def generate_response(
         self,
@@ -44,6 +46,18 @@ class LLMClient:
             kwargs["response_format"] = response_model
 
         response = litellm.completion(**kwargs)
+        
+        # Trigger usage callback if configured
+        if self.usage_callback:
+            usage = getattr(response, "usage", None)
+            if usage:
+                cost = 0.0
+                try:
+                    cost = litellm.completion_cost(completion_response=response) or 0.0
+                except Exception:
+                    pass
+                self.usage_callback(self._model, cost, usage)
+        
         content = response.choices[0].message.content
 
         if response_model:

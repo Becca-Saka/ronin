@@ -20,10 +20,10 @@ class ActionOrchestrator:
                     self.device_control.type(action.text, coordinates.x, coordinates.y)
                 case ActionType.TAP:
                     coordinates = action.coordinates
-                    self.device_control.tap(coordinates.x, coordinates.y)
+                    self.device_control.tap(coordinates.x, coordinates.y, with_feedback=True)
                 case ActionType.DOUBLE_TAP:
                     coordinates = action.coordinates
-                    self.device_control.double_tap(coordinates.x, coordinates.y)
+                    self.device_control.double_tap(coordinates.x, coordinates.y, with_feedback=True)
                 case ActionType.LONG_PRESS:
                     coordinates = action.coordinates
                     self.device_control.long_press(

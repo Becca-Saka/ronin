@@ -5,7 +5,7 @@ Main execution module for the AI-driven mobile E2E testing agent.
 import argparse
 import logging
 import os
-
+import sys
 from device.platform import Platform
 from ronin_agent import RoninAgent
 
@@ -43,14 +43,15 @@ def main():
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Ronin E2E mobile testing agent")
+
+    parser = argparse.ArgumentParser(description="Ronin E2E mobile testing agent", add_help=False)
     parser.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set the logging level (default: INFO)",
     )
-    args = parser.parse_args()
+    args, remaining = parser.parse_known_args()
 
     numeric_level = getattr(logging, args.log_level.upper(), None)
     logging.basicConfig(
@@ -59,4 +60,21 @@ if __name__ == "__main__":
         force=True,
     )
 
-    main()
+    # Rebuild sys.argv for delegated parsers
+    sys.argv = [sys.argv[0]] + remaining
+
+    if len(sys.argv) > 1 and sys.argv[1] == "test-journey":
+        sys.argv.pop(1)
+        from ronin_testing.cli import main as cli_main
+        cli_main()
+    else:
+        # Re-parse legacy arguments if not running a test journey
+        legacy_parser = argparse.ArgumentParser(description="Ronin E2E mobile testing agent")
+        # Log level is already processed, but add it to legacy parser for completeness
+        legacy_parser.add_argument(
+            "--log-level",
+            default="INFO",
+            choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        )
+        legacy_parser.parse_args(remaining)
+        main()

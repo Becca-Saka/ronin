@@ -39,6 +39,7 @@ class DeviceControl:
             options.device_name = device_name
             options.app = app_path
             options.is_headless = is_headless
+            options.set_capability("appium:enforceAppInstall", True)
             self.adb_control = None
         else:
             options = UiAutomator2Options()
@@ -49,6 +50,7 @@ class DeviceControl:
             options.avd = device_name
             options.avd_launch_timeout = 60000
             options.avd_ready_timeout = 60000
+            options.set_capability("appium:enforceAppInstall", True)
             self.adb_control = adb_control
             package_id, activity = self.adb_control.get_apk_info(app_path)
             self.package_id = package_id
@@ -138,16 +140,30 @@ class DeviceControl:
         self.execute_script("mobile: pressKey", {"keycode": key})
         time.sleep(0.5)
 
-    def swipe(self, start_x, start_y, end_x, end_y):
-        self.execute_script(
-            "mobile: swipeGesture",
-            {
-                "left": start_x,
-                "top": start_y,
-                "width": abs(end_x - start_x),
-                "height": abs(end_y - start_y),
-            },
-        )
+    def swipe(self, start_x, start_y, end_x, end_y, duration_ms: int = 400):
+        """Performs a swipe gesture using W3C pointer actions.
+
+        Args:
+            start_x: Starting x coordinate.
+            start_y: Starting y coordinate.
+            end_x: Ending x coordinate.
+            end_y: Ending y coordinate.
+            duration_ms: Duration of the swipe gesture in milliseconds.
+        """
+        try:
+            touch = PointerInput("touch", "finger")
+            builder = ActionBuilder(self.driver, mouse=touch)
+            builder.pointer_action.move_to_location(start_x, start_y)
+            builder.pointer_action.pointer_down()
+            builder.pointer_action.pause(duration_ms / 1000)
+            builder.pointer_action.move_to_location(end_x, end_y)
+            builder.pointer_action.release()
+            builder.perform()
+        except Exception as e:
+            logger.error(
+                "Failed to swipe from (%s, %s) to (%s, %s): %s",
+                start_x, start_y, end_x, end_y, e
+            )
         time.sleep(0.5)
 
     def remove_app(self, package_id):

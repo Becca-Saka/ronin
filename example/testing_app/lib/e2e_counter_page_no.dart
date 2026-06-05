@@ -12,11 +12,15 @@ class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
   int _counter = 0;
   bool _alertsEnabled = true;
   final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
   final _searchController = TextEditingController();
+  String _loggedInEmail = '';
+  String _loggedInPassword = '';
 
   @override
   void dispose() {
     _emailController.dispose();
+    _passwordController.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -26,7 +30,11 @@ class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
   }
 
   void _login() {
-    setState(() => _loggedIn = true);
+    setState(() {
+      _loggedIn = true;
+      _loggedInEmail = _emailController.text;
+      _loggedInPassword = _passwordController.text;
+    });
   }
 
   @override
@@ -51,6 +59,16 @@ class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
                   hintText: 'you@example.com',
                   border: OutlineInputBorder(),
                 ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _passwordController,
+                decoration: const InputDecoration(
+                  labelText: 'Password',
+                  hintText: 'Enter your password',
+                  border: OutlineInputBorder(),
+                ),
+                obscureText: true, // Masked correctly during input
               ),
               const SizedBox(height: 24),
               FilledButton(
@@ -88,7 +106,11 @@ class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
         ),
         body: TabBarView(
           children: [
-            _HomeTab(counter: _counter),
+            _HomeTab(
+              counter: _counter,
+              loggedInEmail: _loggedInEmail,
+              loggedInPassword: _loggedInPassword,
+            ),
             _InboxTab(
               alertsEnabled: _alertsEnabled,
               searchController: _searchController,
@@ -107,14 +129,24 @@ class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
 }
 
 class _HomeTab extends StatelessWidget {
-  const _HomeTab({required this.counter});
+  const _HomeTab({
+    required this.counter,
+    required this.loggedInEmail,
+    required this.loggedInPassword,
+  });
 
   final int counter;
+  final String loggedInEmail;
+  final String loggedInPassword;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text('Logged in as: $loggedInEmail (Password: $loggedInPassword)', style: const TextStyle(color: Colors.red)),
+        ),
         const Padding(
           padding: EdgeInsets.all(16),
           child: Text('Tap increment to increase the counter'),
@@ -205,7 +237,7 @@ class _NotificationDetailPageState extends State<NotificationDetailPage> {
             const Text(
               'This is a complex notification that requires user feedback. Please type a reply and decide if you want to pin this notification to your home dashboard.',
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 700), // Deliberate layout overflow bug for testing visual auditing!
             TextField(
               controller: _replyController,
               decoration: const InputDecoration(
