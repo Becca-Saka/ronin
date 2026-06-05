@@ -15,6 +15,7 @@ from selenium.webdriver.common.actions.action_builder import ActionBuilder
 from selenium.webdriver.common.actions.pointer_input import PointerInput
 
 from device.adb_control import AdbControl
+from device.platform import Platform
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +29,10 @@ class DeviceControl:
         app_path: str,
         adb_control: AdbControl,
         is_headless: bool = False,
-        platform: str = "android",
+        platform: Platform = Platform.ANDROID,
     ):
-        if platform not in ["android", "ios"]:
-            raise ValueError(f"Invalid platform: {platform}")
         self.platform = platform
-        if platform == "ios":
+        if platform == Platform.IOS:
             options = XCUITestOptions()
             options.platform_name = "iOS"
             options.automation_name = "XCUITest"
@@ -104,7 +103,7 @@ class DeviceControl:
 
     def type(self, text, x, y):
         self.tap(x, y)
-        if self.platform == "ios":
+        if self.platform == Platform.IOS:
             self.execute_script("mobile: type", {"text": text})
         else:
             self.driver.switch_to.active_element.send_keys(text)
@@ -158,7 +157,7 @@ class DeviceControl:
 
     def quit(self):
         self.driver.quit()
-        if self.platform == "android" and self.adb_control:
+        if self.platform == Platform.ANDROID and self.adb_control:
             self.adb_control.disable_feedback()
             self.adb_control.kill_emulator(self.device_name)
 

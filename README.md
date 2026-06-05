@@ -109,31 +109,23 @@ uv run python main.py --log-level DEBUG
 ```
 
 ### Configuring main.py
-In [main.py](file:///Users/becca/StudioProjects/ai_e2e/main.py), configure the `DeviceSession` instantiation to match your target platform and device configuration:
+In [main.py](file:///Users/becca/StudioProjects/ai_e2e/main.py), configure the `RoninAgent` instantiation to match your target platform and device configuration:
 
 #### Android Configuration:
 ```python
-device_name = "Pixel_8a"
-app_path = "example/testing_app/build/app/outputs/flutter-apk/app-debug.apk"
-session = DeviceSession(
-    device_name,
-    app_path,
-    platform="android",
-    record_session=True,
-    session_dir=assets_dir,
+agent = RoninAgent(
+    device_name="Pixel_8a",
+    app_path="example/testing_app/build/app/outputs/flutter-apk/app-debug.apk",
+    platform=Platform.ANDROID,
 )
 ```
 
 #### iOS Configuration:
 ```python
-device_name = "iPhone 15"  # Match your iOS simulator name
-app_path = "example/testing_app/build/ios/iphonesimulator/Runner.app"
-session = DeviceSession(
-    device_name,
-    app_path,
-    platform="ios",
-    record_session=True,
-    session_dir=assets_dir,
+agent = RoninAgent(
+    device_name="iPhone 15",  # Match your iOS simulator name
+    app_path="example/testing_app/build/ios/iphonesimulator/Runner.app",
+    platform=Platform.IOS,
 )
 ```
 

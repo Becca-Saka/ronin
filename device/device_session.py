@@ -13,6 +13,7 @@ from appium.webdriver.appium_service import AppiumService
 
 from device.adb_control import AdbControl
 from device.device_control import DeviceControl
+from device.platform import Platform
 from utils.platform_checks import run_ios_preflight, validate_app_path_for_platform
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ class DeviceSession:
         app_path: str,
         record_session: bool = False,
         session_dir: Path = Path("sessions"),
-        platform: str = "android",
+        platform: Platform = Platform.ANDROID,
     ):
         """Initializes a DeviceSession.
 
@@ -45,7 +46,7 @@ class DeviceSession:
         self.platform = platform
         self.device_control: DeviceControl | None = None
         # Run all preflight checks before touching any hardware
-        if self.platform == "ios":
+        if self.platform == Platform.IOS:
             run_ios_preflight(app_path)
         else:
             validate_app_path_for_platform(app_path, self.platform)
@@ -79,10 +80,10 @@ class DeviceSession:
             device_name=self.device_name,
             app_path=self.app_path,
             platform=self.platform,
-            adb_control=self.adb_control if self.platform == "android" else None,
+            adb_control=self.adb_control if self.platform == Platform.ANDROID else None,
             is_headless=is_headless,
         )
-        if self.platform == "android":
+        if self.platform == Platform.ANDROID:
             self.adb_control.enable_feedback(
                 pointer_location=False, tap_highlights=True
             )
