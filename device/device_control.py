@@ -113,32 +113,50 @@ class DeviceControl:
         time.sleep(0.5)
 
     def double_tap(self, x, y, with_feedback: bool = True):
-        self.tap(x, y, with_feedback=with_feedback)
-        time.sleep(0.2)
-        self.tap(x, y, with_feedback=with_feedback)
-        time.sleep(0.2)
+        if self.platform == Platform.IOS:
+            self.execute_script("mobile: doubleTap", {"x": x, "y": y})
+        else:
+            self.execute_script("mobile: doubleClickGesture", {"x": x, "y": y})
+        time.sleep(0.5)
 
     def long_press(self, x, y, duration):
-        self.execute_script(
-            "mobile: longPress", {"x": x, "y": y, "duration": duration * 1000}
-        )
-        time.sleep(duration)
+        if self.platform == Platform.IOS:
+            self.execute_script("mobile: touchAndHold", {"x": x, "y": y, "duration": duration})
+        else:
+            self.execute_script("mobile: longClickGesture", {"x": x, "y": y, "duration": int(duration * 1000)})
+        time.sleep(duration + 0.5)
 
     def drag_and_drop(self, source_x, source_y, destination_x, destination_y):
-        self.execute_script(
-            "mobile: dragGesture",
-            {
-                "startX": source_x,
-                "startY": source_y,
-                "endX": destination_x,
-                "endY": destination_y,
-            },
-        )
+        if self.platform == Platform.IOS:
+            self.execute_script(
+                "mobile: dragFromToForDuration",
+                {
+                    "fromX": source_x,
+                    "fromY": source_y,
+                    "toX": destination_x,
+                    "toY": destination_y,
+                    "duration": 1.0,
+                },
+            )
+        else:
+            self.execute_script(
+                "mobile: dragGesture",
+                {
+                    "startX": source_x,
+                    "startY": source_y,
+                    "endX": destination_x,
+                    "endY": destination_y,
+                },
+            )
         time.sleep(0.5)
 
     def key_event(self, key):
-        self.execute_script("mobile: pressKey", {"keycode": key})
+        if self.platform == Platform.ANDROID:
+            self.driver.press_keycode(key)
+        else:
+            self.execute_script("mobile: pressButton", {"name": key})
         time.sleep(0.5)
+
 
     def swipe(self, start_x, start_y, end_x, end_y, duration_ms: int = 400):
         """Performs a swipe gesture using W3C pointer actions.
@@ -188,7 +206,8 @@ class DeviceControl:
                 logger.warning("Failed to kill emulator: %s", e)
 
     def execute_script(self, script, args):
-        self.driver.execute_script(script, args)
+        self.driver.execute_script(script, args if isinstance(args, list) else [args])
+
 
     def start_recording(self):
         self.driver.start_recording_screen()

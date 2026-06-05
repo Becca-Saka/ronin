@@ -12,6 +12,8 @@ from actuation.actions import ActionPlan
 from llm.llm_client import LLMClient
 from llm.messages import MultiPartMessage
 from ronin_testing.models import QAIssue, RuleVerification
+from utils.redactor import redact_elements, redact_text
+
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +115,12 @@ class RoninPlanner:
             outcomes_list = expected_outcomes or []
             rules_list = security_rules or []
 
+        # Redact input variables
+        if gui_elements:
+            gui_elements = redact_elements(gui_elements)
+        if text_history:
+            text_history = [redact_text(act) for act in text_history]
+
         prompt_text = f"""You are a closed-loop mobile E2E testing agent performing QA validation on a mobile app.
 Your task is to execute the following E2E test scenario instructions and verify all expected outcomes and security compliance rules.
 
@@ -179,4 +187,13 @@ You must inspect the visual screenshots provided and audit the screen state for 
 
         logger.info("Querying planner for next step with QA auditing...")
         response: AgentStepResponse = self.llm.generate_response([message], AgentStepResponse)
+
+        # Redact sensitive values from response content
+        response.reasoning = redact_text(response.reasoning)
+        for issue in response.detected_issues:
+            issue.description = redact_text(issue.description)
+        for verify in response.rule_verifications:
+            verify.reasoning = redact_text(verify.reasoning)
+
         return response
+

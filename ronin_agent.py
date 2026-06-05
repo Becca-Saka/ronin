@@ -15,7 +15,13 @@ from llm.llm_client import LLMClient
 from perception.media_manager import MediaManager
 from perception.perception import ScreenPerception
 from ronin_planner import RoninPlanner
-from ronin_testing.models import GeneratedTestCase, ScenarioReport, QAIssue
+from ronin_testing.models import (
+    GeneratedTestCase,
+    ScenarioReport,
+    QAIssue,
+    RuleVerification,
+)
+from utils.redactor import redact_elements, redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +108,14 @@ class RoninAgent:
 
                 # 1. Screen Perception
                 gui_elements, annotated_img = perception.perceive()
+                gui_elements = redact_elements(gui_elements)
 
                 self.assets_dir.mkdir(parents=True, exist_ok=True)
                 clean_timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filepath = self.assets_dir / f"annotated_img_{clean_timestamp}_step{step+1}.png"
+                filepath = (
+                    self.assets_dir
+                    / f"annotated_img_{clean_timestamp}_step{step + 1}.png"
+                )
                 annotated_img.save(filepath)
                 logger.info("Saved step screenshot to %s", filepath)
 
@@ -135,15 +145,21 @@ class RoninAgent:
                     break
 
                 if not step_response.action or not step_response.action.actions:
-                    logger.warning("Planner returned not done, but did not specify any action. Terminating.")
+                    logger.warning(
+                        "Planner returned not done, but did not specify any action. Terminating."
+                    )
                     break
 
                 # 4. Actuation
                 action_to_run = step_response.action
-                logger.info("Executing action plan: %s", action_to_run.instruction)
+                logger.info(
+                    "Executing action plan: %s", redact_text(action_to_run.instruction)
+                )
 
                 # Saves a copy of the screenshot with the action highlighted
-                click_filepath = self.assets_dir / f"click_step{step+1}_{clean_timestamp}.png"
+                click_filepath = (
+                    self.assets_dir / f"click_step{step + 1}_{clean_timestamp}.png"
+                )
                 self.media_manager.save_action_annotation(
                     annotated_img=annotated_img,
                     action_plan=action_to_run,
@@ -154,17 +170,23 @@ class RoninAgent:
 
                 # 5. History Update
                 first_action = action_to_run.actions[0]
-                action_desc = f"{first_action.type.value} (Reason: {first_action.reason})"
+                action_desc = redact_text(
+                    f"{first_action.type.value} (Reason: {first_action.reason})"
+                )
                 text_history.append(action_desc)
 
                 visual_history.append(annotated_img_bytes)
+
                 if len(visual_history) > self.visual_history_limit:
                     visual_history.pop(0)
 
                 # 6. Settle Delay
                 time.sleep(self.settle_time)
             else:
-                logger.warning("Reached maximum step limit (%s). Terminating E2E run.", self.max_steps)
+                logger.warning(
+                    "Reached maximum step limit (%s). Terminating E2E run.",
+                    self.max_steps,
+                )
 
         finally:
             session.close()
@@ -175,7 +197,7 @@ class RoninAgent:
         security_rules: list[str],
         device_control,
         perception,
-        session_dir: Path
+        session_dir: Path,
     ) -> ScenarioReport:
         """Executes a single E2E test scenario using the ReAct loop and audits for layout/security issues."""
         start_time = time.time()
@@ -210,23 +232,33 @@ class RoninAgent:
         try:
             for step in range(self.max_steps):
                 steps_executed += 1
-                logger.info("--- [Scenario %s] Step %d / %d ---", test_case.test_id, step + 1, self.max_steps)
+                logger.info(
+                    "--- [Scenario %s] Step %d / %d ---",
+                    test_case.test_id,
+                    step + 1,
+                    self.max_steps,
+                )
 
                 # 1. Screen Perception
                 gui_elements, annotated_img = perception.perceive()
+                gui_elements = redact_elements(gui_elements)
 
                 # Construct screen signature to detect repetition loops
-                current_screen_sig = tuple(
-                    sorted(
-                        (
-                            el.element,
-                            el.text or "",
-                            (el.bounding_box.x_min + el.bounding_box.x_max) // 2,
-                            (el.bounding_box.y_min + el.bounding_box.y_max) // 2,
+                current_screen_sig = (
+                    tuple(
+                        sorted(
+                            (
+                                el.element,
+                                el.text or "",
+                                (el.bounding_box.x_min + el.bounding_box.x_max) // 2,
+                                (el.bounding_box.y_min + el.bounding_box.y_max) // 2,
+                            )
+                            for el in gui_elements
                         )
-                        for el in gui_elements
                     )
-                ) if gui_elements else ()
+                    if gui_elements
+                    else ()
+                )
 
                 if previous_screen_sig is not None:
                     if current_screen_sig == previous_screen_sig:
@@ -235,13 +267,18 @@ class RoninAgent:
                             f"Warning: Your previous action '{previous_action_desc}' did not result in a screen state change. "
                             "Do not repeat this action. Choose a different element or interaction, or scroll/navigate if stuck."
                         )
-                        logger.warning("Screen signature matches previous step. Preparing loop warning: %s", loop_warning)
+                        logger.warning(
+                            "Screen signature matches previous step. Preparing loop warning: %s",
+                            loop_warning,
+                        )
                     else:
                         loop_warning = None
                         consecutive_repeats = 0
 
                 clean_timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f"scen_{test_case.test_id}_step{step+1}_{clean_timestamp}.png"
+                filename = (
+                    f"scen_{test_case.test_id}_step{step + 1}_{clean_timestamp}.png"
+                )
                 filepath = session_dir / filename
                 annotated_img.save(filepath)
                 screenshots.append(str(filepath))
@@ -259,7 +296,7 @@ class RoninAgent:
                     current_image_bytes=annotated_img_bytes,
                     visual_history=list(visual_history),
                     text_history=list(text_history),
-                    loop_warning=loop_warning
+                    loop_warning=loop_warning,
                 )
 
                 logger.info("Screen Name: %s", step_response.current_screen)
@@ -269,7 +306,9 @@ class RoninAgent:
                 if not getattr(step_response, "is_scenario_feasible", True):
                     logger.warning(
                         "Test scenario flagged as infeasible for current screen: %s",
-                        getattr(step_response, "infeasibility_reason", "No reason provided")
+                        getattr(
+                            step_response, "infeasibility_reason", "No reason provided"
+                        ),
                     )
                     status = "SKIPPED"
                     failure_reason = f"Test scenario is infeasible: {getattr(step_response, 'infeasibility_reason', 'No reason provided')}"
@@ -287,7 +326,10 @@ class RoninAgent:
                     detected_issues.append(issue)
 
                 # Check if there is a crash screen (hard failure that aborts execution)
-                has_crash = any(iss.issue_type == "crash_screen" for iss in step_response.detected_issues)
+                has_crash = any(
+                    iss.issue_type == "crash_screen"
+                    for iss in step_response.detected_issues
+                )
                 if has_crash:
                     logger.error("App crash screen detected! Terminating scenario.")
                     status = "FAILED"
@@ -295,8 +337,12 @@ class RoninAgent:
                     break
 
                 # Mark scenario failed on any rule failures or critical issues, but do not exit early
-                has_critical_issue = any(iss.severity == "critical" for iss in step_response.detected_issues)
-                has_failed_rule = any(v.status == "failed" for v in step_response.rule_verifications)
+                has_critical_issue = any(
+                    iss.severity == "critical" for iss in step_response.detected_issues
+                )
+                has_failed_rule = any(
+                    v.status == "failed" for v in step_response.rule_verifications
+                )
                 if has_critical_issue or has_failed_rule:
                     status = "FAILED"
                     if not failure_reason:
@@ -321,13 +367,15 @@ class RoninAgent:
                             logger.info(
                                 "On splash/loading screen with no actions. Sleeping %s seconds and retrying (wait %d/3)...",
                                 self.settle_time,
-                                consecutive_waits
+                                consecutive_waits,
                             )
                             time.sleep(self.settle_time)
                             steps_executed -= 1
                             continue
                         else:
-                            logger.warning("Planner did not supply next action. Terminating scenario as FAILED.")
+                            logger.warning(
+                                "Planner did not supply next action. Terminating scenario as FAILED."
+                            )
                             status = "FAILED"
                             failure_reason = "Planner terminated early without supplying a next action before scenario objectives were met."
                             break
@@ -337,8 +385,12 @@ class RoninAgent:
 
                 # Loop detection: Compare proposed action signature with previous action signature
                 first_action = step_response.action.actions[0]
-                action_x = getattr(getattr(first_action, "coordinates", None), "x", None)
-                action_y = getattr(getattr(first_action, "coordinates", None), "y", None)
+                action_x = getattr(
+                    getattr(first_action, "coordinates", None), "x", None
+                )
+                action_y = getattr(
+                    getattr(first_action, "coordinates", None), "y", None
+                )
                 action_text = getattr(first_action, "text", None)
                 action_key = getattr(first_action, "key", None)
                 action_sig = (
@@ -355,41 +407,57 @@ class RoninAgent:
                     getattr(first_action, "start_y", None),
                     getattr(first_action, "end_x", None),
                     getattr(first_action, "end_y", None),
-                    getattr(first_action, "duration", None)
+                    getattr(first_action, "duration", None),
                 )
 
-                if current_screen_sig == previous_screen_sig and action_sig == previous_action_sig:
+                if (
+                    current_screen_sig == previous_screen_sig
+                    and action_sig == previous_action_sig
+                ):
                     consecutive_repeats += 1
-                    logger.warning("Agent repeated same action on same screen state. Consecutive repeats: %d", consecutive_repeats)
+                    logger.warning(
+                        "Agent repeated same action on same screen state. Consecutive repeats: %d",
+                        consecutive_repeats,
+                    )
                 else:
                     # Reset if action or screen changed
                     if current_screen_sig != previous_screen_sig:
                         consecutive_repeats = 0
 
                 if consecutive_repeats >= 2:
-                    logger.error("Agent stuck in an execution loop (repeated same action 3 times on same state). Terminating scenario.")
+                    logger.error(
+                        "Agent stuck in an execution loop (repeated same action 3 times on same state). Terminating scenario."
+                    )
                     status = "FAILED"
                     failure_reason = "Agent stuck in an execution loop: repeated action on screen state."
                     break
 
                 # 3. Actuation
                 action_to_run = step_response.action
-                logger.info("Executing action: %s", action_to_run.instruction)
+                logger.info(
+                    "Executing action: %s", redact_text(action_to_run.instruction)
+                )
 
-                click_filepath = session_dir / f"click_{test_case.test_id}_step{step+1}_{clean_timestamp}.png"
+                click_filepath = (
+                    session_dir
+                    / f"click_{test_case.test_id}_step{step + 1}_{clean_timestamp}.png"
+                )
                 self.media_manager.save_action_annotation(
                     annotated_img=annotated_img,
                     action_plan=action_to_run,
-                    filepath=click_filepath
+                    filepath=click_filepath,
                 )
 
                 ActionOrchestrator(device_control).orchestrate(action_to_run)
 
                 # 4. History Update
-                action_desc = f"{first_action.type.value} (Reason: {first_action.reason})"
+                action_desc = redact_text(
+                    f"{first_action.type.value} (Reason: {first_action.reason})"
+                )
                 text_history.append(action_desc)
 
                 visual_history.append(annotated_img_bytes)
+
                 if len(visual_history) > self.visual_history_limit:
                     visual_history.pop(0)
 
@@ -402,18 +470,21 @@ class RoninAgent:
                 # 5. Settle Delay
                 time.sleep(self.settle_time)
             else:
-                logger.warning("Reached maximum step limit (%d) for scenario.", self.max_steps)
+                logger.warning(
+                    "Reached maximum step limit (%d) for scenario.", self.max_steps
+                )
                 if status == "PASSED":
                     status = "FAILED"
-                    failure_reason = "Reached maximum step limit before scenario completed."
+                    failure_reason = (
+                        "Reached maximum step limit before scenario completed."
+                    )
 
         except Exception as e:
             logger.exception("Exception during test scenario execution: %s", e)
             status = "FAILED"
-            failure_reason = f"Execution crash: {str(e)}"
+            failure_reason = redact_text(f"Execution crash: {str(e)}")
 
         duration = time.time() - start_time
-        from ronin_testing.models import RuleVerification
         return ScenarioReport(
             test_id=test_case.test_id,
             scenario_name=test_case.scenario_name,
@@ -424,5 +495,5 @@ class RoninAgent:
             rule_verifications=rule_verifications,
             detected_issues=detected_issues,
             screenshots=screenshots,
-            failure_reason=failure_reason
+            failure_reason=redact_text(failure_reason) if failure_reason else None,
         )
