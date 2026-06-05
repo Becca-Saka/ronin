@@ -8,7 +8,7 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from actuation.actions import ActionPlan
+from actuation.actions import ActionPlan, CapabilityType, CAPABILITY_SCHEMAS
 from llm.llm_client import LLMClient
 from llm.messages import MultiPartMessage
 from ronin_testing.models import QAIssue, RuleVerification
@@ -121,6 +121,11 @@ class RoninPlanner:
         if text_history:
             text_history = [redact_text(act) for act in text_history]
 
+        caps_description_str = "\n".join(
+            f"   - {cap.value}: {CAPABILITY_SCHEMAS.get(cap, '{}')}"
+            for cap in CapabilityType
+        )
+
         prompt_text = f"""You are a closed-loop mobile E2E testing agent performing QA validation on a mobile app.
 Your task is to execute the following E2E test scenario instructions and verify all expected outcomes and security compliance rules.
 
@@ -162,7 +167,10 @@ You must inspect the visual screenshots provided and audit the screen state for 
 4. Determine if the scenario is feasible. If it is impossible to satisfy the steps due to missing UI components or layout mismatch, set `is_scenario_feasible = False`, fill `infeasibility_reason` with the details, and set `is_done = True` and `action = None`.
 5. Determine if the scenario is done (either all expected outcomes have been successfully verified, or a critical crash/failure terminates the test). If so, set `is_done = True` and `action = None`.
 6. If not done and the scenario is feasible, plan the single next action to execute. You must output EXACTLY one action in `action.actions` list.
+7. If the step or goal requires system level control, return a CAPABILITY action. Specify 'capability' and its 'parameters' dict:
+{caps_description_str}
 """
+
 
         if self.use_multimodal_vision:
             prompt_text += """

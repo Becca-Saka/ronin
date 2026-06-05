@@ -3,6 +3,7 @@ import time
 
 from actuation.actions import ActionPlan, ActionType
 from device.device_control import DeviceControl
+from device.capability_controller import CapabilityController
 
 logger = logging.getLogger(__name__)
 
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 class ActionOrchestrator:
     def __init__(self, device_control: DeviceControl):
         self.device_control = device_control
+        self.capability_controller = CapabilityController(device_control)
 
     def orchestrate(self, action_plan: ActionPlan):
         for action in action_plan.actions:
@@ -42,4 +44,6 @@ class ActionOrchestrator:
                     self.device_control.swipe(
                         action.start_x, action.start_y, action.end_x, action.end_y
                     )
+                case ActionType.CAPABILITY:
+                    self.capability_controller.execute(action.capability, action.parameters)
             time.sleep(1.5)

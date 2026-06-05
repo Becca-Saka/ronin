@@ -17,6 +17,39 @@ class ActionType(Enum):
     DRAG_AND_DROP = "drag_and_drop"
     KEY_EVENT = "key_event"  # key events (4=back, 3=home, 66=enter, 67=backspace)
     SWIPE = "swipe"
+    CAPABILITY = "capability"
+
+
+class CapabilityType(Enum):
+    LOCATION = "location"
+    NETWORK = "network"
+    BATTERY = "battery"
+    TIMEZONE = "timezone"
+    LOCALE = "locale"
+    PERMISSION = "permission"
+    INTERRUPT = "interrupt"
+    BIOMETRIC = "biometric"
+    CLIPBOARD = "clipboard"
+    DEEPLINK = "deeplink"
+    APP_STATE = "app_state"
+    MEDIA_INJECT = "media_inject"
+
+
+CAPABILITY_SCHEMAS = {
+    CapabilityType.LOCATION: "{'latitude': float, 'longitude': float}",
+    CapabilityType.NETWORK: "{'mode': 'offline' | 'online' | 'wifi_only' | 'data_only' | 'airplane'}",
+    CapabilityType.BATTERY: "{'level': int, 'charging': bool}",
+    CapabilityType.TIMEZONE: "{'timezone': str (e.g., 'America/New_York')}",
+    CapabilityType.LOCALE: "{'language': str (e.g., 'fr'), 'country': str (e.g., 'FR')}",
+    CapabilityType.PERMISSION: "{'permission': 'camera' | 'location' | 'notifications' | 'photos' | 'contacts', 'grant': bool}",
+    CapabilityType.INTERRUPT: "{'type': 'low_memory' | 'incoming_call', 'phone': str}",
+    CapabilityType.CLIPBOARD: "{'text': str}",
+    CapabilityType.BIOMETRIC: "{'action': 'match' | 'unmatch' | 'enroll', 'finger_id': int}",
+    CapabilityType.DEEPLINK: "{'url': str}",
+    CapabilityType.APP_STATE: "{'action': 'clear_data' | 'force_stop'}",
+    CapabilityType.MEDIA_INJECT: "{'local_path': str}"
+}
+
 
 
 # --- Action Definitions ---
@@ -80,6 +113,16 @@ class SwipeAction(BaseModel):
     reason: str = Field(..., description="How the action helps achieve the goal.")
 
 
+class CapabilityAction(BaseModel):
+    type: ActionType = ActionType.CAPABILITY
+    capability: CapabilityType = Field(..., description="The system capability to control.")
+    parameters: dict = Field(
+        default_factory=dict,
+        description="Key-value parameters for the capability (e.g. {'latitude': 37.77, 'longitude': -122.41} or {'mode': 'offline'} or {'permission': 'camera', 'grant': True})."
+    )
+    reason: str = Field(..., description="How the capability control helps achieve the test goal.")
+
+
 # --- The Union of All Actions ---
 Action = (
     TypeAction
@@ -89,7 +132,9 @@ Action = (
     | DragAndDropAction
     | KeyEventAction
     | SwipeAction
+    | CapabilityAction
 )
+
 
 
 # --- The Final Output Schema ---
