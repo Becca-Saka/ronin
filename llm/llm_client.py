@@ -26,10 +26,9 @@ class LLMClient:
     ) -> str | BaseModel:
         kwargs: dict = {
             "model": self._model,
-            "messages": [message.to_dict() for message in messages],
+            "messages": [m.to_dict() for m in messages],
             "extra_body": {"plugins": [{"id": "response-healing"}]},
         }
-
         if response_model:
             kwargs["response_format"] = response_model
 

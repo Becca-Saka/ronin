@@ -1,7 +1,11 @@
+# device_control.py
+import base64
 import time
+from pathlib import Path
 
 from appium import webdriver
 from appium.options.android import UiAutomator2Options
+from appium.options.ios import XCUITestOptions
 from selenium.webdriver.common.actions.action_builder import ActionBuilder
 from selenium.webdriver.common.actions.pointer_input import PointerInput
 
@@ -9,21 +13,39 @@ from device.adb_control import AdbControl
 
 
 class DeviceControl:
-    def __init__(self, device_name: str, app_path: str, adb_control: AdbControl):
-        options = UiAutomator2Options()
-        options.app = app_path
-        options.platform_name = "Android"
-        options.device_name = device_name
-        options.avd = device_name
-        options.avd_launch_timeout = 60000
-        options.avd_ready_timeout = 60000
-        self.adb_control = adb_control
-        package_id, activity = self.adb_control.get_apk_info(app_path)
-        self.package_id = package_id
-        options.app_package = package_id
-        options.app_activity = activity
-        self.driver = webdriver.Remote("http://localhost:4723", options=options)
-        self.device_info = self._init_device_info()
+    def __init__(
+        self,
+        device_name: str,
+        app_path: str,
+        adb_control: AdbControl,
+        is_headless: bool = False,
+        platform: str = "android",
+    ):
+        if platform not in ["android", "ios"]:
+            raise ValueError(f"Invalid platform: {platform}")
+        if platform == "ios":
+            options = XCUITestOptions()
+            options.platform_name = "iOS"
+            options.automation_name = "XCUITest"
+            options.device_name = device_name
+            options.app = app_path
+            options.is_headless = is_headless
+        else:
+            options = UiAutomator2Options()
+            options.app = app_path
+            options.platform_name = "Android"
+            options.device_name = device_name
+            options.is_headless = is_headless
+            options.avd = device_name
+            options.avd_launch_timeout = 60000
+            options.avd_ready_timeout = 60000
+            self.adb_control = adb_control
+            package_id, activity = self.adb_control.get_apk_info(app_path)
+            self.package_id = package_id
+            options.app_package = package_id
+            options.app_activity = activity
+            self.driver = webdriver.Remote("http://localhost:4723", options=options)
+            self.device_info = self._init_device_info()
 
     def _init_device_info(self):
 
@@ -126,3 +148,14 @@ class DeviceControl:
 
     def execute_script(self, script, args):
         self.driver.execute_script(script, args)
+
+    def start_recording(self):
+        self.driver.start_recording_screen()
+
+    def stop_recording(self, output_path: str | Path = "session.mp4") -> Path:
+        raw = self.driver.stop_recording_screen()
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(base64.b64decode(raw))
+        print(f"  ↳ recording saved → {path}")
+        return path
