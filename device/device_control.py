@@ -1,4 +1,8 @@
-# device_control.py
+"""
+High-level control interface for interacting with mobile devices (Android/iOS) via Appium.
+Encapsulates driver initialization, screenshots, and gesture/input execution.
+"""
+
 import base64
 import time
 from pathlib import Path
@@ -13,6 +17,8 @@ from device.adb_control import AdbControl
 
 
 class DeviceControl:
+    """Wrapper for executing gesture actions and capturing state from mobile devices."""
+
     def __init__(
         self,
         device_name: str,
@@ -23,6 +29,7 @@ class DeviceControl:
     ):
         if platform not in ["android", "ios"]:
             raise ValueError(f"Invalid platform: {platform}")
+        self.platform = platform
         if platform == "ios":
             options = XCUITestOptions()
             options.platform_name = "iOS"
@@ -30,6 +37,7 @@ class DeviceControl:
             options.device_name = device_name
             options.app = app_path
             options.is_headless = is_headless
+            self.adb_control = None
         else:
             options = UiAutomator2Options()
             options.app = app_path
@@ -44,8 +52,9 @@ class DeviceControl:
             self.package_id = package_id
             options.app_package = package_id
             options.app_activity = activity
-            self.driver = webdriver.Remote("http://localhost:4723", options=options)
-            self.device_info = self._init_device_info()
+
+        self.driver = webdriver.Remote("http://localhost:4723", options=options)
+        self.device_info = self._init_device_info()
 
     def _init_device_info(self):
 
@@ -92,7 +101,10 @@ class DeviceControl:
 
     def type(self, text, x, y):
         self.tap(x, y)
-        self.execute_script("mobile: type", {"text": text})
+        if self.platform == "ios":
+            self.execute_script("mobile: type", {"text": text})
+        else:
+            self.driver.switch_to.active_element.send_keys(text)
         time.sleep(0.5)
 
     def double_tap(self, x, y):
@@ -143,8 +155,9 @@ class DeviceControl:
 
     def quit(self):
         self.driver.quit()
-        self.adb_control.disable_feedback()
-        self.adb_control.kill_emulator(self.device_name)
+        if self.platform == "android" and self.adb_control:
+            self.adb_control.disable_feedback()
+            self.adb_control.kill_emulator(self.device_name)
 
     def execute_script(self, script, args):
         self.driver.execute_script(script, args)

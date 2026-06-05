@@ -1,104 +1,148 @@
 # ai_e2e
 
-Android end-to-end testing with Appium, UiAutomator2, and a Flutter sample app.
+AI-driven Mobile (Android and iOS) end-to-end testing agent capable of automatically controlling any mobile application.
+
+This agent-based automation reads the device screen visually, plans a sequence of actions based on a user-defined goal, and executes them on the emulator/simulator in real time.
+
+---
 
 ## Prerequisites
 
-- Node.js (Appium)
-- Android SDK (`ANDROID_HOME`, e.g. `~/Library/Android/sdk`)
-- Flutter SDK
-- [uv](https://docs.astral.sh/uv/) for Python
-- An AVD (default: `Pixel_8a`)
+Ensure you have the following installed on your system:
 
-Put the SDK emulator on `PATH` before deprecated `sdk/tools`:
+### 1. System & SDK Dependencies
+* **Node.js** (v18+) - Required to run Appium.
+* **Android SDK** (for Android testing) - Install via Android Studio.
+  * Set `ANDROID_HOME` in your environment (e.g., `export ANDROID_HOME=~/Library/Android/sdk`).
+  * Ensure emulator and platform-tools are in your `PATH`:
+    ```bash
+    export PATH="$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$PATH"
+    ```
+* **Xcode & macOS** (for iOS testing) - Required to build and run iOS simulators/devices.
+  * Install Xcode from the App Store and ensure Xcode command-line tools are installed:
+    ```bash
+    xcode-select --install
+    ```
 
-```bash
-export ANDROID_HOME=~/Library/Android/sdk
-export PATH="$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$PATH"
-```
+### 2. Python Environment & Devices
+* **Python 3.12+** - Managed via [uv](https://docs.astral.sh/uv/).
+* **Android Virtual Device (AVD)** - For Android, a running or configured emulator (default: `Pixel_8a`).
+  * To check your available AVDs:
+    ```bash
+    emulator -list-avds
+    ```
+* **iOS Simulator** - For iOS, a configured simulator (e.g., `iPhone 15` or your preferred simulator model).
+  * To check available iOS simulator devices:
+    ```bash
+    xcrun simctl list devices
+    ```
 
-## One-time setup
+---
 
+## One-Time Setup
+
+Follow these steps to set up the project:
+
+### 1. Install Appium & Mobile Drivers
+Install Appium globally using npm, and install the drivers for both Android and iOS:
 ```bash
 npm install -g appium
 appium driver install uiautomator2
+appium driver install xcuitest
+```
+Verify that Appium is installed successfully:
+```bash
+appium --version
+appium driver list --installed
+```
 
+### 2. Install Python Dependencies
+Sync all python packages specified in [pyproject.toml](file:///Users/becca/StudioProjects/ai_e2e/pyproject.toml) using `uv`:
+```bash
 uv sync
 ```
+*Note: This will install Appium Client, LiteLLM, Pillow, Pydantic, NumPy, EasyOCR, and Ultralytics (YOLO).*
 
-## Run the full flow
-
-Starts the emulator (if needed), builds and installs the Flutter APK, starts Appium (if needed), runs `main.py` to list on-screen elements, then uninstalls the app. If this script started the emulator, it stops it when finished (including on test failure):
-
-```bash
-chmod +x run_e2e.sh
-./run_e2e.sh
+### 3. Configure Environment Variables
+Create a `.env` file in the root of the project to supply your API credentials:
+```env
+OPENROUTER_API_KEY=your_openrouter_api_key_here
 ```
 
-Override the AVD name:
+---
 
-```bash
-AVD=Pixel_8a ./run_e2e.sh
-```
+## Building the Sample App (Example)
 
-## Manual steps
+*Note: Building this example requires the **Flutter SDK** to be installed.*
 
-**Emulator**
+Before running the E2E script, build the Flutter app for your target platform:
 
-```bash
-emulator -list-avds
-emulator -avd Pixel_8a
-```
-
-**Build and install the sample app**
-
+### For Android:
 ```bash
 cd example/testing_app
 flutter build apk --debug
-adb install -r build/app/outputs/flutter-apk/app-debug.apk
-adb shell pm list packages | grep testing_app
+cd ../..
 ```
+This produces the debug APK at `example/testing_app/build/app/outputs/flutter-apk/app-debug.apk`.
 
-**Appium and element listing**
+### For iOS Simulator:
+```bash
+cd example/testing_app
+flutter build ios --simulator
+cd ../..
+```
+This produces the simulator app bundle at `example/testing_app/build/ios/iphonesimulator/Runner.app`.
+
+---
+
+## Running the E2E Agent
+
+You can execute the automation script to start the session. Update the configuration inside [main.py](file:///Users/becca/StudioProjects/ai_e2e/main.py) to specify your target platform.
 
 ```bash
-appium
 uv run python main.py
 ```
 
-`main.py` connects via Appium (it launches the app) and prints each meaningful UI element (class, content-desc, text, bounds, clickable, etc.). If the UiAutomator2 server is slow to start, raise `UIAUTOMATOR2_LAUNCH_TIMEOUT_MS` (default `120000`).
+### Configuring main.py
+In [main.py](file:///Users/becca/StudioProjects/ai_e2e/main.py), configure the `DeviceSession` instantiation to match your target platform and device configuration:
 
-## Testable UI (semantics variant)
-
-`lib/e2e_counter_page.dart` exposes semantics labels that appear as `content-desc` in the hierarchy:
-
-| Label | Role |
-|-------|------|
-| `increment_button` | FAB tap target |
-| `counter_value` | Counter display |
-| `e2e_app_title` | App bar title (with semantics page only) |
-
-## Python only
-
-With emulator, Appium, and the app already running:
-
-```bash
-APP_PACKAGE=com.example.testing_app uv run python main.py
+#### Android Configuration:
+```python
+device_name = "Pixel_8a"
+app_path = "example/testing_app/build/app/outputs/flutter-apk/app-debug.apk"
+session = DeviceSession(
+    device_name,
+    app_path,
+    platform="android",
+    record_session=True,
+    session_dir=assets_dir,
+)
 ```
 
+#### iOS Configuration:
+```python
+device_name = "iPhone 15"  # Match your iOS simulator name
+app_path = "example/testing_app/build/ios/iphonesimulator/Runner.app"
+session = DeviceSession(
+    device_name,
+    app_path,
+    platform="ios",
+    record_session=True,
+    session_dir=assets_dir,
+)
+```
 
+### What Happens Under the Hood
+1. **Appium Startup**: The script launches the Appium server programmatically on port `4723`.
+2. **Device Connection**: It connects to the specified emulator/simulator and installs/launches the sample app.
+3. **Screen Perception**:
+   * Takes a screenshot of the current screen.
+   * Feeds the image to **YOLOv8** (automatically downloading the `deki-yolo` UI-element detection model from Hugging Face on the first run).
+   * Runs **EasyOCR** (which downloads its English language model on the first run) on text/button elements to extract visible labels.
+4. **AI Planning**:
+   * Annotates the screen image with bounding boxes.
+   * Sends the annotated image and element details to **Gemini 2.5 Flash** (via OpenRouter/LiteLLM).
+   * The LLM creates a high-level task plan and maps it to coordinates-based UI actions (e.g., tap at `(x, y)`, type text).
+5. **Execution**: The orchestrator triggers Appium inputs to perform the planned actions on the device.
+6. **Recording**: A screen recording of the session is saved as an `.mp4` file in the `assets/` directory.
 
-
-# DO NOT EDIT BELOW THIS LINE
-
-npm install -g appium
-appium --version
-
-appium driver install uiautomator2
-
-appium driver list --installed
-
-emulator -list-avds
-Pixel_8a
-emulator -avd Pixel_8a
-adb install example/testing_app/build/app/outputs/flutter-apk/app-debug.apk

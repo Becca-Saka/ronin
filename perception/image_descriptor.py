@@ -1,3 +1,12 @@
+"""
+Vision perception subsystem mapping screenshots to semantic GUI elements.
+
+This module processes device screenshots using:
+1. YOLOv8 object detection (using the `deki-yolo` model from Hugging Face) to find element bounding boxes.
+2. EasyOCR running in parallel via a ThreadPoolExecutor to perform OCR only on relevant cropped regions (e.g., Text, Button, and EditText).
+3. PIL to generate annotated images with overlaid bounding boxes and detected labels.
+"""
+
 import io
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -7,6 +16,7 @@ from huggingface_hub import hf_hub_download
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel
 from ultralytics import YOLO
+
 
 
 class BoundingBox(BaseModel):

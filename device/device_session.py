@@ -1,3 +1,8 @@
+"""
+Manages Appium server lifecycle and device connection session.
+Supports starting Appium programmatically, checking platforms, and screen recording.
+"""
+
 import os
 import time
 from pathlib import Path
@@ -11,6 +16,8 @@ from utils.platform_checks import run_ios_preflight, validate_app_path_for_platf
 
 
 class DeviceSession:
+    """Manages the startup/teardown of the Appium server and mobile device driver session."""
+
     def __init__(
         self,
         device_name: str,
@@ -19,6 +26,16 @@ class DeviceSession:
         session_dir: Path = Path("sessions"),
         platform: str = "android",
     ):
+        """Initializes a DeviceSession.
+
+        Args:
+            device_name: Name of the emulator/simulator/device to run against.
+            app_path: Path to the target mobile app bundle (.apk, .app, or .ipa).
+            record_session: If True, records the screen during execution.
+            session_dir: Directory where screen recordings will be saved.
+            platform: Platform name ('android' or 'ios').
+        """
+
         self.session_dir = session_dir
         self.device_name = device_name
         self.app_path = app_path
@@ -60,6 +77,7 @@ class DeviceSession:
             app_path=self.app_path,
             platform=self.platform,
             adb_control=self.adb_control if self.platform == "android" else None,
+            is_headless=is_headless,
         )
         if self.platform == "android":
             self.adb_control.enable_feedback(

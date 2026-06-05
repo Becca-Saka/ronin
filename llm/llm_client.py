@@ -1,22 +1,23 @@
-import os
+"""
+LiteLLM wrapper client for communicating with LLMs (e.g. Gemini via OpenRouter).
+Supports standard messaging and structured output via Pydantic schemas.
+"""
 
 import litellm
-from dotenv import load_dotenv
 from pydantic import BaseModel
 
 from .messages import Message
 
-load_dotenv()
-
-_MODEL = "openrouter/google/gemini-2.5-flash"
-
 
 class LLMClient:
-    def __init__(self, model: str = _MODEL):
-        api_key = os.getenv("OPENROUTER_API_KEY")
-        if not api_key:
-            raise EnvironmentError("OPENROUTER_API_KEY is not set")
-        os.environ["OPENROUTER_API_KEY"] = api_key
+    """Client for making calls to the OpenRouter/LiteLLM completion API."""
+
+    def __init__(self, model: str):
+        """Initializes the LLM client.
+
+        Args:
+            model: The API model identifier to use for requests.
+        """
         self._model = model
 
     def generate_response(
@@ -24,6 +25,16 @@ class LLMClient:
         messages: list[Message],
         response_model: type[BaseModel] | None = None,
     ) -> str | BaseModel:
+        """Sends a message sequence to the LLM and returns the completion.
+
+        Args:
+            messages: A list of Message objects (text, image, multipart) to send.
+            response_model: Optional Pydantic BaseModel class for structured output.
+
+        Returns:
+            The raw text response from the LLM, or a validated instance of response_model
+            if specified.
+        """
         kwargs: dict = {
             "model": self._model,
             "messages": [m.to_dict() for m in messages],
@@ -38,3 +49,4 @@ class LLMClient:
         if response_model:
             return response_model.model_validate_json(content)
         return content
+
