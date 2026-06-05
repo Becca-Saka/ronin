@@ -103,16 +103,17 @@ class DeviceControl:
 
     def type(self, text, x, y):
         self.tap(x, y)
+        time.sleep(1.0)
         if self.platform == Platform.IOS:
             self.execute_script("mobile: type", {"text": text})
         else:
             self.driver.switch_to.active_element.send_keys(text)
         time.sleep(0.5)
 
-    def double_tap(self, x, y):
-        self.tap(x, y)
+    def double_tap(self, x, y, with_feedback: bool = True):
+        self.tap(x, y, with_feedback=with_feedback)
         time.sleep(0.2)
-        self.tap(x, y)
+        self.tap(x, y, with_feedback=with_feedback)
         time.sleep(0.2)
 
     def long_press(self, x, y, duration):
@@ -156,10 +157,19 @@ class DeviceControl:
         self.remove_app(self.package_id)
 
     def quit(self):
-        self.driver.quit()
+        try:
+            self.driver.quit()
+        except Exception as e:
+            logger.warning("Failed to quit driver cleanly: %s", e)
         if self.platform == Platform.ANDROID and self.adb_control:
-            self.adb_control.disable_feedback()
-            self.adb_control.kill_emulator(self.device_name)
+            try:
+                self.adb_control.disable_feedback()
+            except Exception as e:
+                logger.warning("Failed to disable feedback: %s", e)
+            try:
+                self.adb_control.kill_emulator(self.device_name)
+            except Exception as e:
+                logger.warning("Failed to kill emulator: %s", e)
 
     def execute_script(self, script, args):
         self.driver.execute_script(script, args)

@@ -109,24 +109,30 @@ uv run python main.py --log-level DEBUG
 ```
 
 ### Configuring main.py
-In [main.py](file:///Users/becca/StudioProjects/ai_e2e/main.py), configure the `RoninAgent` instantiation to match your target platform and device configuration:
+In [main.py](file:///Users/becca/StudioProjects/ai_e2e/main.py), configure the `CONFIG` dictionary to match your target platform and device configuration:
 
 #### Android Configuration:
 ```python
-agent = RoninAgent(
-    device_name="Pixel_8a",
-    app_path="example/testing_app/build/app/outputs/flutter-apk/app-debug.apk",
-    platform=Platform.ANDROID,
-)
+CONFIG = {
+    "goal": "I want to sign in to the app with email 'test@email.com'",
+    "device_name": "Pixel_8a",
+    "app_path": "example/testing_app/build/app/outputs/flutter-apk/app-debug.apk",
+    "platform": Platform.ANDROID,
+    "use_multimodal_vision": False,
+    "max_steps": 15,
+}
 ```
 
 #### iOS Configuration:
 ```python
-agent = RoninAgent(
-    device_name="iPhone 15",  # Match your iOS simulator name
-    app_path="example/testing_app/build/ios/iphonesimulator/Runner.app",
-    platform=Platform.IOS,
-)
+CONFIG = {
+    "goal": "I want to sign in to the app with email 'test@email.com'",
+    "device_name": "iPhone 15",  # Match your iOS simulator name
+    "app_path": "example/testing_app/build/ios/iphonesimulator/Runner.app",
+    "platform": Platform.IOS,
+    "use_multimodal_vision": False,
+    "max_steps": 15,
+}
 ```
 
 ### What Happens Under the Hood

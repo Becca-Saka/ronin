@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+from actuation.actions import ActionPlan
 from device.device_control import DeviceControl
 
 logger = logging.getLogger(__name__)
@@ -66,3 +67,59 @@ class MediaManager:
         annotated_png_bytes = self.annotate(png_bytes, x, y, label, color)
         self.save_screenshot(annotated_png_bytes, name, screenshot_dir)
         return annotated_png_bytes
+
+    def save_action_annotation(
+        self,
+        annotated_img: Image.Image,
+        action_plan: ActionPlan,
+        filepath: Path,
+    ) -> bool:
+        """Annotates the planned action (tap, type, swipe, drag) on the image and saves it.
+
+        Args:
+            annotated_img: The PIL Image to draw on.
+            action_plan: The ActionPlan to visualize.
+            filepath: Path to save the annotated image to.
+
+        Returns:
+            True if the image was annotated and saved, False otherwise.
+        """
+        if not action_plan or not action_plan.actions:
+            return False
+
+        action_img = annotated_img.copy()
+        draw = ImageDraw.Draw(action_img)
+        first_action = action_plan.actions[0]
+        action_type_str = first_action.type.value
+        highlighted = False
+
+        if hasattr(first_action, 'coordinates') and first_action.coordinates:
+            px, py = int(first_action.coordinates.x), int(first_action.coordinates.y)
+            radius = 25
+            draw.ellipse([px - radius, py - radius, px + radius, py + radius], outline="red", width=5)
+            draw.line([px - radius, py, px + radius, py], fill="red", width=3)
+            draw.line([px, py - radius, px, py + radius], fill="red", width=3)
+            draw.text((px + radius + 5, py - 10), f"{action_type_str.upper()} ({px}, {py})", fill="red")
+            highlighted = True
+        elif action_type_str == "swipe" and hasattr(first_action, 'start_x'):
+            sx, sy = int(first_action.start_x), int(first_action.start_y)
+            ex, ey = int(first_action.end_x), int(first_action.end_y)
+            draw.ellipse([sx - 10, sy - 10, sx + 10, sy + 10], fill="red")
+            draw.line([sx, sy, ex, ey], fill="red", width=5)
+            draw.text((sx + 15, sy - 10), f"SWIPE START ({sx}, {sy})", fill="red")
+            highlighted = True
+        elif action_type_str == "drag_and_drop" and hasattr(first_action, 'source_x'):
+            sx, sy = int(first_action.source_x), int(first_action.source_y)
+            ex, ey = int(first_action.destination_x), int(first_action.destination_y)
+            draw.ellipse([sx - 10, sy - 10, sx + 10, sy + 10], fill="red")
+            draw.line([sx, sy, ex, ey], fill="red", width=5)
+            draw.text((sx + 15, sy - 10), f"DRAG START ({sx}, {sy})", fill="red")
+            highlighted = True
+
+        if highlighted:
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            action_img.save(filepath)
+            logger.info("Saved action location annotation to %s", filepath)
+            return True
+
+        return False

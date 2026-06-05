@@ -133,8 +133,23 @@ class _HomeTab extends StatelessWidget {
                 subtitle: Text('Home feed item $index'),
                 trailing: IconButton(
                   icon: const Icon(Icons.chevron_right),
-                  onPressed: () {},
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => NotificationDetailPage(index: index),
+                      ),
+                    );
+                  },
                 ),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => NotificationDetailPage(index: index),
+                    ),
+                  );
+                },
               );
             },
           ),
@@ -143,6 +158,100 @@ class _HomeTab extends StatelessWidget {
     );
   }
 }
+
+class NotificationDetailPage extends StatefulWidget {
+  final int index;
+  const NotificationDetailPage({super.key, required this.index});
+
+  @override
+  State<NotificationDetailPage> createState() => _NotificationDetailPageState();
+}
+
+class _NotificationDetailPageState extends State<NotificationDetailPage> {
+  final _replyController = TextEditingController();
+  bool _isPinned = false;
+  String _statusMessage = '';
+
+  @override
+  void dispose() {
+    _replyController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (_replyController.text.isNotEmpty) {
+      setState(() {
+        _statusMessage = 'Reply submitted: "${_replyController.text}"' + (_isPinned ? ' (Pinned)' : '');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Details'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Detail view for Home feed item ${widget.index}',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'This is a complex notification that requires user feedback. Please type a reply and decide if you want to pin this notification to your home dashboard.',
+            ),
+            const SizedBox(height: 24),
+            TextField(
+              controller: _replyController,
+              decoration: const InputDecoration(
+                labelText: 'Reply message',
+                hintText: 'Enter your response...',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            SwitchListTile(
+              title: const Text('Pin notification'),
+              subtitle: const Text('Keep this notification at the top of the feed'),
+              value: _isPinned,
+              onChanged: (bool value) {
+                setState(() {
+                  _isPinned = value;
+                });
+              },
+            ),
+            const SizedBox(height: 24),
+            FilledButton(
+              onPressed: _submit,
+              child: const Text('Submit'),
+            ),
+            if (_statusMessage.isNotEmpty) ...[
+              const SizedBox(height: 24),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  border: Border.all(color: Colors.green),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _statusMessage,
+                  style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 
 class _InboxTab extends StatelessWidget {
   const _InboxTab({

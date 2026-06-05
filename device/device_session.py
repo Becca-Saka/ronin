@@ -96,10 +96,20 @@ class DeviceSession:
     def close(self):
         if self.is_recording:
             session_path = self.session_dir / f"session_{self.session_id}.mp4"
-            self.device_control.stop_recording(session_path)
+            try:
+                self.device_control.stop_recording(session_path)
+                logger.info("Session recording saved to %s", session_path)
+            except Exception as e:
+                logger.warning("Failed to save session recording: %s", e)
             self.is_recording = False
-            logger.info("Session recording saved to %s", session_path)
         if self.device_control:
-            self.device_control.quit()
+            try:
+                self.device_control.quit()
+            except Exception as e:
+                logger.warning("Failed to quit device control: %s", e)
         if self._appium_service.is_running:
-            self._appium_service.stop()
+            try:
+                self._appium_service.stop()
+                logger.info("Appium service stopped")
+            except Exception as e:
+                logger.warning("Failed to stop Appium service: %s", e)
