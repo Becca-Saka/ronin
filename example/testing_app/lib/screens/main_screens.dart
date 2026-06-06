@@ -23,7 +23,10 @@ class RequestLocationScreen extends StatelessWidget {
           const SizedBox(height: 24),
           Text(
             'Allow Location Access',
-            style: TextStyle(fontSize: 22 * fontScale, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              fontSize: 22 * fontScale,
+              fontWeight: FontWeight.bold,
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 16),
@@ -34,7 +37,7 @@ class RequestLocationScreen extends StatelessWidget {
           ),
           const SizedBox(height: 48),
           ElevatedButton(
-            key: const Key('grant_location_permission'),
+            // key: const Key('grant_location_permission'),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green,
               foregroundColor: Colors.white,
@@ -45,7 +48,7 @@ class RequestLocationScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           OutlinedButton(
-            key: const Key('deny_location_permission'),
+            // key: const Key('deny_location_permission'),
             style: OutlinedButton.styleFrom(
               side: const BorderSide(color: Colors.red),
               foregroundColor: Colors.red,
@@ -93,9 +96,11 @@ class HomeScreen extends StatelessWidget {
         // Location status bar
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          color: locationPermissionGranted ? Colors.green.shade50 : Colors.red.shade50,
+          color: locationPermissionGranted
+              ? Colors.green.shade50
+              : Colors.red.shade50,
           child: Row(
-            key: const Key('location_status'),
+            // key: const Key('location_status'),
             children: [
               Icon(
                 locationPermissionGranted ? Icons.gps_fixed : Icons.gps_off,
@@ -108,20 +113,30 @@ class HomeScreen extends StatelessWidget {
                       ? 'Location: Active (Nearest First)'
                       : 'Location Denied: Sorting Alphabetically',
                   style: TextStyle(
-                    color: locationPermissionGranted ? Colors.green.shade800 : Colors.red.shade800,
+                    color: locationPermissionGranted
+                        ? Colors.green.shade800
+                        : Colors.red.shade800,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
               ElevatedButton(
-                key: const Key('toggle_location_permission'),
+                // key: const Key('toggle_location_permission'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: locationPermissionGranted ? Colors.red : Colors.green,
+                  backgroundColor: locationPermissionGranted
+                      ? Colors.red
+                      : Colors.green,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                 ),
                 onPressed: onToggleLocationPermission,
-                child: Text(locationPermissionGranted ? 'Deny' : 'Grant', style: const TextStyle(fontSize: 11)),
+                child: Text(
+                  locationPermissionGranted ? 'Deny' : 'Grant',
+                  style: const TextStyle(fontSize: 11),
+                ),
               ),
             ],
           ),
@@ -136,13 +151,24 @@ class HomeScreen extends StatelessWidget {
                 child: ListTile(
                   leading: CircleAvatar(
                     backgroundColor: Colors.deepOrange.shade100,
-                    child: Text(rest.name[0], style: const TextStyle(color: Colors.deepOrange)),
+                    child: Text(
+                      rest.name[0],
+                      style: const TextStyle(color: Colors.deepOrange),
+                    ),
                   ),
-                  title: Text(rest.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text('${rest.category} • ${rest.distance.toStringAsFixed(1)} km'),
+                  title: Text(
+                    rest.name,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text(
+                    '${rest.category} • ${rest.distance.toStringAsFixed(1)} km',
+                  ),
                   trailing: ElevatedButton(
-                    key: Key('restaurant_card_${index}'),
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.deepOrange, foregroundColor: Colors.white),
+                    // key: Key('restaurant_card_${index}'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.deepOrange,
+                      foregroundColor: Colors.white,
+                    ),
                     onPressed: () => onSelectRestaurant(rest),
                     child: const Text('Menu'),
                   ),

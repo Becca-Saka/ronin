@@ -202,8 +202,9 @@ class RoninAgent:
                 )
 
                 # 1. Screen Perception
-                gui_elements, annotated_img = perception.perceive()
+                gui_elements, raw_img, annotated_img = perception.perceive()
                 gui_elements = redact_elements(gui_elements)
+                logger.info("Perceived %d GUI element(s).", len(gui_elements))
 
                 clean_timestamp = time.strftime("%Y%m%d_%H%M%S")
                 filepath = (
@@ -214,8 +215,8 @@ class RoninAgent:
                 logger.info("Saved step screenshot to %s", filepath)
 
                 buf = io.BytesIO()
-                annotated_img.save(buf, format="PNG")
-                annotated_img_bytes = buf.getvalue()
+                raw_img.save(buf, format="PNG")
+                raw_img_bytes = buf.getvalue()
 
                 elements_summary = "\n".join(
                     f"{el.element:20} {el.text:20} {el.confidence:20} {str(el.bounding_box):20} {el.type:20}"
@@ -227,7 +228,7 @@ class RoninAgent:
                 step_response = self.fast_planner.plan_next_step(
                     goal=goal,
                     gui_elements=gui_elements,
-                    current_image_bytes=annotated_img_bytes,
+                    current_image_bytes=raw_img_bytes,
                     visual_history=list(visual_history),
                     text_history=list(text_history),
                     drift_warning=drift_warning,
@@ -272,7 +273,7 @@ class RoninAgent:
                 )
                 text_history.append(action_desc)
 
-                visual_history.append(annotated_img_bytes)
+                visual_history.append(raw_img_bytes)
 
                 if len(visual_history) > self.visual_history_limit:
                     visual_history.pop(0)
@@ -335,8 +336,9 @@ class RoninAgent:
                 )
 
                 # 1. Screen Perception
-                gui_elements, annotated_img = perception.perceive()
+                gui_elements, raw_img, annotated_img = perception.perceive()
                 gui_elements = redact_elements(gui_elements)
+                logger.info("Perceived %d GUI element(s).", len(gui_elements))
 
                 # Construct screen signature to detect repetition loops
                 current_screen_sig = (
@@ -355,8 +357,6 @@ class RoninAgent:
                     else ()
                 )
 
-
-
                 clean_timestamp = time.strftime("%Y%m%d_%H%M%S")
                 filename = (
                     f"scen_{test_case.test_id}_step{step + 1}_{clean_timestamp}.png"
@@ -366,8 +366,8 @@ class RoninAgent:
                 screenshots.append(str(filepath))
 
                 buf = io.BytesIO()
-                annotated_img.save(buf, format="PNG")
-                annotated_img_bytes = buf.getvalue()
+                raw_img.save(buf, format="PNG")
+                raw_img_bytes = buf.getvalue()
 
                 # 2. Plan step and audit via LLM Planner (using fast model)
                 step_response = self.fast_planner.plan_next_step(
@@ -375,7 +375,7 @@ class RoninAgent:
                     expected_outcomes=test_case.expected_outcomes,
                     security_rules=security_rules,
                     gui_elements=gui_elements,
-                    current_image_bytes=annotated_img_bytes,
+                    current_image_bytes=raw_img_bytes,
                     visual_history=list(visual_history),
                     text_history=list(text_history),
                     drift_warning=drift_warning,
@@ -406,6 +406,11 @@ class RoninAgent:
                 for issue in step_response.detected_issues:
                     issue.current_screen = step_response.current_screen
                     detected_issues.append(issue)
+                    logger.info(
+                        "QA issue [%s/%s] on '%s': %s",
+                        issue.severity, issue.issue_type,
+                        step_response.current_screen, issue.description,
+                    )
 
                 # Check if there is a crash screen (hard failure that aborts execution)
                 has_crash = any(
@@ -539,7 +544,7 @@ class RoninAgent:
                 )
                 text_history.append(action_desc)
 
-                visual_history.append(annotated_img_bytes)
+                visual_history.append(raw_img_bytes)
 
                 if len(visual_history) > self.visual_history_limit:
                     visual_history.pop(0)

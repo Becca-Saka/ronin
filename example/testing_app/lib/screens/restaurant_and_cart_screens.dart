@@ -36,8 +36,14 @@ class RestaurantScreen extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(restaurant.category, style: const TextStyle(fontSize: 16, color: Colors.grey)),
-                Text('${restaurant.distance} km away', style: const TextStyle(fontSize: 16, color: Colors.grey)),
+                Text(
+                  restaurant.category,
+                  style: const TextStyle(fontSize: 16, color: Colors.grey),
+                ),
+                Text(
+                  '${restaurant.distance} km away',
+                  style: const TextStyle(fontSize: 16, color: Colors.grey),
+                ),
               ],
             ),
           ),
@@ -49,7 +55,10 @@ class RestaurantScreen extends StatelessWidget {
                 final item = restaurant.menu[index];
                 final cartQty = cart[item.id] ?? 0;
                 return Card(
-                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  margin: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                   child: Padding(
                     padding: const EdgeInsets.all(12),
                     child: Row(
@@ -58,11 +67,23 @@ class RestaurantScreen extends StatelessWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(item.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                              Text(
+                                item.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
                               const SizedBox(height: 4),
-                              Text(item.description, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                              Text(
+                                item.description,
+                                style: const TextStyle(
+                                  color: Colors.grey,
+                                  fontSize: 12,
+                                ),
+                              ),
                               const SizedBox(height: 8),
-                              
+
                               // Price Box with fixed dimensions to trigger text clipping during scale audits!
                               Container(
                                 width: 70,
@@ -74,14 +95,15 @@ class RestaurantScreen extends StatelessWidget {
                                 ),
                                 child: Text(
                                   '\$${item.price.toStringAsFixed(2)}',
-                                  key: Key('price_label_${item.id}'),
+                                  // key: Key('price_label_${item.id}'),
                                   style: TextStyle(
                                     fontSize: 14 * fontScale,
                                     fontWeight: FontWeight.bold,
                                     color: Colors.deepOrange,
                                   ),
                                   maxLines: 1,
-                                  overflow: TextOverflow.clip, // Deliberate clipping visual bug!
+                                  overflow: TextOverflow
+                                      .clip, // Deliberate clipping visual bug!
                                 ),
                               ),
                             ],
@@ -91,14 +113,29 @@ class RestaurantScreen extends StatelessWidget {
                           children: [
                             if (cartQty > 0)
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(color: Colors.deepOrange, borderRadius: BorderRadius.circular(12)),
-                                child: Text('$cartQty in Cart', style: const TextStyle(color: Colors.white, fontSize: 11)),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.deepOrange,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  '$cartQty in Cart',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                  ),
+                                ),
                               ),
                             const SizedBox(height: 8),
                             ElevatedButton(
-                              key: Key('add_to_cart_item_${item.id}'),
-                              style: ElevatedButton.styleFrom(backgroundColor: Colors.deepOrange, foregroundColor: Colors.white),
+                              // key: Key('add_to_cart_item_${item.id}'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.deepOrange,
+                                foregroundColor: Colors.white,
+                              ),
                               onPressed: () => onAddItem(item.id),
                               child: const Text('Add'),
                             ),
@@ -114,7 +151,7 @@ class RestaurantScreen extends StatelessWidget {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        key: const Key('view_cart_button'),
+        // key: const Key('view_cart_button'),
         backgroundColor: Colors.deepOrange,
         foregroundColor: Colors.white,
         onPressed: onViewCart,
@@ -188,8 +225,11 @@ class CartScreen extends StatelessWidget {
                   ),
                 ),
                 ElevatedButton(
-                  key: const Key('double_items_button'),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.amber.shade800, foregroundColor: Colors.white),
+                  // key: const Key('double_items_button'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.amber.shade800,
+                    foregroundColor: Colors.white,
+                  ),
                   onPressed: onDoubleItems,
                   child: const Text('x2 Items'),
                 ),
@@ -198,7 +238,12 @@ class CartScreen extends StatelessWidget {
           ),
           Expanded(
             child: cartItems.isEmpty
-                ? const Center(child: Text('Your cart is empty', style: TextStyle(fontSize: 16, color: Colors.grey)))
+                ? const Center(
+                    child: Text(
+                      'Your cart is empty',
+                      style: TextStyle(fontSize: 16, color: Colors.grey),
+                    ),
+                  )
                 : ListView.builder(
                     itemCount: cartItems.length,
                     itemBuilder: (context, index) {
@@ -207,22 +252,42 @@ class CartScreen extends StatelessWidget {
                       if (item == null) return const SizedBox.shrink();
 
                       return Card(
-                        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
                         child: ListTile(
-                          title: Text(item.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text('\$${item.price.toStringAsFixed(2)} x ${entry.value}'),
+                          title: Text(
+                            item.name,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Text(
+                            '\$${item.price.toStringAsFixed(2)} x ${entry.value}',
+                          ),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               IconButton(
-                                key: Key('decrease_qty_${item.id}'),
-                                icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
+                                // key: Key('decrease_qty_${item.id}'),
+                                icon: const Icon(
+                                  Icons.remove_circle_outline,
+                                  color: Colors.red,
+                                ),
                                 onPressed: () => onDecreaseQty(item.id),
                               ),
-                              Text('${entry.value}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                              Text(
+                                '${entry.value}',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                               IconButton(
-                                key: Key('increase_qty_${item.id}'),
-                                icon: const Icon(Icons.add_circle_outline, color: Colors.green),
+                                // key: Key('increase_qty_${item.id}'),
+                                icon: const Icon(
+                                  Icons.add_circle_outline,
+                                  color: Colors.green,
+                                ),
                                 onPressed: () => onIncreaseQty(item.id),
                               ),
                             ],
@@ -236,7 +301,13 @@ class CartScreen extends StatelessWidget {
             padding: const EdgeInsets.all(24),
             decoration: BoxDecoration(
               color: Colors.white,
-              boxShadow: [BoxShadow(color: Colors.grey.shade200, blurRadius: 10, spreadRadius: 5)],
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.shade200,
+                  blurRadius: 10,
+                  spreadRadius: 5,
+                ),
+              ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -244,32 +315,49 @@ class CartScreen extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('Subtotal:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const Text(
+                      'Subtotal:',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     Text(
                       '\$${subtotal.toStringAsFixed(2)}',
-                      key: const Key('cart_subtotal'),
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.deepOrange),
+                      // key: const Key('cart_subtotal'),
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.deepOrange,
+                      ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 16),
                 if (subtotal == 0)
                   Container(
-                    key: const Key('empty_cart_error'),
+                    // key: const Key('empty_cart_error'),
                     padding: const EdgeInsets.all(8),
                     color: Colors.red.shade50,
                     margin: const EdgeInsets.only(bottom: 8),
-                    child: const Text('Cannot checkout with an empty cart!', style: TextStyle(color: Colors.red), textAlign: TextAlign.center),
+                    child: const Text(
+                      'Cannot checkout with an empty cart!',
+                      style: TextStyle(color: Colors.red),
+                      textAlign: TextAlign.center,
+                    ),
                   ),
                 ElevatedButton(
-                  key: const Key('proceed_to_checkout'),
+                  // key: const Key('proceed_to_checkout'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.deepOrange,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
                   onPressed: onProceedToCheckout,
-                  child: Text('Proceed to Checkout', style: TextStyle(fontSize: 16 * fontScale)),
+                  child: Text(
+                    'Proceed to Checkout',
+                    style: TextStyle(fontSize: 16 * fontScale),
+                  ),
                 ),
               ],
             ),

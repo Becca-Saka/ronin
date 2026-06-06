@@ -12,7 +12,6 @@ from ronin_agent import RoninAgent
 logger = logging.getLogger(__name__)
 
 
-
 def main():
     """Main execution function coordinating agent instantiation and goal execution."""
     api_key = os.getenv("OPENROUTER_API_KEY")
@@ -33,7 +32,7 @@ def main():
         app_path=app_path,
         platform=Platform.ANDROID,
         use_multimodal_vision=False,
-        max_steps=20,
+        max_steps=10,
         headless=False,
     )
     try:
@@ -43,8 +42,9 @@ def main():
 
 
 if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser(description="Ronin E2E mobile testing agent", add_help=False)
+    parser = argparse.ArgumentParser(
+        description="Ronin E2E mobile testing agent", add_help=False
+    )
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -66,10 +66,13 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "test-journey":
         sys.argv.pop(1)
         from ronin_testing.cli import main as cli_main
+
         cli_main()
     else:
         # Re-parse legacy arguments if not running a test journey
-        legacy_parser = argparse.ArgumentParser(description="Ronin E2E mobile testing agent")
+        legacy_parser = argparse.ArgumentParser(
+            description="Ronin E2E mobile testing agent"
+        )
         # Log level is already processed, but add it to legacy parser for completeness
         legacy_parser.add_argument(
             "--log-level",

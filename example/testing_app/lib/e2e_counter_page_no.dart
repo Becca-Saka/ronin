@@ -16,7 +16,7 @@ enum AppScreen {
   cart,
   paymentMethod,
   checkout,
-  orderStatus
+  orderStatus,
 }
 
 class E2eCounterPageNo extends StatefulWidget {
@@ -175,12 +175,16 @@ class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
               color: Colors.grey.shade100,
               child: Row(
                 children: [
-                  const Icon(Icons.accessibility_new, size: 20, color: Colors.blueGrey),
+                  const Icon(
+                    Icons.accessibility_new,
+                    size: 20,
+                    color: Colors.blueGrey,
+                  ),
                   const SizedBox(width: 8),
                   const Text('Font Scale:', style: TextStyle(fontSize: 12)),
                   Expanded(
                     child: Slider(
-                      key: const Key('font_scale_slider'),
+                      // key: const Key('font_scale_slider'),
                       value: _fontScale,
                       min: 0.8,
                       max: 2.5,
@@ -188,7 +192,7 @@ class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
                     ),
                   ),
                   TextButton.icon(
-                    key: const Key('global_reset_button'),
+                    // key: const Key('global_reset_button'),
                     icon: const Icon(Icons.refresh, size: 16),
                     label: const Text('Reset', style: TextStyle(fontSize: 12)),
                     onPressed: _resetApp,
@@ -196,9 +200,7 @@ class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
                 ],
               ),
             ),
-            Expanded(
-              child: _buildCurrentScreen(),
-            ),
+            Expanded(child: _buildCurrentScreen()),
           ],
         ),
       ),
@@ -250,7 +252,9 @@ class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
           fontScale: _fontScale,
           locationPermissionGranted: _locationPermissionGranted,
           onToggleLocationPermission: () {
-            setState(() => _locationPermissionGranted = !_locationPermissionGranted);
+            setState(
+              () => _locationPermissionGranted = !_locationPermissionGranted,
+            );
           },
           onSelectRestaurant: (rest) {
             setState(() {

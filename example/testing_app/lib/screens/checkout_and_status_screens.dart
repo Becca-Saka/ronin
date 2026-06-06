@@ -31,19 +31,24 @@ class PaymentMethodScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('Choose your preferred payment method:', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const Text(
+              'Choose your preferred payment method:',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 24),
             RadioListTile<String>(
-              key: const Key('select_payment_card'),
+              // key: const Key('select_payment_card'),
               title: const Text('Credit / Debit Card'),
-              subtitle: const Text('Pay securely with Visa, Mastercard, or Amex'),
+              subtitle: const Text(
+                'Pay securely with Visa, Mastercard, or Amex',
+              ),
               value: 'card',
               groupValue: selectedPaymentMethod,
               onChanged: (val) => onPaymentMethodChanged(val!),
             ),
             const Divider(),
             RadioListTile<String>(
-              key: const Key('select_payment_cash'),
+              // key: const Key('select_payment_cash'),
               title: const Text('Cash on Delivery (COD)'),
               subtitle: const Text('Pay with cash when your food arrives'),
               value: 'cash',
@@ -52,14 +57,17 @@ class PaymentMethodScreen extends StatelessWidget {
             ),
             const Spacer(),
             ElevatedButton(
-              key: const Key('continue_to_payment_details'),
+              // key: const Key('continue_to_payment_details'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.deepOrange,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 16),
               ),
               onPressed: onContinue,
-              child: Text('Continue', style: TextStyle(fontSize: 16 * fontScale)),
+              child: Text(
+                'Continue',
+                style: TextStyle(fontSize: 16 * fontScale),
+              ),
             ),
           ],
         ),
@@ -102,7 +110,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   String _getMaskedCardNumberDisplay(String input) {
     final clean = input.replaceAll(RegExp(r'\D'), '');
     if (clean.isEmpty) return '•••• •••• •••• ••••';
-    
+
     final formatted = StringBuffer();
     for (int i = 0; i < clean.length; i++) {
       if (i > 0 && i % 4 == 0) {
@@ -114,15 +122,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         formatted.write(clean[i]);
       }
     }
-    
+
     while (formatted.length < 19) {
-      if (formatted.length == 4 || formatted.length == 9 || formatted.length == 14) {
+      if (formatted.length == 4 ||
+          formatted.length == 9 ||
+          formatted.length == 14) {
         formatted.write(' ');
       } else {
         formatted.write('•');
       }
     }
-    
+
     return formatted.toString();
   }
 
@@ -143,10 +153,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('Delivery Address', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const Text(
+              'Delivery Address',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
             const SizedBox(height: 8),
             TextField(
-              key: const Key('checkout_address'),
+              // key: const Key('checkout_address'),
               controller: widget.addressController,
               maxLines: 3,
               maxLength: 600,
@@ -159,56 +172,89 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Address Length Indicator:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const Text(
+                  'Address Length Indicator:',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
                 Text(
                   '${widget.addressController.text.length} chars',
-                  key: const Key('address_length'),
+                  //key: const Key('address_length'),
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
-                    color: widget.addressController.text.length > 500 ? Colors.red : Colors.green,
+                    color: widget.addressController.text.length > 500
+                        ? Colors.red
+                        : Colors.green,
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 24),
-            
+
             // Payment Details (visible/active if card selected)
             if (isCard) ...[
-              const Text('Credit Card Details', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const Text(
+                'Credit Card Details',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
               const SizedBox(height: 16),
-              
+
               // Custom interactive Masked Card visual preview (prevents plain text visibility)
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [Colors.deepOrange, Colors.orange.shade800]),
+                  gradient: LinearGradient(
+                    colors: [Colors.deepOrange, Colors.orange.shade800],
+                  ),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('SECURE PAYMENT CARD', style: TextStyle(color: Colors.white70, fontSize: 10, letterSpacing: 1.5)),
+                    const Text(
+                      'SECURE PAYMENT CARD',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 10,
+                        letterSpacing: 1.5,
+                      ),
+                    ),
                     const SizedBox(height: 20),
                     Text(
-                      _getMaskedCardNumberDisplay(widget.cardNumberController.text),
-                      style: const TextStyle(color: Colors.white, fontSize: 20, letterSpacing: 2.0, fontFamily: 'Courier'),
+                      _getMaskedCardNumberDisplay(
+                        widget.cardNumberController.text,
+                      ),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        letterSpacing: 2.0,
+                        fontFamily: 'Courier',
+                      ),
                     ),
                     const SizedBox(height: 20),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('RONIN TESTER', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                        Text('CVV: ${"•" * widget.cvvController.text.length}', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                        const Text(
+                          'RONIN TESTER',
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
+                        ),
+                        Text(
+                          'CVV: ${"•" * widget.cvvController.text.length}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                        ),
                       ],
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 16),
-              
+
               TextField(
-                key: const Key('checkout_card_number'),
+                // key: const Key('checkout_card_number'),
                 controller: widget.cardNumberController,
                 keyboardType: TextInputType.number,
                 obscureText: true, // Obscured for security compliance
@@ -221,7 +267,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               ),
               const SizedBox(height: 16),
               TextField(
-                key: const Key('checkout_cvv'),
+                // key: const Key('checkout_cvv'),
                 controller: widget.cvvController,
                 keyboardType: TextInputType.number,
                 obscureText: true,
@@ -233,33 +279,39 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 onChanged: (val) => setState(() {}),
               ),
             ],
-            
+
             if (widget.checkoutError != null) ...[
               const SizedBox(height: 16),
               Text(
                 widget.checkoutError!,
                 key: const Key('card_validation_error'),
-                style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  color: Colors.red,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
-            
+
             if (widget.multiTapWarningVisible) ...[
               const SizedBox(height: 16),
               Container(
-                key: const Key('multi_tap_warning'),
+                // key: const Key('multi_tap_warning'),
                 padding: const EdgeInsets.all(12),
                 color: Colors.red.shade100,
                 child: Text(
                   'Multi-tap detected! Total place order button taps: ${widget.placeOrderTapCount}',
-                  style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    color: Colors.red,
+                    fontWeight: FontWeight.bold,
+                  ),
                   textAlign: TextAlign.center,
                 ),
               ),
             ],
-            
+
             const SizedBox(height: 32),
             ElevatedButton(
-              key: const Key('place_order_button'),
+              // key: const Key('place_order_button'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.green,
                 foregroundColor: Colors.white,
@@ -268,13 +320,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               onPressed: widget.onPlaceOrder,
               child: Text(
                 'Place Order',
-                style: TextStyle(fontSize: 18 * widget.fontScale, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontSize: 18 * widget.fontScale,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
             const SizedBox(height: 8),
             Text(
               'Taps Registered: ${widget.placeOrderTapCount}',
-              key: const Key('orders_placed_count'),
+              //key: const Key('orders_placed_count'),
               style: const TextStyle(fontSize: 11, color: Colors.grey),
               textAlign: TextAlign.center,
             ),
@@ -323,10 +378,20 @@ class OrderStatusScreen extends StatelessWidget {
         CircleAvatar(
           radius: 12,
           backgroundColor: isActive ? Colors.deepOrange : Colors.grey.shade300,
-          child: Icon(Icons.check, size: 12, color: isActive ? Colors.white : Colors.grey),
+          child: Icon(
+            Icons.check,
+            size: 12,
+            color: isActive ? Colors.white : Colors.grey,
+          ),
         ),
         const SizedBox(height: 4),
-        Text(label, style: TextStyle(fontSize: 9, color: isActive ? Colors.black : Colors.grey)),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 9,
+            color: isActive ? Colors.black : Colors.grey,
+          ),
+        ),
       ],
     );
   }
@@ -351,7 +416,10 @@ class OrderStatusScreen extends StatelessWidget {
           const SizedBox(height: 24),
           Text(
             'Order Placed Successfully!',
-            style: TextStyle(fontSize: 22 * fontScale, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              fontSize: 22 * fontScale,
+              fontWeight: FontWeight.bold,
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 32),
@@ -364,7 +432,10 @@ class OrderStatusScreen extends StatelessWidget {
             ),
             child: Column(
               children: [
-                const Text('Current Status:', style: TextStyle(fontSize: 14, color: Colors.grey)),
+                const Text(
+                  'Current Status:',
+                  style: TextStyle(fontSize: 14, color: Colors.grey),
+                ),
                 const SizedBox(height: 8),
                 Text(
                   orderStatus.toUpperCase(),

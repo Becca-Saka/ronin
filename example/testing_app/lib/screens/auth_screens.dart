@@ -68,7 +68,7 @@ class _LoginScreenState extends State<LoginScreen> {
           const Text('Sign in to continue', textAlign: TextAlign.center),
           const SizedBox(height: 32),
           TextField(
-            key: const Key('login_email'),
+            // key: const Key('login_email'),
             controller: _emailController,
             keyboardType: TextInputType.emailAddress,
             decoration: const InputDecoration(
@@ -79,7 +79,7 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
           const SizedBox(height: 16),
           TextField(
-            key: const Key('login_password'),
+            // key: const Key('login_password'),
             controller: _passwordController,
             obscureText: true,
             decoration: const InputDecoration(
@@ -94,18 +94,21 @@ class _LoginScreenState extends State<LoginScreen> {
           ],
           const SizedBox(height: 24),
           ElevatedButton(
-            key: const Key('login_button'),
+            // key: const Key('login_button'),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.deepOrange,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
             ),
             onPressed: _login,
-            child: Text('Login', style: TextStyle(fontSize: 16 * widget.fontScale)),
+            child: Text(
+              'Login',
+              style: TextStyle(fontSize: 16 * widget.fontScale),
+            ),
           ),
           const SizedBox(height: 16),
           TextButton(
-            key: const Key('go_to_signup'),
+            // key: const Key('go_to_signup'),
             onPressed: widget.onGoToSignup,
             child: const Text("Don't have an account? Sign Up"),
           ),
@@ -200,7 +203,7 @@ class _SignupScreenState extends State<SignupScreen> {
           ),
           const SizedBox(height: 32),
           TextField(
-            key: const Key('signup_name'),
+            // key: const Key('signup_name'),
             controller: _nameController,
             decoration: const InputDecoration(
               labelText: 'Full Name',
@@ -210,7 +213,7 @@ class _SignupScreenState extends State<SignupScreen> {
           ),
           const SizedBox(height: 16),
           TextField(
-            key: const Key('signup_phone'),
+            // key: const Key('signup_phone'),
             controller: _phoneController,
             keyboardType: TextInputType.phone,
             decoration: const InputDecoration(
@@ -224,7 +227,7 @@ class _SignupScreenState extends State<SignupScreen> {
             children: [
               Expanded(
                 child: TextField(
-                  key: const Key('signup_otp'),
+                  // key: const Key('signup_otp'),
                   controller: _otpController,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
@@ -236,7 +239,7 @@ class _SignupScreenState extends State<SignupScreen> {
               ),
               const SizedBox(width: 8),
               ElevatedButton(
-                key: const Key('send_otp_button'),
+                // key: const Key('send_otp_button'),
                 onPressed: _sendOtp,
                 child: const Text('Send OTP'),
               ),
@@ -244,7 +247,10 @@ class _SignupScreenState extends State<SignupScreen> {
           ),
           if (_otpSent) ...[
             const SizedBox(height: 8),
-            const Text('Simulated OTP code sent! Use 1234', style: TextStyle(color: Colors.green, fontSize: 12)),
+            const Text(
+              'Simulated OTP code sent! Use 1234',
+              style: TextStyle(color: Colors.green, fontSize: 12),
+            ),
           ],
           if (_signupError != null) ...[
             const SizedBox(height: 16),
@@ -252,18 +258,21 @@ class _SignupScreenState extends State<SignupScreen> {
           ],
           const SizedBox(height: 32),
           ElevatedButton(
-            key: const Key('signup_button'),
+            // key: const Key('signup_button'),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.deepOrange,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 16),
             ),
             onPressed: _signup,
-            child: Text('Register & Continue', style: TextStyle(fontSize: 16 * widget.fontScale)),
+            child: Text(
+              'Register & Continue',
+              style: TextStyle(fontSize: 16 * widget.fontScale),
+            ),
           ),
           const SizedBox(height: 16),
           TextButton(
-            key: const Key('go_to_login'),
+            // key: const Key('go_to_login'),
             onPressed: widget.onGoToLogin,
             child: const Text("Already have an account? Sign In"),
           ),

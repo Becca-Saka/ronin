@@ -84,6 +84,23 @@ class ImageDescriptor:
             image, gui_elements, box_color, thickness
         )
 
+    def run_ocr_on_elements(self, image: Image.Image, elements: list[GUIElement]) -> None:
+        """Re-runs OCR on the provided elements in-place without re-running YOLO.
+
+        Used after per-element pixel diff identifies dirty elements — bounding boxes
+        are already known from the previous detection pass.
+        """
+        targets = [el for el in elements if el.element in OCR_RELEVANT_TYPES]
+        if not targets:
+            return
+        with ThreadPoolExecutor() as executor:
+            futures = {
+                executor.submit(self._extract_text, image, el): el
+                for el in targets
+            }
+            for future in as_completed(futures):
+                futures[future].text = future.result()
+
     def _extract_text(self, image: Image.Image, element: GUIElement) -> str:
         x1, y1, x2, y2 = element.bounding_box
         pad, (w, h) = 4, image.size
