@@ -290,3 +290,12 @@ class CapabilityController:
             logger.info("Android media push: %s to %s", local_path, dest_path)
             AdbControl.push_file(udid_or_serial, local_path, dest_path)
             AdbControl.scan_media_file(udid_or_serial, dest_path)
+
+    def _handle_accessibility(self, udid_or_serial: str, params: dict):
+        enabled = bool(params.get("enabled", True))
+        if self.platform == Platform.ANDROID:
+            service = "com.google.android.talkback/com.google.android.marvin.talkback.TalkBackService"
+            logger.info("Setting Android accessibility service %s: enabled=%s", service, enabled)
+            AdbControl.set_accessibility_service(udid_or_serial, service, enabled)
+        else:
+            logger.warning("Accessibility toggle capability not supported on iOS Simulator via simctl.")

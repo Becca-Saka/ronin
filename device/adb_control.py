@@ -317,3 +317,26 @@ class AdbControl:
             run_command(cmd, check=True)
         except Exception as e:
             raise RuntimeError(f"Failed to start app via monkey: {e}")
+
+    @staticmethod
+    def set_accessibility_service(serial: str, service: str, enabled: bool):
+        """Enables or disables a system accessibility service globally on the device via settings."""
+        try:
+            if enabled:
+                logger.info("Registering accessibility service: %s", service)
+                AdbControl.run_adb_command(
+                    ["adb", "-s", serial, "shell", "settings", "put", "secure", "enabled_accessibility_services", service]
+                )
+                AdbControl.run_adb_command(
+                    ["adb", "-s", serial, "shell", "settings", "put", "secure", "accessibility_enabled", "1"]
+                )
+            else:
+                logger.info("Deregistering accessibility services")
+                AdbControl.run_adb_command(
+                    ["adb", "-s", serial, "shell", "settings", "put", "secure", "enabled_accessibility_services", '""']
+                )
+                AdbControl.run_adb_command(
+                    ["adb", "-s", serial, "shell", "settings", "put", "secure", "accessibility_enabled", "0"]
+                )
+        except Exception as e:
+            raise RuntimeError(f"Failed to set accessibility service: {e}")

@@ -312,7 +312,6 @@ class RoninAgent:
         previous_action_sig = None
         previous_action_desc = None
         consecutive_repeats = 0
-        loop_warning = None
         consecutive_waits = 0
 
         # Terminate and activate app to start from clean slate
@@ -356,20 +355,7 @@ class RoninAgent:
                     else ()
                 )
 
-                if previous_screen_sig is not None:
-                    if current_screen_sig == previous_screen_sig:
-                        # Screen state didn't change. Prepare a soft nudge prompt warning.
-                        loop_warning = (
-                            f"Warning: Your previous action '{previous_action_desc}' did not result in a screen state change. "
-                            "Do not repeat this action. Choose a different element or interaction, or scroll/navigate if stuck."
-                        )
-                        logger.warning(
-                            "Screen signature matches previous step. Preparing loop warning: %s",
-                            loop_warning,
-                        )
-                    else:
-                        loop_warning = None
-                        consecutive_repeats = 0
+
 
                 clean_timestamp = time.strftime("%Y%m%d_%H%M%S")
                 filename = (
@@ -392,7 +378,6 @@ class RoninAgent:
                     current_image_bytes=annotated_img_bytes,
                     visual_history=list(visual_history),
                     text_history=list(text_history),
-                    loop_warning=loop_warning,
                     drift_warning=drift_warning,
                 )
 

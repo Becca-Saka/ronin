@@ -63,4 +63,3 @@ class LLMClient:
         if response_model:
             return response_model.model_validate_json(content)
         return content
-

@@ -35,6 +35,7 @@ class CapabilityType(str, Enum):
     DEEPLINK = "deeplink"
     APP_STATE = "app_state"
     MEDIA_INJECT = "media_inject"
+    ACCESSIBILITY = "accessibility"
 
 
 CAPABILITY_SCHEMAS = {
@@ -49,7 +50,8 @@ CAPABILITY_SCHEMAS = {
     CapabilityType.BIOMETRIC: "{'action': 'match' | 'unmatch' | 'enroll', 'finger_id': int}",
     CapabilityType.DEEPLINK: "{'url': str}",
     CapabilityType.APP_STATE: "{'action': 'clear_data' | 'force_stop'}",
-    CapabilityType.MEDIA_INJECT: "{'local_path': str}"
+    CapabilityType.MEDIA_INJECT: "{'local_path': str}",
+    CapabilityType.ACCESSIBILITY: "{'enabled': bool}"
 }
 
 
@@ -59,7 +61,7 @@ CAPABILITY_SCHEMAS = {
 
 class TypeAction(BaseModel):
     type: Literal[ActionType.TYPE] = ActionType.TYPE
-    text: str = Field(..., description="The text of the action.")
+    text: str = Field(default="", description="The text of the action.")
     coordinates: Coordinates = Field(
         ..., description="The screen coordinates to move to."
     )

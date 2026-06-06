@@ -88,7 +88,6 @@ class RoninPlanner:
         current_image_bytes: bytes = b"",
         visual_history: List[bytes] = None,
         text_history: List[str] = None,
-        loop_warning: Optional[str] = None,
         drift_warning: Optional[str] = None,
     ) -> AgentStepResponse:
         """Generates the next logical step and action in the closed-loop ReAct sequence, evaluating QA rules.
@@ -101,7 +100,7 @@ class RoninPlanner:
             current_image_bytes: Current screenshot image bytes.
             visual_history: List of past screenshot image bytes.
             text_history: List of previously executed actions as strings.
-            loop_warning: Optional warning string if the agent is detected to be repeating actions.
+            drift_warning: Optional warning string if the agent is detected to be drifting.
 
         Returns:
             An AgentStepResponse indicating if the task is done, screen context, rule verifications, issues, and the next ActionPlan.
@@ -144,12 +143,6 @@ Your task is to execute the following E2E test scenario instructions and verify 
 
 ### History of Executed Actions
 {chr(10).join(f"- {act}" for act in text_history) if text_history else "No actions executed yet."}
-"""
-
-        if loop_warning:
-            prompt_text += f"""
-### LOOP DETECTION WARNING
-{loop_warning}
 """
 
         if drift_warning:
