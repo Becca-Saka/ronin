@@ -52,7 +52,7 @@ class DeviceSession:
             run_ios_preflight(app_path)
         else:
             validate_app_path_for_platform(app_path, self.platform)
-            self.adb_control = AdbControl()
+            self.adb_control = None
         self.record_session = record_session
         self.is_recording = False
         self.session_id = session_id or str(uuid4())
@@ -103,12 +103,13 @@ class DeviceSession:
             device_name=self.device_name,
             app_path=self.app_path,
             platform=self.platform,
-            adb_control=self.adb_control if self.platform == Platform.ANDROID else None,
+            adb_control=None,
             is_headless=is_headless,
         )
         if self.platform == Platform.ANDROID:
-            self.adb_control.enable_feedback(
-                pointer_location=False, tap_highlights=True
+            serial = self.device_control.serial or self.device_name
+            AdbControl.enable_feedback(
+                serial=serial, pointer_location=False, tap_highlights=True
             )
         time.sleep(6)
         if self.record_session:

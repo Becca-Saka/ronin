@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from actuation.orchestrator import ActionOrchestrator
+from device.adb_control import AdbControl
 from device.device_session import DeviceSession
 from device.platform import Platform
 from llm.llm_client import LLMClient
@@ -125,43 +126,42 @@ class RoninAgent:
             logger.info("Restarting application: %s", package_id)
 
             if device_control.platform == Platform.ANDROID:
-                adb_control = device_control.adb_control
-                if adb_control:
-                    activity = None
-                    try:
-                        _, activity = adb_control.get_apk_info(device_control.app_path)
-                    except Exception as apk_err:
-                        logger.warning("Failed to get APK activity info: %s", apk_err)
+                adb_runner = getattr(device_control, "adb_control", None) or AdbControl
+                activity = None
+                try:
+                    _, activity = adb_runner.get_apk_info(device_control.app_path)
+                except Exception as apk_err:
+                    logger.warning("Failed to get APK activity info: %s", apk_err)
 
-                    if activity:
-                        serial = getattr(
-                            device_control, "serial", None
-                        ) or adb_control.resolve_emulator_serial(
-                            device_control.device_name
+                if activity:
+                    serial = getattr(
+                        device_control, "serial", None
+                    ) or adb_runner.resolve_emulator_serial(
+                        device_control.device_name
+                    )
+                    cmd = ["adb"]
+                    if serial:
+                        cmd.extend(["-s", serial])
+                    cmd.extend(
+                        [
+                            "shell",
+                            "am",
+                            "start",
+                            "-n",
+                            f"{package_id}/{activity}",
+                            "--activity-clear-task",
+                        ]
+                    )
+                    logger.info("Running clear-task relaunch: %s", " ".join(cmd))
+                    try:
+                        adb_runner.run_adb_command(cmd)
+                        time.sleep(2.5)
+                        return
+                    except Exception as launch_err:
+                        logger.warning(
+                            "Failed clear-task relaunch via ADB: %s. Falling back to terminate/activate.",
+                            launch_err,
                         )
-                        cmd = ["adb"]
-                        if serial:
-                            cmd.extend(["-s", serial])
-                        cmd.extend(
-                            [
-                                "shell",
-                                "am",
-                                "start",
-                                "-n",
-                                f"{package_id}/{activity}",
-                                "--activity-clear-task",
-                            ]
-                        )
-                        logger.info("Running clear-task relaunch: %s", " ".join(cmd))
-                        try:
-                            adb_control.run_adb_command(cmd)
-                            time.sleep(2.5)
-                            return
-                        except Exception as launch_err:
-                            logger.warning(
-                                "Failed clear-task relaunch via ADB: %s. Falling back to terminate/activate.",
-                                launch_err,
-                            )
 
             # Fallback for Android (if ADB launch failed/not possible) or standard for iOS
             device_control.driver.terminate_app(package_id)

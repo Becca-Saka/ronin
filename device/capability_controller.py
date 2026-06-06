@@ -4,6 +4,8 @@ import subprocess
 import re
 from device.platform import Platform
 from actuation.actions import CapabilityType
+from utils.subprocess_runner import run_command
+from device.adb_control import AdbControl
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,9 @@ class CapabilityController:
         self.device_control = device_control
         self.driver = device_control.driver
         self.platform = device_control.platform
-        self.adb_control = device_control.adb_control
+        self.adb_control = getattr(device_control, "adb_control", None)
+
+
 
     def get_udid_or_serial(self) -> str:
         """Resolves the current device serial number (Android) or UDID (iOS).
@@ -37,10 +41,10 @@ class CapabilityController:
             # Android
             if hasattr(self.device_control, "device_name"):
                 name = self.device_control.device_name
-                if self.adb_control:
-                    resolved = self.adb_control.resolve_emulator_serial(name)
-                    if resolved:
-                        return resolved
+                adb_runner = self.adb_control if self.adb_control is not None else AdbControl
+                resolved = adb_runner.resolve_emulator_serial(name)
+                if resolved:
+                    return resolved
                 return name
             return "emulator-5554"
 
@@ -75,11 +79,10 @@ class CapabilityController:
         if self.platform == Platform.IOS:
             cmd = ["xcrun", "simctl", "location", udid_or_serial, "set", f"{lat},{lng}"]
             logger.info("iOS location mock: %s", " ".join(cmd))
-            subprocess.run(cmd, check=True)
+            run_command(cmd, check=True)
         else:
-            cmd = ["adb", "-s", udid_or_serial, "emu", "geo", "fix", str(lng), str(lat)]
-            logger.info("Android location mock: %s", " ".join(cmd))
-            subprocess.run(cmd, check=True)
+            logger.info("Android location mock: %s, %s", lat, lng)
+            AdbControl.mock_location(udid_or_serial, lat, lng)
 
     def _handle_network(self, udid_or_serial: str, params: dict):
         mode = str(params.get("mode", "online")).lower()
@@ -88,18 +91,16 @@ class CapabilityController:
             if mode in ("offline", "airplane"):
                 try:
                     logger.info("Enabling airplane mode via ADB connectivity service")
-                    subprocess.run(["adb", "-s", udid_or_serial, "shell", 
-                                  "cmd", "connectivity", "airplane-mode", "enable"], check=True)
+                    AdbControl.set_airplane_mode(udid_or_serial, True)
                     success = True
-                except (subprocess.SubprocessError, FileNotFoundError) as e:
+                except Exception as e:
                     logger.warning("ADB connectivity control failed: %s. Falling back to Appium set_network_connection.", e)
             elif mode == "online":
                 try:
                     logger.info("Disabling airplane mode via ADB connectivity service")
-                    subprocess.run(["adb", "-s", udid_or_serial, "shell",
-                                  "cmd", "connectivity", "airplane-mode", "disable"], check=True)
+                    AdbControl.set_airplane_mode(udid_or_serial, False)
                     success = True
-                except (subprocess.SubprocessError, FileNotFoundError) as e:
+                except Exception as e:
                     logger.warning("ADB connectivity control failed: %s. Falling back to Appium set_network_connection.", e)
             
             if not success:
@@ -124,11 +125,10 @@ class CapabilityController:
             state = "charged" if charging else "discharged"
             cmd = ["xcrun", "simctl", "status_bar", udid_or_serial, "override", "--batteryLevel", str(level), "--batteryState", state]
             logger.info("iOS status bar override: %s", " ".join(cmd))
-            subprocess.run(cmd, check=True)
+            run_command(cmd, check=True)
         else:
-            ac_val = "1" if charging else "0"
-            subprocess.run(["adb", "-s", udid_or_serial, "shell", "dumpsys", "battery", "set", "level", str(level)], check=True)
-            subprocess.run(["adb", "-s", udid_or_serial, "shell", "dumpsys", "battery", "set", "ac", ac_val], check=True)
+            logger.info("Setting Android battery level to %d, charging=%s", level, charging)
+            AdbControl.set_battery_status(udid_or_serial, level, charging)
 
     def _handle_timezone(self, udid_or_serial: str, params: dict):
         tz = params.get("timezone")
@@ -136,15 +136,14 @@ class CapabilityController:
             raise ValueError("Timezone requires 'timezone' parameter")
         
         if self.platform == Platform.ANDROID:
-            cmd = ["adb", "-s", udid_or_serial, "shell", "settings", "put", "global", "timezone", tz]
-            logger.info("Setting Android timezone: %s", " ".join(cmd))
-            subprocess.run(cmd, check=True)
+            logger.info("Setting Android timezone: %s", tz)
+            AdbControl.set_timezone(udid_or_serial, tz)
             # Must restart app for timezone to take effect
             package = self.driver.capabilities.get("appPackage") or getattr(self.device_control, "package_id", None)
             if package:
                 logger.info("Restarting app %s to apply timezone changes", package)
-                subprocess.run(["adb", "-s", udid_or_serial, "shell", "am", "force-stop", package], check=True)
-                subprocess.run(["adb", "-s", udid_or_serial, "shell", "monkey", "-p", package, "1"], check=True)
+                AdbControl.force_stop_app(udid_or_serial, package)
+                AdbControl.start_app_via_monkey(udid_or_serial, package)
         else:
             logger.warning("Timezone change not supported on iOS Simulator via simctl.")
 
@@ -158,9 +157,8 @@ class CapabilityController:
             locale_str = f"{lang}-{country}" if country else lang
             package = self.driver.capabilities.get("appPackage") or getattr(self.device_control, "package_id", None)
             if package:
-                cmd = ["adb", "-s", udid_or_serial, "shell", "cmd", "locale", "set-app-locales", package, "--locales", locale_str]
-                logger.info("Setting Android locale: %s", " ".join(cmd))
-                subprocess.run(cmd, check=True)
+                logger.info("Setting Android locale: %s", locale_str)
+                AdbControl.set_app_locale(udid_or_serial, package, locale_str)
             else:
                 logger.warning("Cannot set Android locale without target package ID")
         else:
@@ -188,7 +186,7 @@ class CapabilityController:
             service = service_map.get(perm.lower(), perm.lower())
             cmd = ["xcrun", "simctl", "privacy", udid_or_serial, action, service, package]
             logger.info("iOS permission command: %s", " ".join(cmd))
-            subprocess.run(cmd, check=True)
+            run_command(cmd, check=True)
         else:
             perm_map = {
                 "camera": "android.permission.CAMERA",
@@ -197,10 +195,8 @@ class CapabilityController:
                 "storage": "android.permission.READ_EXTERNAL_STORAGE"
             }
             android_perm = perm_map.get(perm.lower(), perm)
-            action_cmd = "grant" if grant else "revoke"
-            cmd = ["adb", "-s", udid_or_serial, "shell", "pm", action_cmd, package, android_perm]
-            logger.info("Android permission command: %s", " ".join(cmd))
-            subprocess.run(cmd, check=True)
+            logger.info("Android permission command: %s for package %s", android_perm, package)
+            AdbControl.set_app_permission(udid_or_serial, package, android_perm, grant)
 
     def _handle_interrupt(self, udid_or_serial: str, params: dict):
         int_type = str(params.get("type", "low_memory")).lower()
@@ -208,22 +204,19 @@ class CapabilityController:
             if self.platform == Platform.IOS:
                 cmd = ["xcrun", "simctl", "notify_post", udid_or_serial, "com.apple.CoreSimulator.SimDevice.MemoryNotification"]
                 logger.info("iOS Memory Warning: %s", " ".join(cmd))
-                subprocess.run(cmd, check=True)
+                run_command(cmd, check=True)
             else:
                 package = self.driver.capabilities.get("appPackage") or getattr(self.device_control, "package_id", None)
                 if package:
-                    pid_res = subprocess.run(["adb", "-s", udid_or_serial, "shell", "pidof", package], capture_output=True, text=True)
-                    pid = pid_res.stdout.strip()
+                    pid = AdbControl.get_app_pid(udid_or_serial, package)
                     if pid:
-                        cmd = ["adb", "-s", udid_or_serial, "shell", "am", "send-trim-memory", pid, "RUNNING_CRITICAL"]
-                        logger.info("Android low memory simulation: %s", " ".join(cmd))
-                        subprocess.run(cmd, check=True)
+                        logger.info("Android low memory simulation for PID: %s", pid)
+                        AdbControl.simulate_low_memory(udid_or_serial, pid)
         elif int_type == "incoming_call":
             phone = params.get("phone", "555-5555")
             if self.platform == Platform.ANDROID:
-                cmd = ["adb", "-s", udid_or_serial, "emu", "gsm", "call", str(phone)]
-                logger.info("Android incoming call: %s", " ".join(cmd))
-                subprocess.run(cmd, check=True)
+                logger.info("Android incoming call: %s", phone)
+                AdbControl.simulate_incoming_call(udid_or_serial, phone)
             else:
                 logger.warning("Incoming call simulation not supported on iOS Simulator via simctl.")
 
@@ -256,14 +249,11 @@ class CapabilityController:
         if self.platform == Platform.IOS:
             cmd = ["xcrun", "simctl", "openurl", udid_or_serial, url]
             logger.info("iOS open URL: %s", " ".join(cmd))
-            subprocess.run(cmd, check=True)
+            run_command(cmd, check=True)
         else:
             package = self.driver.capabilities.get("appPackage") or getattr(self.device_control, "package_id", None)
-            cmd = ["adb", "-s", udid_or_serial, "shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url]
-            if package:
-                cmd.append(package)
-            logger.info("Android open deep link: %s", " ".join(cmd))
-            subprocess.run(cmd, check=True)
+            logger.info("Android open deep link: %s for package %s", url, package)
+            AdbControl.open_deeplink(udid_or_serial, url, package)
 
     def _handle_app_state(self, udid_or_serial: str, params: dict):
         action = str(params.get("action", "force_stop")).lower()
@@ -275,16 +265,14 @@ class CapabilityController:
             if self.platform == Platform.IOS:
                 cmd = ["xcrun", "simctl", "terminate", udid_or_serial, package]
                 logger.info("iOS terminate app: %s", " ".join(cmd))
-                subprocess.run(cmd, check=True)
+                run_command(cmd, check=True)
             else:
-                cmd = ["adb", "-s", udid_or_serial, "shell", "am", "force-stop", package]
-                logger.info("Android force stop app: %s", " ".join(cmd))
-                subprocess.run(cmd, check=True)
+                logger.info("Android force stop app: %s", package)
+                AdbControl.force_stop_app(udid_or_serial, package)
         elif action == "clear_data":
             if self.platform == Platform.ANDROID:
-                cmd = ["adb", "-s", udid_or_serial, "shell", "pm", "clear", package]
-                logger.info("Android clear app data: %s", " ".join(cmd))
-                subprocess.run(cmd, check=True)
+                logger.info("Android clear app data: %s", package)
+                AdbControl.clear_app_data(udid_or_serial, package)
             else:
                 logger.warning("Clearing iOS App data not supported directly via simctl.")
 
@@ -296,10 +284,9 @@ class CapabilityController:
         if self.platform == Platform.IOS:
             cmd = ["xcrun", "simctl", "addmedia", udid_or_serial, local_path]
             logger.info("iOS simctl add media: %s", " ".join(cmd))
-            subprocess.run(cmd, check=True)
+            run_command(cmd, check=True)
         else:
             dest_path = f"/sdcard/Pictures/{os.path.basename(local_path)}"
-            subprocess.run(["adb", "-s", udid_or_serial, "push", local_path, dest_path], check=True)
-            cmd = ["adb", "-s", udid_or_serial, "shell", "am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE", "-d", f"file://{dest_path}"]
-            logger.info("Android media scanner: %s", " ".join(cmd))
-            subprocess.run(cmd, check=True)
+            logger.info("Android media push: %s to %s", local_path, dest_path)
+            AdbControl.push_file(udid_or_serial, local_path, dest_path)
+            AdbControl.scan_media_file(udid_or_serial, dest_path)

@@ -32,7 +32,7 @@ class DeviceControl:
         self,
         device_name: str,
         app_path: str,
-        adb_control: AdbControl,
+        adb_control: AdbControl = None,
         is_headless: bool = False,
         platform: Platform = Platform.ANDROID,
     ):
@@ -60,7 +60,8 @@ class DeviceControl:
             options.avd_ready_timeout = 60000
             options.set_capability("appium:enforceAppInstall", True)
             self.adb_control = adb_control
-            package_id, activity = self.adb_control.get_apk_info(app_path)
+            adb_runner = adb_control if adb_control is not None else AdbControl
+            package_id, activity = adb_runner.get_apk_info(app_path)
             self.package_id = package_id
             options.app_package = package_id
             options.app_activity = activity
@@ -76,8 +77,9 @@ class DeviceControl:
         # If not in capabilities, fall back to adb resolution on Android
         original_device_name = self.device_name
         self.device_name = self.driver.capabilities.get("deviceName")
-        if not serial and self.platform == Platform.ANDROID and self.adb_control:
-            serial = self.adb_control.resolve_emulator_serial(original_device_name)
+        adb_runner = self.adb_control if self.adb_control is not None else AdbControl
+        if not serial and self.platform == Platform.ANDROID:
+            serial = adb_runner.resolve_emulator_serial(original_device_name)
         return serial
 
     def _init_device_info(self):
@@ -251,13 +253,14 @@ class DeviceControl:
             self.driver.quit()
         except Exception as e:
             logger.warning("Failed to quit driver cleanly: %s", e)
-        if self.platform == Platform.ANDROID and self.adb_control:
+        if self.platform == Platform.ANDROID:
+            serial = self.serial or self.device_name
             try:
-                self.adb_control.disable_feedback()
+                AdbControl.disable_feedback(serial)
             except Exception as e:
                 logger.warning("Failed to disable feedback: %s", e)
             try:
-                self.adb_control.kill_emulator(self.device_name, serial=self.serial)
+                AdbControl.kill_emulator(self.device_name, serial=self.serial)
             except Exception as e:
                 logger.warning("Failed to kill emulator: %s", e)
 

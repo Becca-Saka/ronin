@@ -1,8 +1,9 @@
 import logging
 import platform
-import subprocess
 import sys
 from pathlib import Path
+
+from utils.subprocess_runner import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -11,8 +12,8 @@ class PlatformError(Exception):
     pass
 
 
-def _run(cmd: list[str], check=False) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, check=check)
+def _run(cmd: list[str], check=False):
+    return run_command(cmd, capture_output=True, text=True, check=check)
 
 
 def check_platform_for_ios():
@@ -96,7 +97,7 @@ def _install_xcode_headless():
             )
 
         logger.info("Installing: %s", package)
-        subprocess.run(["softwareupdate", "-i", package, "--verbose"], check=True)
+        run_command(["softwareupdate", "-i", package, "--verbose"], check=True, capture_output=False)
     finally:
         marker.unlink(missing_ok=True)
 
