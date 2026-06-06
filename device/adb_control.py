@@ -154,10 +154,10 @@ class AdbControl:
             logger.warning("Failed to resolve emulator serial for %s: %s", device_name, e)
         return None
 
-    def kill_emulator(self, device_name: str):
+    def kill_emulator(self, device_name: str, serial: str = None):
         """Terminates a running emulator matching the specified device name (AVD profile name or serial)."""
         try:
-            target_serial = self.resolve_emulator_serial(device_name)
+            target_serial = serial or self.resolve_emulator_serial(device_name)
             if target_serial:
                 logger.info("Found matching emulator serial '%s' for '%s'. Terminating.", target_serial, device_name)
                 self.run_adb_command(["adb", "-s", target_serial, "emu", "kill"])

@@ -83,6 +83,94 @@ class RoninAgent:
         )
         self.media_manager = MediaManager()
 
+    def _check_context_drift(
+        self, device_control, last_external_nav: bool
+    ) -> str | None:
+        """Checks if the device has drifted outside the target app and attempts recovery if unexpected."""
+        if not device_control.is_still_in_sut():
+            if not last_external_nav:
+                logger.warning(
+                    "Unexpected context drift detected. Attempting recovery..."
+                )
+                device_control.recover_to_sut()
+                time.sleep(self.settle_time)
+
+                # Re-verify after recovery attempt
+                if not device_control.is_still_in_sut():
+                    logger.error("Recovery failed. Drift warning active.")
+                    return (
+                        "Warning: The device has drifted outside the target app (SUT) and recovery failed. "
+                        "Please take an action to navigate back to the app, or terminate the scenario."
+                    )
+                else:
+                    logger.info("Recovery successful, returned to SUT.")
+                    return None
+            else:
+                logger.info(
+                    "Device is outside SUT, but this was expected (external_navigation=True)."
+                )
+                return (
+                    "Info: The device is currently outside the target app (SUT) as expected. "
+                    "Make sure to return to the target app once the external tasks are completed."
+                )
+        return None
+
+    def _restart_app(self, device_control):
+        """Resets the application to a clean start state using a process-safe relaunch on Android or standard restart on iOS."""
+        try:
+            if not hasattr(device_control, "package_id"):
+                return
+
+            package_id = device_control.package_id
+            logger.info("Restarting application: %s", package_id)
+
+            if device_control.platform == Platform.ANDROID:
+                adb_control = device_control.adb_control
+                if adb_control:
+                    activity = None
+                    try:
+                        _, activity = adb_control.get_apk_info(device_control.app_path)
+                    except Exception as apk_err:
+                        logger.warning("Failed to get APK activity info: %s", apk_err)
+
+                    if activity:
+                        serial = getattr(
+                            device_control, "serial", None
+                        ) or adb_control.resolve_emulator_serial(
+                            device_control.device_name
+                        )
+                        cmd = ["adb"]
+                        if serial:
+                            cmd.extend(["-s", serial])
+                        cmd.extend(
+                            [
+                                "shell",
+                                "am",
+                                "start",
+                                "-n",
+                                f"{package_id}/{activity}",
+                                "--activity-clear-task",
+                            ]
+                        )
+                        logger.info("Running clear-task relaunch: %s", " ".join(cmd))
+                        try:
+                            adb_control.run_adb_command(cmd)
+                            time.sleep(2.5)
+                            return
+                        except Exception as launch_err:
+                            logger.warning(
+                                "Failed clear-task relaunch via ADB: %s. Falling back to terminate/activate.",
+                                launch_err,
+                            )
+
+            # Fallback for Android (if ADB launch failed/not possible) or standard for iOS
+            device_control.driver.terminate_app(package_id)
+            time.sleep(1.5)
+            device_control.driver.activate_app(package_id)
+            time.sleep(2.5)
+        except Exception as e:
+            logger.warning("Failed to reset application state: %s", e)
+
     def execute(self, goal: str):
         """Runs the closed-loop ReAct execution loop to accomplish the target goal.
 
@@ -102,18 +190,24 @@ class RoninAgent:
 
             visual_history: list[bytes] = []
             text_history: list[str] = []
+            last_external_nav = False
+            drift_warning = None
 
             for step in range(self.max_steps):
                 logger.info("--- ReAct Loop Step %s / %s ---", step + 1, self.max_steps)
+
+                # 0. Context Drift Check
+                drift_warning = self._check_context_drift(
+                    device_control, last_external_nav
+                )
 
                 # 1. Screen Perception
                 gui_elements, annotated_img = perception.perceive()
                 gui_elements = redact_elements(gui_elements)
 
-                self.assets_dir.mkdir(parents=True, exist_ok=True)
                 clean_timestamp = time.strftime("%Y%m%d_%H%M%S")
                 filepath = (
-                    self.assets_dir
+                    session.screenshots_dir
                     / f"annotated_img_{clean_timestamp}_step{step + 1}.png"
                 )
                 annotated_img.save(filepath)
@@ -136,6 +230,7 @@ class RoninAgent:
                     current_image_bytes=annotated_img_bytes,
                     visual_history=list(visual_history),
                     text_history=list(text_history),
+                    drift_warning=drift_warning,
                 )
                 logger.info("Reasoning: %s", step_response.reasoning)
 
@@ -152,13 +247,15 @@ class RoninAgent:
 
                 # 4. Actuation
                 action_to_run = step_response.action
+                last_external_nav = getattr(action_to_run, "external_navigation", False)
                 logger.info(
                     "Executing action plan: %s", redact_text(action_to_run.instruction)
                 )
 
                 # Saves a copy of the screenshot with the action highlighted
                 click_filepath = (
-                    self.assets_dir / f"click_step{step + 1}_{clean_timestamp}.png"
+                    session.screenshots_dir
+                    / f"click_step{step + 1}_{clean_timestamp}.png"
                 )
                 self.media_manager.save_action_annotation(
                     annotated_img=annotated_img,
@@ -219,17 +316,11 @@ class RoninAgent:
         consecutive_waits = 0
 
         # Terminate and activate app to start from clean slate
-        try:
-            if hasattr(device_control, "package_id"):
-                logger.info("Restarting application: %s", device_control.package_id)
-                device_control.driver.terminate_app(device_control.package_id)
-                time.sleep(1.5)
-                device_control.driver.activate_app(device_control.package_id)
-                time.sleep(2.5)
-        except Exception as e:
-            logger.warning("Failed to reset application state: %s", e)
+        self._restart_app(device_control)
 
         try:
+            last_external_nav = False
+            drift_warning = None
             for step in range(self.max_steps):
                 steps_executed += 1
                 logger.info(
@@ -237,6 +328,11 @@ class RoninAgent:
                     test_case.test_id,
                     step + 1,
                     self.max_steps,
+                )
+
+                # 0. Context Drift Check
+                drift_warning = self._check_context_drift(
+                    device_control, last_external_nav
                 )
 
                 # 1. Screen Perception
@@ -297,6 +393,7 @@ class RoninAgent:
                     visual_history=list(visual_history),
                     text_history=list(text_history),
                     loop_warning=loop_warning,
+                    drift_warning=drift_warning,
                 )
 
                 logger.info("Screen Name: %s", step_response.current_screen)
@@ -434,6 +531,7 @@ class RoninAgent:
 
                 # 3. Actuation
                 action_to_run = step_response.action
+                last_external_nav = getattr(action_to_run, "external_navigation", False)
                 logger.info(
                     "Executing action: %s", redact_text(action_to_run.instruction)
                 )

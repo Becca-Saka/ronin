@@ -20,6 +20,9 @@ class ActionOrchestrator:
                 case ActionType.TYPE:
                     coordinates = action.coordinates
                     self.device_control.type(action.text, coordinates.x, coordinates.y)
+                case ActionType.CLEAR:
+                    coordinates = action.coordinates
+                    self.device_control.clear(coordinates.x, coordinates.y)
                 case ActionType.TAP:
                     coordinates = action.coordinates
                     self.device_control.tap(coordinates.x, coordinates.y, with_feedback=True)

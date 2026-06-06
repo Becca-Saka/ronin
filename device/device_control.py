@@ -19,6 +19,11 @@ from device.platform import Platform
 
 logger = logging.getLogger(__name__)
 
+ANDROID_KEYCODE_BACK = 4
+IOS_APP_STATE_FOREGROUND = 4
+RECOVERY_SLEEP_AFTER_BACK = 1.5
+RECOVERY_SLEEP_AFTER_ACTIVATE = 2.0
+
 
 class DeviceControl:
     """Wrapper for executing gesture actions and capturing state from mobile devices."""
@@ -32,6 +37,9 @@ class DeviceControl:
         platform: Platform = Platform.ANDROID,
     ):
         self.platform = platform
+        self.device_name = device_name
+        self.app_path = app_path
+        self.bundle_id = None
         if platform == Platform.IOS:
             options = XCUITestOptions()
             options.platform_name = "iOS"
@@ -60,15 +68,31 @@ class DeviceControl:
         self.driver = webdriver.Remote("http://localhost:4723", options=options)
         self.device_info = self._init_device_info()
 
+    def _resolve_serial(self):
+        # Try to resolve emulator/device serial from capabilities
+        serial = self.driver.capabilities.get(
+            "deviceUDID"
+        ) or self.driver.capabilities.get("udid")
+        # If not in capabilities, fall back to adb resolution on Android
+        original_device_name = self.device_name
+        self.device_name = self.driver.capabilities.get("deviceName")
+        if not serial and self.platform == Platform.ANDROID and self.adb_control:
+            serial = self.adb_control.resolve_emulator_serial(original_device_name)
+        return serial
+
     def _init_device_info(self):
 
         size = self.driver.get_window_size()
         raw = self.driver.capabilities.get("pixelRatio", 1)
         pixel_ratio = float(str(raw)[:5])
         logger.info(
-            "Screen: %sx%s dp | Pixel ratio: %s", size['width'], size['height'], pixel_ratio
+            "Screen: %sx%s dp | Pixel ratio: %s",
+            size["width"],
+            size["height"],
+            pixel_ratio,
         )
-        self.device_name = self.driver.capabilities.get("deviceName")
+        self.serial = self._resolve_serial()
+
         self.platform_name = self.driver.capabilities.get("platformName")
         self.os_version = self.driver.capabilities.get("platformVersion")
         self.model = self.driver.capabilities.get("deviceModel")
@@ -76,8 +100,12 @@ class DeviceControl:
         self.screen_height = size["height"]
         self.pixel_ratio = pixel_ratio
         logger.info(
-            "Device connected. Name: %s, Platform: %s, OS Version: %s, Model: %s",
-            self.device_name, self.platform_name, self.os_version, self.model
+            "Device connected. Name: %s, Platform: %s, OS Version: %s, Model: %s, Serial: %s",
+            self.device_name,
+            self.platform_name,
+            self.os_version,
+            self.model,
+            self.serial,
         )
 
     def get_screenshot(self):
@@ -112,6 +140,26 @@ class DeviceControl:
             self.driver.switch_to.active_element.send_keys(text)
         time.sleep(0.5)
 
+    def clear(self, x, y):
+        try:
+            self.tap(x, y)
+            time.sleep(1.0)
+            if self.platform == Platform.IOS:
+                self.driver.switch_to.active_element.clear()
+            else:
+                try:
+                    # Select All (Ctrl+A) and then Delete (Backspace) to ensure the field is completely cleared
+                    self.driver.press_keycode(29, metastate=28672)
+                    time.sleep(0.2)
+                    self.driver.press_keycode(67)
+                    time.sleep(0.2)
+                except Exception as e:
+                    logger.warning("Failed Ctrl+A clear on Android: %s. Trying fallback.", e)
+                    self.driver.switch_to.active_element.clear()
+        except Exception as e:
+            logger.error("Failed to clear text field at (%s, %s): %s", x, y, e)
+        time.sleep(0.5)
+
     def double_tap(self, x, y, with_feedback: bool = True):
         if self.platform == Platform.IOS:
             self.execute_script("mobile: doubleTap", {"x": x, "y": y})
@@ -121,9 +169,14 @@ class DeviceControl:
 
     def long_press(self, x, y, duration):
         if self.platform == Platform.IOS:
-            self.execute_script("mobile: touchAndHold", {"x": x, "y": y, "duration": duration})
+            self.execute_script(
+                "mobile: touchAndHold", {"x": x, "y": y, "duration": duration}
+            )
         else:
-            self.execute_script("mobile: longClickGesture", {"x": x, "y": y, "duration": int(duration * 1000)})
+            self.execute_script(
+                "mobile: longClickGesture",
+                {"x": x, "y": y, "duration": int(duration * 1000)},
+            )
         time.sleep(duration + 0.5)
 
     def drag_and_drop(self, source_x, source_y, destination_x, destination_y):
@@ -157,7 +210,6 @@ class DeviceControl:
             self.execute_script("mobile: pressButton", {"name": key})
         time.sleep(0.5)
 
-
     def swipe(self, start_x, start_y, end_x, end_y, duration_ms: int = 400):
         """Performs a swipe gesture using W3C pointer actions.
 
@@ -180,7 +232,11 @@ class DeviceControl:
         except Exception as e:
             logger.error(
                 "Failed to swipe from (%s, %s) to (%s, %s): %s",
-                start_x, start_y, end_x, end_y, e
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                e,
             )
         time.sleep(0.5)
 
@@ -201,13 +257,12 @@ class DeviceControl:
             except Exception as e:
                 logger.warning("Failed to disable feedback: %s", e)
             try:
-                self.adb_control.kill_emulator(self.device_name)
+                self.adb_control.kill_emulator(self.device_name, serial=self.serial)
             except Exception as e:
                 logger.warning("Failed to kill emulator: %s", e)
 
     def execute_script(self, script, args):
         self.driver.execute_script(script, args if isinstance(args, list) else [args])
-
 
     def start_recording(self):
         self.driver.start_recording_screen()
@@ -219,3 +274,56 @@ class DeviceControl:
         path.write_bytes(base64.b64decode(raw))
         logger.info("Recording saved to %s", path)
         return path
+
+    def _resolve_bundle_id(self) -> str | None:
+        """Lazily resolve and cache the iOS bundle ID from driver capabilities."""
+        if not self.bundle_id:
+            self.bundle_id = (
+                self.driver.capabilities.get("bundleId")
+                or self.driver.capabilities.get("appium:bundleId")
+            )
+        return self.bundle_id
+
+    def is_still_in_sut(self) -> bool:
+        """Checks if the device is currently focused on the target app under test (SUT)."""
+        try:
+            if self.platform == Platform.ANDROID:
+                return self.driver.current_package == self.package_id
+            bundle_id = self._resolve_bundle_id()
+            if bundle_id:
+                return self.driver.query_app_state(bundle_id) == IOS_APP_STATE_FOREGROUND
+        except Exception as e:
+            logger.warning("Failed to check SUT focus: %s", e)
+        return True
+
+    def recover_to_sut(self) -> None:
+        """Attempts to recover the focus back to the target app under test (SUT) after drift."""
+        logger.info(
+            "Context drift detected. Attempting to recover focus back to the target app..."
+        )
+        if self.platform == Platform.ANDROID:
+            try:
+                self.key_event(ANDROID_KEYCODE_BACK)
+                time.sleep(RECOVERY_SLEEP_AFTER_BACK)
+            except Exception as e:
+                logger.warning("Failed to press back key during recovery: %s", e)
+
+        if self.is_still_in_sut():
+            return
+
+        app_id = (
+            self.package_id
+            if self.platform == Platform.ANDROID
+            else self._resolve_bundle_id()
+        )
+
+        if not app_id:
+            logger.error("Cannot recover: no app ID available.")
+            return
+
+        try:
+            logger.info("Activating SUT app: %s", app_id)
+            self.driver.activate_app(app_id)
+            time.sleep(RECOVERY_SLEEP_AFTER_ACTIVATE)
+        except Exception as e:
+            logger.error("Failed to activate SUT app: %s", e)

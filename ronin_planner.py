@@ -89,6 +89,7 @@ class RoninPlanner:
         visual_history: List[bytes] = None,
         text_history: List[str] = None,
         loop_warning: Optional[str] = None,
+        drift_warning: Optional[str] = None,
     ) -> AgentStepResponse:
         """Generates the next logical step and action in the closed-loop ReAct sequence, evaluating QA rules.
 
@@ -151,6 +152,12 @@ Your task is to execute the following E2E test scenario instructions and verify 
 {loop_warning}
 """
 
+        if drift_warning:
+            prompt_text += f"""
+### CONTEXT DRIFT WARNING
+{drift_warning}
+"""
+
         prompt_text += f"""
 ### QA Auditing Instructions
 You must inspect the visual screenshots provided and audit the screen state for layout, logic, and security defects:
@@ -159,6 +166,22 @@ You must inspect the visual screenshots provided and audit the screen state for 
 3. **Dynamic Screen Assertions**: Generate context-specific screen assertions on the fly for the current screen layout (e.g., "Email input field is present", "Primary action button is visible and enabled", "No visual layout clipping"). Verify whether these dynamic assertions pass or fail on the current screen.
 4. **Dynamic Rule Verifications**: For each pre-defined expected outcome, custom security rule, and dynamic screen assertion, determine if it has been "passed" or "failed" on the current screen, or remains "untested".
 5. **Scenario Feasibility**: Verify if the test scenario instructions are valid and feasible to perform on the current screen. If instructions require interacting with elements, fields, or buttons that do not exist (e.g., trying to input a password on a login screen with no password textfield), flag the scenario as infeasible.
+
+### Allowed Action Schema and Types
+Each action you return in the `action.actions` list must have a `type` matching one of the following string literals:
+- "tap": Taps at screen coordinates. Required fields: `type` (literal "tap"), `coordinates` (with x, y integers), and `reason` (str).
+- "type": Types text into a text field. Required fields: `type` (literal "type"), `text` (str), `coordinates` (with x, y integers), and `reason` (str).
+- "clear": Clears the content of a text field. Required fields: `type` (literal "clear"), `coordinates` (with x, y integers), and `reason` (str).
+- "double_tap": Double-taps at coordinates. Required fields: `type` (literal "double_tap"), `coordinates` (with x, y integers), and `reason` (str).
+- "long_press": Long presses coordinates. Required fields: `type` (literal "long_press"), `duration` (float seconds), `coordinates` (with x, y integers), and `reason` (str).
+- "drag_and_drop": Drags from source to destination. Required fields: `type` (literal "drag_and_drop"), `source_x` (int), `source_y` (int), `destination_x` (int), `destination_y` (int), and `reason` (str).
+- "key_event": Triggers a key event. Required fields: `type` (literal "key_event"), `key` (int keycode, e.g., 4=back, 3=home, 66=enter, 67=backspace), and `reason` (str).
+- "swipe": Swipes from start to end. Required fields: `type` (literal "swipe"), `start_x` (int), `start_y` (int), `end_x` (int), `end_y` (int), and `reason` (str).
+- "capability": Triggers system capability controls. Required fields: `type` (literal "capability"), `capability` (str), `parameters` (dict), and `reason` (str).
+
+CRITICAL CONSTRAINTS:
+1. Do NOT use invalid types like "click" or "send_keys" or "input". You MUST use "tap" for tapping/clicking and "type" for typing text.
+2. For typing text, you MUST specify both the `text` string AND the `coordinates` (x, y) of the text field where the text should be typed.
 
 ### Response Instructions
 1. Identify the descriptive name of the current screen/page (e.g., "Login View", "Product Catalog").
@@ -169,6 +192,7 @@ You must inspect the visual screenshots provided and audit the screen state for 
 6. If not done and the scenario is feasible, plan the single next action to execute. You must output EXACTLY one action in `action.actions` list.
 7. If the step or goal requires system level control, return a CAPABILITY action. Specify 'capability' and its 'parameters' dict:
 {caps_description_str}
+8. If the next planned action is expected to navigate outside of the System Under Test (SUT) application (e.g., opening a browser link, launching a system setting, or interacting with a system dialog), set the `external_navigation` field of the `ActionPlan` to `True`. Otherwise, keep it `False`.
 """
 
 

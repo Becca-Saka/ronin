@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Literal, Annotated
 
 from pydantic import BaseModel, Field
 
@@ -9,7 +10,7 @@ class Coordinates(BaseModel):
     y: int = Field(..., description="The y coordinate in pixels.")
 
 
-class ActionType(Enum):
+class ActionType(str, Enum):
     TYPE = "type"
     TAP = "tap"
     DOUBLE_TAP = "double_tap"
@@ -18,9 +19,10 @@ class ActionType(Enum):
     KEY_EVENT = "key_event"  # key events (4=back, 3=home, 66=enter, 67=backspace)
     SWIPE = "swipe"
     CAPABILITY = "capability"
+    CLEAR = "clear"
 
 
-class CapabilityType(Enum):
+class CapabilityType(str, Enum):
     LOCATION = "location"
     NETWORK = "network"
     BATTERY = "battery"
@@ -56,7 +58,7 @@ CAPABILITY_SCHEMAS = {
 
 
 class TypeAction(BaseModel):
-    type: ActionType = ActionType.TYPE
+    type: Literal[ActionType.TYPE] = ActionType.TYPE
     text: str = Field(..., description="The text of the action.")
     coordinates: Coordinates = Field(
         ..., description="The screen coordinates to move to."
@@ -65,13 +67,21 @@ class TypeAction(BaseModel):
 
 
 class TapAction(BaseModel):
-    type: ActionType = ActionType.TAP
+    type: Literal[ActionType.TAP] = ActionType.TAP
     coordinates: Coordinates = Field(..., description="The screen coordinates to tap.")
     reason: str = Field(..., description="How the action helps achieve the goal.")
 
 
+class ClearAction(BaseModel):
+    type: Literal[ActionType.CLEAR] = ActionType.CLEAR
+    coordinates: Coordinates = Field(
+        ..., description="The screen coordinates of the text field to clear."
+    )
+    reason: str = Field(..., description="How the action helps achieve the goal.")
+
+
 class DoubleTapAction(BaseModel):
-    type: ActionType = ActionType.DOUBLE_TAP
+    type: Literal[ActionType.DOUBLE_TAP] = ActionType.DOUBLE_TAP
     coordinates: Coordinates = Field(
         ..., description="The screen coordinates to double tap."
     )
@@ -79,7 +89,7 @@ class DoubleTapAction(BaseModel):
 
 
 class LongPressAction(BaseModel):
-    type: ActionType = ActionType.LONG_PRESS
+    type: Literal[ActionType.LONG_PRESS] = ActionType.LONG_PRESS
     duration: float = Field(
         ..., description="The duration of the long press in seconds."
     )
@@ -90,7 +100,7 @@ class LongPressAction(BaseModel):
 
 
 class DragAndDropAction(BaseModel):
-    type: ActionType = ActionType.DRAG_AND_DROP
+    type: Literal[ActionType.DRAG_AND_DROP] = ActionType.DRAG_AND_DROP
     source_x: int = Field(..., description="The x coordinate to drag from.")
     source_y: int = Field(..., description="The y coordinate to drag from.")
     destination_x: int = Field(..., description="The x coordinate to drag to.")
@@ -99,13 +109,13 @@ class DragAndDropAction(BaseModel):
 
 
 class KeyEventAction(BaseModel):
-    type: ActionType = ActionType.KEY_EVENT
+    type: Literal[ActionType.KEY_EVENT] = ActionType.KEY_EVENT
     key: int = Field(..., description="The key code to press.")
     reason: str = Field(..., description="How the action helps achieve the goal.")
 
 
 class SwipeAction(BaseModel):
-    type: ActionType = ActionType.SWIPE
+    type: Literal[ActionType.SWIPE] = ActionType.SWIPE
     start_x: int = Field(..., description="The x coordinate to start the swipe.")
     start_y: int = Field(..., description="The y coordinate to start the swipe.")
     end_x: int = Field(..., description="The x coordinate to end the swipe.")
@@ -114,7 +124,7 @@ class SwipeAction(BaseModel):
 
 
 class CapabilityAction(BaseModel):
-    type: ActionType = ActionType.CAPABILITY
+    type: Literal[ActionType.CAPABILITY] = ActionType.CAPABILITY
     capability: CapabilityType = Field(..., description="The system capability to control.")
     parameters: dict = Field(
         default_factory=dict,
@@ -124,7 +134,7 @@ class CapabilityAction(BaseModel):
 
 
 # --- The Union of All Actions ---
-Action = (
+Action = Annotated[
     TypeAction
     | TapAction
     | DoubleTapAction
@@ -133,8 +143,9 @@ Action = (
     | KeyEventAction
     | SwipeAction
     | CapabilityAction
-)
-
+    | ClearAction,
+    Field(discriminator="type")
+]
 
 
 # --- The Final Output Schema ---
@@ -145,4 +156,8 @@ class ActionPlan(BaseModel):
     actions: list[Action] = Field(
         ...,
         description="The sequence of machine-executable actions to achieve the goal.",
+    )
+    external_navigation: bool = Field(
+        default=False,
+        description="Set to True if the next step is expected to temporarily navigate outside the SUT app (e.g., opening an external browser page, map, system dialog, or payment screen).",
     )

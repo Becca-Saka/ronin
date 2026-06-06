@@ -1,4 +1,23 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+
+import 'models.dart';
+import 'screens/auth_screens.dart';
+import 'screens/main_screens.dart';
+import 'screens/restaurant_and_cart_screens.dart';
+import 'screens/checkout_and_status_screens.dart';
+
+enum AppScreen {
+  login,
+  signup,
+  requestLocation,
+  home,
+  restaurant,
+  cart,
+  paymentMethod,
+  checkout,
+  orderStatus
+}
 
 class E2eCounterPageNo extends StatefulWidget {
   const E2eCounterPageNo({super.key});
@@ -8,340 +27,322 @@ class E2eCounterPageNo extends StatefulWidget {
 }
 
 class _E2eCounterPageNoState extends State<E2eCounterPageNo> {
-  bool _loggedIn = false;
-  int _counter = 0;
-  bool _alertsEnabled = true;
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _searchController = TextEditingController();
-  String _loggedInEmail = '';
-  String _loggedInPassword = '';
+  // Navigation State
+  AppScreen _currentScreen = AppScreen.login;
+
+  // Global Info / Credentials (saved for reference if needed)
+  String _email = '';
+  String _password = '';
+  String _name = '';
+  String _phone = '';
+
+  // Location State
+  bool _locationPermissionGranted = true;
+
+  // Accessibility State (simulating large font scale for audits)
+  double _fontScale = 1.0;
+
+  // Selected Restaurant
+  Restaurant? _selectedRestaurant;
+
+  // Cart State (itemId -> quantity)
+  final Map<String, int> _cart = {};
+
+  // Payment State
+  String _selectedPaymentMethod = 'card'; // card, cash
+
+  // Checkout Controllers & State
+  final _addressController = TextEditingController();
+  final _cardNumberController = TextEditingController();
+  final _cvvController = TextEditingController();
+  String? _checkoutError;
+  int _placeOrderTapCount = 0;
+  DateTime? _lastPlaceOrderTapTime;
+  bool _multiTapWarningVisible = false;
+
+  // Order Status State
+  String _orderStatus = 'confirming'; // confirming -> preparing -> on the way
+  Timer? _orderStatusTimer;
 
   @override
   void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    _searchController.dispose();
+    _addressController.dispose();
+    _cardNumberController.dispose();
+    _cvvController.dispose();
+    _orderStatusTimer?.cancel();
     super.dispose();
   }
 
-  void _increment() {
-    setState(() => _counter++);
+  MenuItem? _findMenuItem(String id) {
+    for (var r in dummyRestaurants) {
+      for (var item in r.menu) {
+        if (item.id == id) return item;
+      }
+    }
+    return null;
   }
 
-  void _login() {
+  void _placeOrder() {
+    final now = DateTime.now();
     setState(() {
-      _loggedIn = true;
-      _loggedInEmail = _emailController.text;
-      _loggedInPassword = _passwordController.text;
+      _placeOrderTapCount++;
+      if (_lastPlaceOrderTapTime != null) {
+        final diff = now.difference(_lastPlaceOrderTapTime!).inMilliseconds;
+        if (diff < 400) {
+          _multiTapWarningVisible = true;
+        }
+      }
+      _lastPlaceOrderTapTime = now;
+    });
+
+    final address = _addressController.text;
+    final card = _cardNumberController.text.replaceAll(' ', '');
+    final cvv = _cvvController.text;
+
+    if (address.isEmpty) {
+      setState(() => _checkoutError = 'Address is required');
+      return;
+    }
+
+    if (_selectedPaymentMethod == 'card') {
+      if (card.length < 15 || card.length > 19) {
+        setState(() => _checkoutError = 'Invalid card number');
+        return;
+      }
+      if (cvv.length < 3) {
+        setState(() => _checkoutError = 'Invalid CVV');
+        return;
+      }
+    }
+
+    // Success
+    setState(() {
+      _checkoutError = null;
+      _orderStatus = 'confirming';
+      _currentScreen = AppScreen.orderStatus;
+    });
+
+    _startOrderStatusTimer();
+  }
+
+  void _startOrderStatusTimer() {
+    _orderStatusTimer?.cancel();
+    _orderStatusTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (!mounted) return;
+      setState(() {
+        if (_orderStatus == 'confirming') {
+          _orderStatus = 'preparing';
+        } else if (_orderStatus == 'preparing') {
+          _orderStatus = 'on the way';
+          _orderStatusTimer?.cancel();
+        }
+      });
+    });
+  }
+
+  void _advanceOrderStatus() {
+    setState(() {
+      if (_orderStatus == 'confirming') {
+        _orderStatus = 'preparing';
+      } else if (_orderStatus == 'preparing') {
+        _orderStatus = 'on the way';
+      }
+    });
+  }
+
+  void _resetApp() {
+    setState(() {
+      _cart.clear();
+      _addressController.clear();
+      _cardNumberController.clear();
+      _cvvController.clear();
+      _placeOrderTapCount = 0;
+      _multiTapWarningVisible = false;
+      _checkoutError = null;
+      _currentScreen = AppScreen.login;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_loggedIn) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('Sign in'),
-        ),
-        body: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text('Welcome back'),
-              const SizedBox(height: 24),
-              TextField(
-                controller: _emailController,
-                keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  hintText: 'you@example.com',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _passwordController,
-                decoration: const InputDecoration(
-                  labelText: 'Password',
-                  hintText: 'Enter your password',
-                  border: OutlineInputBorder(),
-                ),
-                obscureText: true, // Masked correctly during input
-              ),
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: _login,
-                child: const Text('Login'),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Home screen'),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.search),
-              onPressed: () {},
-            ),
-            IconButton(
-              icon: const Icon(Icons.more_vert),
-              tooltip: 'More options',
-              onPressed: () {},
-            ),
-          ],
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: 'Home'),
-              Tab(text: 'Inbox'),
-            ],
-          ),
-        ),
-        body: TabBarView(
-          children: [
-            _HomeTab(
-              counter: _counter,
-              loggedInEmail: _loggedInEmail,
-              loggedInPassword: _loggedInPassword,
-            ),
-            _InboxTab(
-              alertsEnabled: _alertsEnabled,
-              searchController: _searchController,
-              onAlertsChanged: (value) => setState(() => _alertsEnabled = value),
-            ),
-          ],
-        ),
-        floatingActionButton: FloatingActionButton(
-          onPressed: _increment,
-          tooltip: 'Increment',
-          child: const Icon(Icons.add),
-        ),
-      ),
-    );
-  }
-}
-
-class _HomeTab extends StatelessWidget {
-  const _HomeTab({
-    required this.counter,
-    required this.loggedInEmail,
-    required this.loggedInPassword,
-  });
-
-  final int counter;
-  final String loggedInEmail;
-  final String loggedInPassword;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text('Logged in as: $loggedInEmail (Password: $loggedInPassword)', style: const TextStyle(color: Colors.red)),
-        ),
-        const Padding(
-          padding: EdgeInsets.all(16),
-          child: Text('Tap increment to increase the counter'),
-        ),
-        Text(
-          '$counter',
-          style: Theme.of(context).textTheme.displayMedium,
-        ),
-        const SizedBox(height: 24),
-        Expanded(
-          child: ListView.builder(
-            itemCount: 5,
-            itemBuilder: (context, index) {
-              return ListTile(
-                title: const Text('Notification'),
-                subtitle: Text('Home feed item $index'),
-                trailing: IconButton(
-                  icon: const Icon(Icons.chevron_right),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => NotificationDetailPage(index: index),
-                      ),
-                    );
-                  },
-                ),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => NotificationDetailPage(index: index),
-                    ),
-                  );
-                },
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class NotificationDetailPage extends StatefulWidget {
-  final int index;
-  const NotificationDetailPage({super.key, required this.index});
-
-  @override
-  State<NotificationDetailPage> createState() => _NotificationDetailPageState();
-}
-
-class _NotificationDetailPageState extends State<NotificationDetailPage> {
-  final _replyController = TextEditingController();
-  bool _isPinned = false;
-  String _statusMessage = '';
-
-  @override
-  void dispose() {
-    _replyController.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    if (_replyController.text.isNotEmpty) {
-      setState(() {
-        _statusMessage = 'Reply submitted: "${_replyController.text}"' + (_isPinned ? ' (Pinned)' : '');
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Details'),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
+      body: SafeArea(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              'Detail view for Home feed item ${widget.index}',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'This is a complex notification that requires user feedback. Please type a reply and decide if you want to pin this notification to your home dashboard.',
-            ),
-            const SizedBox(height: 700), // Deliberate layout overflow bug for testing visual auditing!
-            TextField(
-              controller: _replyController,
-              decoration: const InputDecoration(
-                labelText: 'Reply message',
-                hintText: 'Enter your response...',
-                border: OutlineInputBorder(),
+            // Accessibility controls & Global Actions always visible for visual test harnesses
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Colors.grey.shade100,
+              child: Row(
+                children: [
+                  const Icon(Icons.accessibility_new, size: 20, color: Colors.blueGrey),
+                  const SizedBox(width: 8),
+                  const Text('Font Scale:', style: TextStyle(fontSize: 12)),
+                  Expanded(
+                    child: Slider(
+                      key: const Key('font_scale_slider'),
+                      value: _fontScale,
+                      min: 0.8,
+                      max: 2.5,
+                      onChanged: (val) => setState(() => _fontScale = val),
+                    ),
+                  ),
+                  TextButton.icon(
+                    key: const Key('global_reset_button'),
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Reset', style: TextStyle(fontSize: 12)),
+                    onPressed: _resetApp,
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
-            SwitchListTile(
-              title: const Text('Pin notification'),
-              subtitle: const Text('Keep this notification at the top of the feed'),
-              value: _isPinned,
-              onChanged: (bool value) {
-                setState(() {
-                  _isPinned = value;
-                });
-              },
+            Expanded(
+              child: _buildCurrentScreen(),
             ),
-            const SizedBox(height: 24),
-            FilledButton(
-              onPressed: _submit,
-              child: const Text('Submit'),
-            ),
-            if (_statusMessage.isNotEmpty) ...[
-              const SizedBox(height: 24),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade50,
-                  border: Border.all(color: Colors.green),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _statusMessage,
-                  style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
           ],
         ),
       ),
     );
   }
-}
 
-
-class _InboxTab extends StatelessWidget {
-  const _InboxTab({
-    required this.alertsEnabled,
-    required this.searchController,
-    required this.onAlertsChanged,
-  });
-
-  final bool alertsEnabled;
-  final TextEditingController searchController;
-  final ValueChanged<bool> onAlertsChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: TextField(
-            controller: searchController,
-            decoration: const InputDecoration(
-              hintText: 'Search messages',
-              border: OutlineInputBorder(),
-            ),
-          ),
-        ),
-        SwitchListTile(
-          title: const Text('Enable alerts'),
-          value: alertsEnabled,
-          onChanged: onAlertsChanged,
-        ),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: [
-              Chip(label: Text('All')),
-              SizedBox(width: 8),
-              Chip(label: Text('Unread')),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView.builder(
-            itemCount: 12,
-            itemBuilder: (context, index) {
-              return ListTile(
-                leading: const CircleAvatar(child: Icon(Icons.person)),
-                title: const Text('Notification'),
-                subtitle: Text('Inbox thread $index'),
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () {},
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
+  Widget _buildCurrentScreen() {
+    switch (_currentScreen) {
+      case AppScreen.login:
+        return LoginScreen(
+          fontScale: _fontScale,
+          onLoginSuccess: (email, password) {
+            setState(() {
+              _email = email;
+              _password = password;
+              _currentScreen = AppScreen.requestLocation;
+            });
+          },
+          onGoToSignup: () {
+            setState(() => _currentScreen = AppScreen.signup);
+          },
+        );
+      case AppScreen.signup:
+        return SignupScreen(
+          fontScale: _fontScale,
+          onSignupSuccess: (name, phone) {
+            setState(() {
+              _name = name;
+              _phone = phone;
+              _currentScreen = AppScreen.requestLocation;
+            });
+          },
+          onGoToLogin: () {
+            setState(() => _currentScreen = AppScreen.login);
+          },
+        );
+      case AppScreen.requestLocation:
+        return RequestLocationScreen(
+          fontScale: _fontScale,
+          onPermissionResponse: (granted) {
+            setState(() {
+              _locationPermissionGranted = granted;
+              _currentScreen = AppScreen.home;
+            });
+          },
+        );
+      case AppScreen.home:
+        return HomeScreen(
+          fontScale: _fontScale,
+          locationPermissionGranted: _locationPermissionGranted,
+          onToggleLocationPermission: () {
+            setState(() => _locationPermissionGranted = !_locationPermissionGranted);
+          },
+          onSelectRestaurant: (rest) {
+            setState(() {
+              _selectedRestaurant = rest;
+              _currentScreen = AppScreen.restaurant;
+            });
+          },
+        );
+      case AppScreen.restaurant:
+        return RestaurantScreen(
+          fontScale: _fontScale,
+          restaurant: _selectedRestaurant!,
+          cart: _cart,
+          onAddItem: (itemId) {
+            setState(() {
+              _cart[itemId] = (_cart[itemId] ?? 0) + 1;
+            });
+          },
+          onBack: () {
+            setState(() => _currentScreen = AppScreen.home);
+          },
+          onViewCart: () {
+            setState(() => _currentScreen = AppScreen.cart);
+          },
+        );
+      case AppScreen.cart:
+        return CartScreen(
+          fontScale: _fontScale,
+          cart: _cart,
+          onBack: () {
+            setState(() => _currentScreen = AppScreen.restaurant);
+          },
+          onIncreaseQty: (itemId) {
+            setState(() {
+              _cart[itemId] = (_cart[itemId] ?? 0) + 1;
+            });
+          },
+          onDecreaseQty: (itemId) {
+            setState(() {
+              if (_cart[itemId]! > 1) {
+                _cart[itemId] = _cart[itemId]! - 1;
+              } else {
+                _cart.remove(itemId);
+              }
+            });
+          },
+          onDoubleItems: () {
+            setState(() {
+              _cart.updateAll((key, val) => val * 2);
+            });
+          },
+          onProceedToCheckout: () {
+            setState(() => _currentScreen = AppScreen.paymentMethod);
+          },
+          findMenuItem: _findMenuItem,
+        );
+      case AppScreen.paymentMethod:
+        return PaymentMethodScreen(
+          fontScale: _fontScale,
+          selectedPaymentMethod: _selectedPaymentMethod,
+          onPaymentMethodChanged: (val) {
+            setState(() => _selectedPaymentMethod = val);
+          },
+          onBack: () {
+            setState(() => _currentScreen = AppScreen.cart);
+          },
+          onContinue: () {
+            setState(() => _currentScreen = AppScreen.checkout);
+          },
+        );
+      case AppScreen.checkout:
+        return CheckoutScreen(
+          fontScale: _fontScale,
+          selectedPaymentMethod: _selectedPaymentMethod,
+          addressController: _addressController,
+          cardNumberController: _cardNumberController,
+          cvvController: _cvvController,
+          checkoutError: _checkoutError,
+          placeOrderTapCount: _placeOrderTapCount,
+          multiTapWarningVisible: _multiTapWarningVisible,
+          onPlaceOrder: _placeOrder,
+          onBack: () {
+            setState(() => _currentScreen = AppScreen.paymentMethod);
+          },
+        );
+      case AppScreen.orderStatus:
+        return OrderStatusScreen(
+          fontScale: _fontScale,
+          orderStatus: _orderStatus,
+          onAdvanceStatus: _advanceOrderStatus,
+          onReset: _resetApp,
+        );
+    }
   }
 }
