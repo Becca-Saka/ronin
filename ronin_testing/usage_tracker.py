@@ -6,6 +6,7 @@ from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
+
 class LLMUsageTracker:
     """Manages and serializes LLM token and cost telemetry during testing."""
 

@@ -11,3 +11,4 @@ wheels/
 .env
 assets/
 docs/
+test_models/

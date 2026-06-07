@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import List
 
-from device.platform import Platform
+from agent.device.platform import Platform
 from .models import UserJourney
 from .runner import RoninTestRunner
 

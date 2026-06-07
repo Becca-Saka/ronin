@@ -1,12 +1,17 @@
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
 
+# Trail models live in agent/trail.py — re-exported here for backward compatibility.
+from agent.trail import SessionTrail, TrailElement, ScreenEntry  # noqa: F401
+
+
 class UserJourney(BaseModel):
     """Represents a high-level natural language user journey to test."""
     id: str
     name: str
     description: str
     security_rules: List[str] = Field(default_factory=list)
+
 
 class GeneratedTestCase(BaseModel):
     """Represents a generated test scenario targeting a specific classification."""
@@ -24,12 +29,14 @@ class GeneratedTestCase(BaseModel):
     steps_instructions: List[str]
     expected_outcomes: List[str]
 
+
 class BoundingBox(BaseModel):
     """Represents coordinates highlighting a visual issue."""
     x_min: int
     y_min: int
     x_max: int
     y_max: int
+
 
 class QAIssue(BaseModel):
     """Represents a visual, security, or logical issue found during testing."""
@@ -51,12 +58,14 @@ class QAIssue(BaseModel):
     severity: Literal["low", "medium", "high", "critical"]
     current_screen: Optional[str] = None
 
+
 class RuleVerification(BaseModel):
     """Represents the status of verifying a specific journey expectation or custom rule."""
     rule: str
     status: Literal["passed", "failed", "untested"]
     reasoning: str
     screen_name: Optional[str] = None
+
 
 class ScenarioReport(BaseModel):
     """Represents the results of running an individual test scenario."""
@@ -70,6 +79,7 @@ class ScenarioReport(BaseModel):
     detected_issues: List[QAIssue] = Field(default_factory=list)
     screenshots: List[str] = Field(default_factory=list)
     failure_reason: Optional[str] = None
+
 
 class JourneyReport(BaseModel):
     """Represents the aggregated results of all scenarios generated for a journey."""

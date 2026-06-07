@@ -5,8 +5,12 @@ import imagehash
 import numpy as np
 from PIL import Image
 
-from device.device_session import DeviceSession
-from perception.image_descriptor import GUIElement, ImageDescriptor, OCR_RELEVANT_TYPES
+from agent.device.device_session import DeviceSession
+from agent.perception.image_descriptor import (
+    OCR_RELEVANT_TYPES,
+    GUIElement,
+    ImageDescriptor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,15 +42,18 @@ class ScreenPerception:
         self.device_session = device_session
         self.image_descriptor = ImageDescriptor()
 
-        # Previous-step state used for diffing
         self._last_hash: imagehash.ImageHash | None = None
         self._last_screenshot: Image.Image | None = None
         self._last_elements: list[GUIElement] | None = None
 
-        # Animation suppression: track elements that are dirty every step with
-        # stable OCR output, so we stop forcing repeated OCR on spinners/shimmer.
         self._consecutive_dirty: dict[str, int] = {}
-        self._last_ocr_text: dict[str, str] = {}
+        self._last_ocr_text: dict[
+            str, str
+        ] = {}  # suppress repeated OCR on animated elements
+
+    @property
+    def current_hash(self) -> "imagehash.ImageHash | None":
+        return self._last_hash
 
     def reset(self):
         """Resets all perception state. Call between scenarios."""
@@ -56,10 +63,6 @@ class ScreenPerception:
         self._consecutive_dirty.clear()
         self._last_ocr_text.clear()
         logger.info("Perception state reset.")
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def perceive(self) -> tuple[list[GUIElement], Image.Image, Image.Image]:
         """Captures the current screen and returns up-to-date GUI elements.
@@ -72,24 +75,24 @@ class ScreenPerception:
         """
         png_bytes = self.device_session.device_control.get_screenshot()
         raw_img = Image.open(io.BytesIO(png_bytes))
-        current_hash = imagehash.phash(raw_img, hash_size=16)  # 256-bit (Option E)
+        current_hash = imagehash.phash(raw_img, hash_size=16)
 
-        # First step — no previous state to diff against
         if self._last_screenshot is None:
             logger.info("First perception pass — running full YOLO + OCR.")
             return self._full_scan(png_bytes, raw_img, current_hash)
 
-        # Coarse filter: large pHash distance = navigation / full screen change
         distance = current_hash - self._last_hash
-        logger.debug("pHash distance: %d (threshold: %d)", distance, NAVIGATION_THRESHOLD)
+        logger.debug(
+            "pHash distance: %d (threshold: %d)", distance, NAVIGATION_THRESHOLD
+        )
         if distance >= NAVIGATION_THRESHOLD:
             logger.info(
                 "pHash distance %d ≥ %d — navigation detected, full re-scan.",
-                distance, NAVIGATION_THRESHOLD,
+                distance,
+                NAVIGATION_THRESHOLD,
             )
             return self._full_scan(png_bytes, raw_img, current_hash)
 
-        # Structural diff: run YOLO to get current element bounding boxes
         curr_elements, annotated_img = self.image_descriptor.describe(png_bytes)
 
         matched_pairs, new_elements, removed = self._match_elements(
@@ -98,32 +101,38 @@ class ScreenPerception:
         match_rate = len(matched_pairs) / max(len(self._last_elements), 1)
         logger.debug(
             "Element diff: %d matched, %d new, %d removed (match rate %.0f%%).",
-            len(matched_pairs), len(new_elements), len(removed), match_rate * 100,
+            len(matched_pairs),
+            len(new_elements),
+            len(removed),
+            match_rate * 100,
         )
 
         if match_rate < LAYOUT_SHIFT_THRESHOLD:
             logger.info(
                 "IoU match rate %.0f%% < %.0f%% — layout shift detected, full re-scan.",
-                match_rate * 100, LAYOUT_SHIFT_THRESHOLD * 100,
+                match_rate * 100,
+                LAYOUT_SHIFT_THRESHOLD * 100,
             )
             return self._full_scan(png_bytes, raw_img, current_hash)
 
-        # Per-element pixel diff (Option C)
         dirty_elements = []
         for prev_el, curr_el in matched_pairs:
-            curr_el.text = prev_el.text  # start with cached text
-            mae = self._element_mae(self._last_screenshot, raw_img, prev_el.bounding_box)
+            curr_el.text = prev_el.text
+            mae = self._element_mae(
+                self._last_screenshot, raw_img, prev_el.bounding_box
+            )
             element_key = self._element_key(prev_el)
 
             if mae > DIRTY_THRESHOLD:
                 if self._is_animation_suppressed(element_key, prev_el.text):
-                    logger.debug("Animation suppressed (MAE=%.2f): %s", mae, element_key)
+                    logger.debug(
+                        "Animation suppressed (MAE=%.2f): %s", mae, element_key
+                    )
                 else:
-                    curr_el.text = ""  # clear so OCR fills it fresh
+                    curr_el.text = ""
                     dirty_elements.append(curr_el)
                     logger.debug("Element dirty (MAE=%.2f): %s", mae, element_key)
             else:
-                # Genuinely clean — reset animation counter
                 self._consecutive_dirty.pop(element_key, None)
 
         # New elements that weren't in the previous step need fresh OCR too
@@ -132,7 +141,8 @@ class ScreenPerception:
         if ocr_targets:
             logger.info(
                 "Re-running OCR on %d dirty/new element(s) (%d OCR-eligible).",
-                len(ocr_targets), len(ocr_eligible),
+                len(ocr_targets),
+                len(ocr_eligible),
             )
             self.image_descriptor.run_ocr_on_elements(raw_img, ocr_targets)
             # Update animation suppression state for dirty elements
@@ -140,7 +150,6 @@ class ScreenPerception:
                 key = self._element_key(el)
                 self._update_animation_tracking(key, el.text)
 
-        # Uncovered region diff (Option D)
         uncovered_mae = self._uncovered_region_mae(
             self._last_screenshot, raw_img, curr_elements
         )
@@ -156,10 +165,6 @@ class ScreenPerception:
 
         self._update_state(raw_img, curr_elements, current_hash)
         return curr_elements, raw_img, annotated_img
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _full_scan(
         self, png_bytes: bytes, raw_img: Image.Image, current_hash: imagehash.ImageHash
@@ -245,7 +250,7 @@ class ScreenPerception:
         mask = np.ones((h, w), dtype=bool)
         for el in elements:
             bb = el.bounding_box
-            mask[bb.y_min:bb.y_max, bb.x_min:bb.x_max] = False
+            mask[bb.y_min : bb.y_max, bb.x_min : bb.x_max] = False
         if not mask.any():
             return 0.0
         diff = np.abs(prev_arr - curr_arr)
@@ -271,6 +276,5 @@ class ScreenPerception:
                 self._consecutive_dirty.get(element_key, 0) + 1
             )
         else:
-            # Text actually changed — reset suppression counter
             self._consecutive_dirty[element_key] = 1
             self._last_ocr_text[element_key] = new_text

@@ -43,11 +43,17 @@ class LLMClient:
             "extra_body": {"plugins": [{"id": "response-healing"}]},
         }
         if response_model:
-            kwargs["response_format"] = response_model
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_model.__name__,
+                    "schema": response_model.model_json_schema(),
+                    "strict": False,
+                },
+            }
 
         response = litellm.completion(**kwargs)
-        
-        # Trigger usage callback if configured
+
         if self.usage_callback:
             usage = getattr(response, "usage", None)
             if usage:
@@ -57,9 +63,15 @@ class LLMClient:
                 except Exception:
                     pass
                 self.usage_callback(self._model, cost, usage)
-        
+
         content = response.choices[0].message.content
 
         if response_model:
-            return response_model.model_validate_json(content)
+            stripped = content.strip()
+            if stripped.startswith("```"):
+                lines = stripped.splitlines()
+                stripped = "\n".join(
+                    lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
+                )
+            return response_model.model_validate_json(stripped)
         return content

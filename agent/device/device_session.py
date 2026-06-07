@@ -11,9 +11,9 @@ from uuid import uuid4
 
 from appium.webdriver.appium_service import AppiumService
 
-from device.adb_control import AdbControl
-from device.device_control import DeviceControl
-from device.platform import Platform
+from agent.device.adb_control import AdbControl
+from agent.device.device_control import DeviceControl
+from agent.device.platform import Platform
 from utils.platform_checks import run_ios_preflight, validate_app_path_for_platform
 
 logger = logging.getLogger(__name__)
@@ -64,10 +64,7 @@ class DeviceSession:
         self.recordings_dir = self.session_root / "recordings"
         self.telemetry_dir = self.session_root / "telemetry"
 
-        self.logs_dir.mkdir(parents=True, exist_ok=True)
-        self.screenshots_dir.mkdir(parents=True, exist_ok=True)
-        self.recordings_dir.mkdir(parents=True, exist_ok=True)
-        self.telemetry_dir.mkdir(parents=True, exist_ok=True)
+        self._ensure_directories()
 
         self.appium_log_path = self.logs_dir / f"appium_session_{self.session_id}.log"
         self.root_log_file = self.logs_dir / f"ronin_session_{self.session_id}.log"
@@ -87,6 +84,15 @@ class DeviceSession:
             "args": ["--log", str(self.appium_log_path)],
         }
  
+    def _ensure_directories(self) -> None:
+        for directory in (
+            self.logs_dir,
+            self.screenshots_dir,
+            self.recordings_dir,
+            self.telemetry_dir,
+        ):
+            directory.mkdir(parents=True, exist_ok=True)
+
     def _start_appium(self):
         if self._appium_service.is_running:
             logger.info("Appium already running")
@@ -98,6 +104,7 @@ class DeviceSession:
         logger.info("Appium started")
  
     def start(self, is_headless: bool = False) -> DeviceControl:
+        self._ensure_directories()
         self._start_appium()
         self.device_control = DeviceControl(
             device_name=self.device_name,

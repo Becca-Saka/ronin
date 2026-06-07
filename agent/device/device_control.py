@@ -14,8 +14,8 @@ from appium.options.ios import XCUITestOptions
 from selenium.webdriver.common.actions.action_builder import ActionBuilder
 from selenium.webdriver.common.actions.pointer_input import PointerInput
 
-from device.adb_control import AdbControl
-from device.platform import Platform
+from agent.device.adb_control import AdbControl
+from agent.device.platform import Platform
 
 logger = logging.getLogger(__name__)
 

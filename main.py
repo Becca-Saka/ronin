@@ -6,8 +6,8 @@ import argparse
 import logging
 import os
 import sys
-from device.platform import Platform
-from ronin_agent import RoninAgent
+from agent.device_agent import DeviceAgent
+from agent.device.platform import Platform
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ def main():
     )
     app_path = "example/testing_app/build/app/outputs/flutter-apk/app-debug.apk"
 
-    agent = RoninAgent(
+    agent = DeviceAgent(
         device_name="Pixel_8a",
         app_path=app_path,
         platform=Platform.ANDROID,
@@ -36,7 +36,7 @@ def main():
         headless=False,
     )
     try:
-        agent.execute(goal)
+        agent.run_standalone(goal)
     except KeyboardInterrupt:
         logger.info("Agent execution interrupted by user")
 

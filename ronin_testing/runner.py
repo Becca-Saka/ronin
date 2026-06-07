@@ -4,16 +4,17 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List
 
-from device.device_session import DeviceSession
-from device.platform import Platform
-from perception.perception import ScreenPerception
+from agent.trail import SessionTrail
+from agent.device.device_session import DeviceSession
+from agent.device.platform import Platform
+from agent.perception.perception import ScreenPerception
 from .generator import ScenarioGenerator
-from .models import UserJourney, JourneyReport, ScenarioReport, GeneratedTestCase
+from .models import UserJourney, JourneyReport, ScenarioReport
+from .qa_agent import QAAgent
 from .usage_tracker import LLMUsageTracker
 
 logger = logging.getLogger(__name__)
 
-# Fixed execution order priority for test scenario classifications:
 CLASSIFICATION_ORDER = {
     "happy_path": 0,
     "security_compliance": 1,
@@ -50,7 +51,7 @@ class RoninTestRunner:
         platform: Platform = Platform.ANDROID,
         model: str = "openrouter/google/gemini-2.5-flash",
         assets_dir: Path = Path("assets"),
-        max_steps: int = 15,
+        max_steps: int = 40,
         settle_time: float = 2.0,
         use_multimodal_vision: bool = False,
         headless: bool = True,
@@ -73,7 +74,6 @@ class RoninTestRunner:
         """Generates scenarios from the journey, executes them, and builds reports & LLM usage metrics."""
         start_time = time.time()
 
-        # 1. Device Session orchestration
         session = DeviceSession(
             device_name=self.device_name,
             app_path=self.app_path,
@@ -82,10 +82,7 @@ class RoninTestRunner:
             session_dir=self.assets_dir,
         )
 
-        # 2. Instantiate the Agent
-        from ronin_agent import RoninAgent
-
-        agent = RoninAgent(
+        agent = QAAgent(
             device_name=self.device_name,
             app_path=self.app_path,
             platform=self.platform,
@@ -98,14 +95,14 @@ class RoninTestRunner:
             fast_model=self.fast_model,
         )
 
-        # 3. Setup Telemetry
         usage_tracker = LLMUsageTracker(output_dir=session.telemetry_dir)
         current_component = "scenario_generator"
-        agent.llm.usage_callback = lambda model, cost, usage: usage_tracker.add_call(
+        device_agent = agent._device_agent
+        device_agent.llm.usage_callback = lambda model, cost, usage: usage_tracker.add_call(
             current_component, model, cost, usage
         )
-        if hasattr(agent, "fast_llm") and agent.fast_llm is not agent.llm:
-            agent.fast_llm.usage_callback = lambda model, cost, usage: (
+        if device_agent.fast_llm is not device_agent.llm:
+            device_agent.fast_llm.usage_callback = lambda model, cost, usage: (
                 usage_tracker.add_call(current_component, model, cost, usage)
             )
 
@@ -116,10 +113,8 @@ class RoninTestRunner:
         skipped_count = 0
 
         try:
-            # 4. Decompose Journey into Test Scenarios
-            scenarios = ScenarioGenerator(agent.llm).generate_scenarios(journey)
+            scenarios = ScenarioGenerator(device_agent.llm).generate_scenarios(journey)
 
-            # Sort scenarios in the fixed execution order
             scenarios.sort(key=lambda s: CLASSIFICATION_ORDER.get(s.classification, 99))
 
             logger.info(
@@ -136,7 +131,6 @@ class RoninTestRunner:
                     s.test_id,
                 )
 
-            # Switch telemetry context to planner for scenarios
             current_component = "ronin_agent_planner"
 
             logger.info(
@@ -144,9 +138,9 @@ class RoninTestRunner:
             )
             device_control = session.start(is_headless=self.headless)
             perception = ScreenPerception(session)
+            trail = SessionTrail()
 
             total_scenarios = len(scenarios)
-            # Execute each generated test case
             for idx, scenario in enumerate(scenarios):
                 logger.info("========================================")
                 logger.info(
@@ -159,7 +153,6 @@ class RoninTestRunner:
                 )
                 logger.info("========================================")
 
-                # Check if webdriver session/instrumentation is responsive. If not, recover.
                 if not is_session_responsive(device_control):
                     logger.warning(
                         "WebDriver/instrumentation session is unresponsive. Attempting session recovery..."
@@ -171,7 +164,6 @@ class RoninTestRunner:
                             "Error closing old session during recovery: %s", close_err
                         )
 
-                    # Create a new session object reusing the same session_id
                     session = DeviceSession(
                         device_name=self.device_name,
                         app_path=self.app_path,
@@ -187,15 +179,15 @@ class RoninTestRunner:
                     device_control = session.start(is_headless=self.headless)
                     perception = ScreenPerception(session)
 
-                    # Update LLM usage tracker output directory
                     usage_tracker.output_dir = session.telemetry_dir
 
-                scen_report = agent.execute_test_scenario(
+                scen_report = agent.execute_scenario(
                     test_case=scenario,
                     security_rules=journey.security_rules,
                     device_control=device_control,
                     perception=perception,
                     session_dir=session.screenshots_dir,
+                    session_trail=trail,
                 )
 
                 scenario_reports.append(scen_report)
@@ -210,7 +202,6 @@ class RoninTestRunner:
             logger.exception(
                 "Fatal exception or interrupt encountered during run: %s", e
             )
-            # Fill missing scenarios as failed reports
             for scenario in scenarios:
                 if not any(r.test_id == scenario.test_id for r in scenario_reports):
                     scenario_reports.append(
@@ -226,37 +217,39 @@ class RoninTestRunner:
             if isinstance(e, KeyboardInterrupt):
                 raise e
         finally:
-            # Shutdown session safely
             if session is not None:
                 try:
                     session.close()
                 except Exception as cleanup_err:
                     logger.warning("Session cleanup failed: %s", cleanup_err)
 
-            # Intercept and write LLM Usage Tracker JSON
             try:
                 usage_tracker.save_report()
             except Exception as usage_err:
                 logger.error("Failed to serialize LLM usage: %s", usage_err)
 
-        duration = time.time() - start_time
-        journey_status = "PASSED" if failed_count == 0 else "FAILED"
-
-        report = JourneyReport(
-            journey_id=journey.id,
-            journey_name=journey.name,
-            description=journey.description,
-            status=journey_status,
-            total_duration=round(duration, 2),
-            scenarios=scenario_reports,
-            passed_count=passed_count,
-            failed_count=failed_count,
-            skipped_count=skipped_count,
-        )
-
-        # Save HTML/Markdown & JUnit Reports
-        self._save_markdown_report(report, session=session)
-        self._save_junit_report(report, session=session)
+            # persist reports even on Ctrl+C or mid-run crash
+            duration = time.time() - start_time
+            journey_status = "PASSED" if failed_count == 0 else "FAILED"
+            report = JourneyReport(
+                journey_id=journey.id,
+                journey_name=journey.name,
+                description=journey.description,
+                status=journey_status,
+                total_duration=round(duration, 2),
+                scenarios=scenario_reports,
+                passed_count=passed_count,
+                failed_count=failed_count,
+                skipped_count=skipped_count,
+            )
+            try:
+                self._save_markdown_report(report, session=session)
+            except Exception as report_err:
+                logger.error("Failed to save markdown report: %s", report_err)
+            try:
+                self._save_junit_report(report, session=session)
+            except Exception as junit_err:
+                logger.error("Failed to save JUnit report: %s", junit_err)
 
         return report
 
