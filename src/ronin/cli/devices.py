@@ -1,10 +1,11 @@
-"""Rendering and flows for `ronin devices`."""
+"""`ronin devices` — list, create and choose devices."""
 
 import argparse
 import json
 from dataclasses import asdict
 
 from ronin.cli.console import FAIL, INFO, OK, SKIP, WARN, Console
+from ronin.cli.scope import add_scope_argument
 from ronin.config import Config, set_value
 from ronin.devices.android import (
     AndroidToolingError,
@@ -15,6 +16,37 @@ from ronin.devices.android import (
     pick_image,
 )
 from ronin.devices.discovery import android_devices, list_devices
+
+
+def register(subcommands: argparse._SubParsersAction) -> None:
+    parser = subcommands.add_parser(
+        "devices",
+        help="List, create and choose devices",
+        description="Show every AVD, simulator and attached device, or create a new AVD.",
+    )
+    parser.add_argument(
+        "--platform", choices=["android", "ios", "all"], help="Limit the listing to one platform"
+    )
+    parser.add_argument("--all", action="store_true", help="Include watchOS and tvOS simulators")
+    parser.add_argument(
+        "--json", action="store_true", dest="as_json", help="Emit machine-readable output"
+    )
+    parser.set_defaults(handler=run)
+
+    actions = parser.add_subparsers(dest="devices_action", metavar="<action>")
+    actions.add_parser("list", help="Show the available devices (default)")
+
+    create_parser = actions.add_parser("create", help="Create an Android virtual device")
+    create_parser.add_argument("name", nargs="?", help="AVD name (default: the configured device)")
+    create_parser.add_argument("--api", type=int, help="Android API level, e.g. 35")
+    create_parser.add_argument("--profile", help="Hardware profile id, e.g. pixel_7")
+    create_parser.add_argument(
+        "-y", "--yes", action="store_true", dest="assume_yes", help="Do not prompt"
+    )
+
+    default_parser = actions.add_parser("default", help="Make a device the default target")
+    default_parser.add_argument("name", help="Device name to target by default")
+    add_scope_argument(default_parser)
 
 
 def show(devices, config: Config, console: Console) -> int:
@@ -115,7 +147,7 @@ def set_default(name: str, scope: str, config: Config, console: Console) -> int:
     return 0
 
 
-def run(args: argparse.Namespace, config: Config, platforms: tuple[str, ...]) -> int:
+def run(args: argparse.Namespace, config: Config) -> int:
     """Dispatches the devices action, defaulting to the listing."""
     console = Console()
     action = getattr(args, "devices_action", None) or "list"
@@ -132,6 +164,7 @@ def run(args: argparse.Namespace, config: Config, platforms: tuple[str, ...]) ->
     if action == "default":
         return set_default(args.name, args.scope, config, console)
 
+    platforms = config.platforms(args.platform) if args.platform else ("android", "ios")
     devices = list_devices(platforms, include_wearables=args.all)
     if args.as_json:
         print(json.dumps({"devices": [asdict(device) for device in devices]}, indent=2))

@@ -1,8 +1,9 @@
-"""Rendering for `ronin config`."""
+"""`ronin config` — show or change saved settings."""
 
 import argparse
 
 from ronin.cli.console import BOLD, DIM, OK, WARN, Console
+from ronin.cli.scope import add_scope_argument
 from ronin.config import (
     GLOBAL_CONFIG_PATH,
     PROJECT_CONFIG_FILENAME,
@@ -14,6 +15,29 @@ from ronin.config import (
     set_value,
     unset_value,
 )
+
+
+def register(subcommands: argparse._SubParsersAction) -> None:
+    parser = subcommands.add_parser(
+        "config",
+        help="Show or change saved settings",
+        description="Show the effective settings and where each came from, or change one.",
+    )
+    parser.set_defaults(handler=run)
+
+    actions = parser.add_subparsers(dest="config_action", metavar="<action>")
+    actions.add_parser("show", help="Print the effective settings and their origins")
+    actions.add_parser("path", help="Print the config file locations")
+
+    set_parser = actions.add_parser("set", help="Save a setting")
+    set_parser.add_argument("key", help="Setting name, e.g. device")
+    set_parser.add_argument("value", help="Value to save")
+
+    unset_parser = actions.add_parser("unset", help="Remove a saved setting")
+    unset_parser.add_argument("key", help="Setting name to remove")
+
+    for action_parser in (set_parser, unset_parser):
+        add_scope_argument(action_parser)
 
 
 def show(config: Config, console: Console) -> int:

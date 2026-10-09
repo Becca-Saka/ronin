@@ -1,11 +1,30 @@
-"""Rendering for `ronin doctor`."""
+"""`ronin doctor` — report on every prerequisite Ronin needs."""
 
+import argparse
 import json
 from dataclasses import asdict
 from typing import List
 
 from ronin.cli.console import BOLD, Console
+from ronin.config import Config
 from ronin.doctor import CheckSection, Status, run_checks
+
+
+def register(subcommands: argparse._SubParsersAction) -> None:
+    parser = subcommands.add_parser(
+        "doctor",
+        help="Check that this machine can run Ronin",
+        description="Report on every prerequisite Ronin needs, with the command to fix each gap.",
+    )
+    parser.add_argument(
+        "--platform",
+        choices=["android", "ios", "all"],
+        help="Which platform's prerequisites to treat as required (default: the configured platform)",
+    )
+    parser.add_argument(
+        "--json", action="store_true", dest="as_json", help="Emit machine-readable output for CI"
+    )
+    parser.set_defaults(handler=run)
 
 
 def render(sections: List[CheckSection], console: Console) -> None:
@@ -65,11 +84,11 @@ def as_json_payload(sections: List[CheckSection]) -> dict:
     }
 
 
-def run(platforms: tuple[str, ...], as_json: bool) -> int:
+def run(args: argparse.Namespace, config: Config) -> int:
     """Executes the checks and emits either the human report or JSON."""
-    sections = run_checks(platforms)
+    sections = run_checks(config.platforms(args.platform))
 
-    if as_json:
+    if args.as_json:
         payload = as_json_payload(sections)
         print(json.dumps(payload, indent=2))
         return 1 if payload["blocking"] else 0

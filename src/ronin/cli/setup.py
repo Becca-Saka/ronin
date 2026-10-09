@@ -1,25 +1,46 @@
-"""Orchestration for `ronin setup`."""
+"""`ronin setup` — install what Ronin needs on this machine."""
 
+import argparse
 import sys
-from typing import List
+from typing import TYPE_CHECKING, List
 
 from ronin.cli.console import FAIL, Console
 from ronin.cli.doctor import summarize
+from ronin.config import Config
 from ronin.doctor import is_macos, run_checks
-from ronin.setup import (
-    SetupContext,
-    StepResult,
-    ensure_env_file,
-    install_appium,
-    install_driver,
-    install_vision,
-    prefetch_models,
-)
+
+if TYPE_CHECKING:
+    from ronin.setup import SetupContext, StepResult
 
 PLATFORM_DRIVERS = {"android": "uiautomator2", "ios": "xcuitest"}
 
 
-def _build_context(console: Console, assume_yes: bool, dry_run: bool) -> SetupContext:
+def register(subcommands: argparse._SubParsersAction) -> None:
+    parser = subcommands.add_parser(
+        "setup",
+        help="Install what Ronin needs on this machine",
+        description="Install Appium, its drivers and the vision extra, then verify the result.",
+    )
+    parser.add_argument(
+        "--platform",
+        choices=["android", "ios", "all"],
+        help="Which platform to set up (default: the configured platform)",
+    )
+    parser.add_argument(
+        "-y", "--yes", action="store_true", dest="assume_yes", help="Install without prompting"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Report what would be installed, change nothing"
+    )
+    parser.add_argument(
+        "--skip-models", action="store_true", help="Do not prefetch the YOLO and OCR weights"
+    )
+    parser.set_defaults(handler=run)
+
+
+def _build_context(console: Console, assume_yes: bool, dry_run: bool) -> "SetupContext":
+    from ronin.setup import SetupContext
+
     return SetupContext(
         assume_yes=assume_yes,
         dry_run=dry_run,
@@ -28,18 +49,24 @@ def _build_context(console: Console, assume_yes: bool, dry_run: bool) -> SetupCo
     )
 
 
-def _report(console: Console, results: List[StepResult]) -> None:
+def _report(console: Console, results: List["StepResult"]) -> None:
     for result in results:
         console.result(result.level, result.label, result.detail, result.hint)
 
 
-def run(
-    platforms: tuple[str, ...],
-    assume_yes: bool = False,
-    dry_run: bool = False,
-    skip_models: bool = False,
-) -> int:
+def run(args: argparse.Namespace, config: Config) -> int:
     """Installs what Ronin needs, then reports the resulting environment."""
+    from ronin.setup import (
+        ensure_env_file,
+        install_appium,
+        install_driver,
+        install_vision,
+        prefetch_models,
+    )
+
+    platforms = config.platforms(args.platform)
+    assume_yes, dry_run, skip_models = args.assume_yes, args.dry_run, args.skip_models
+
     console = Console()
     console.title("Ronin setup" + (" (dry run)" if dry_run else ""))
 
@@ -50,7 +77,7 @@ def run(
         )
 
     ctx = _build_context(console, assume_yes, dry_run)
-    steps: List[StepResult] = []
+    steps: List["StepResult"] = []
 
     console.heading("Project")
     steps.append(ensure_env_file(ctx))

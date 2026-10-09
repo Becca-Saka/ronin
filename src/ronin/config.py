@@ -81,6 +81,16 @@ class Config:
     def origin(self, name: str) -> str:
         return self.origins.get(name, DEFAULT_ORIGIN)
 
+    def platforms(self, requested: Optional[str] = None) -> tuple[str, ...]:
+        """Which platforms a command covers.
+
+        Without an explicit choice, follow the configured target rather than
+        assuming both: an Android-only user should not be told that a missing
+        iOS driver blocks them.
+        """
+        choice = requested or self.values["platform"]
+        return ("android", "ios") if choice == "all" else (choice,)
+
     def resolve(self, name: str, override: Any = None) -> Any:
         """An explicit CLI value wins; otherwise the resolved setting applies."""
         if override is None or override is False:

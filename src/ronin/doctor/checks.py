@@ -6,13 +6,11 @@ problem. Anything that can be fixed by running a command carries that
 command as its hint.
 """
 
-import io
 import os
 import platform as platform_module
 import shutil
 import subprocess
 import sys
-from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -112,19 +110,13 @@ def check_vision_deps() -> CheckResult:
 
 
 def check_credentials(model: str = DEFAULT_MODEL) -> CheckResult:
-    """Asks LiteLLM what the default model needs, and whether the environment has it.
+    """Reports whether the configured model's credentials are in the environment."""
+    from ronin.llm.credentials import missing_credentials
 
-    Deferring to LiteLLM keeps this honest when DEFAULT_MODEL changes provider,
-    and covers providers needing more than a single key.
-    """
     try:
-        import litellm
+        missing = missing_credentials(model)
     except ImportError as exc:  # pragma: no cover - litellm is a base dependency
         return CheckResult("credentials", Status.WARN, f"could not load litellm: {exc}")
-
-    # validate_environment prints a provider banner for models it cannot route.
-    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-        missing = litellm.validate_environment(model).get("missing_keys") or []
 
     if not missing:
         return CheckResult("credentials", Status.OK, f"{model} is configured")
