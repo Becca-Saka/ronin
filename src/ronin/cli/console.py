@@ -51,7 +51,8 @@ class Console:
         return f"{''.join(codes)}{text}{RESET}"
 
     def write(self, text: str = "") -> None:
-        print(text, file=self.stream)
+        # Unbuffered: install steps interleave their own subprocess output.
+        print(text, file=self.stream, flush=True)
 
     def title(self, text: str) -> None:
         self.write(self.paint(text, BOLD))

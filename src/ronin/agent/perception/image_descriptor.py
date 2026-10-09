@@ -44,23 +44,26 @@ class GUIElement(BaseModel):
 
 OCR_RELEVANT_TYPES = {"Text", "Button", "EditText"}
 
+YOLO_REPO_ID = "orasul/deki-yolo"
+YOLO_FILENAME = "best.pt"
+OCR_LANGUAGES = ["en"]
+
 
 class ImageDescriptor:
     def __init__(self):
         require_vision()
-        # Imported lazily: these pull in torch, which lives behind the
-        # optional 'vision' extra (see ronin.utils.vision_deps).
+        # Deferred: these pull torch, which lives behind the 'vision' extra.
         import easyocr
         from huggingface_hub import hf_hub_download
         from ultralytics import YOLO
 
         logger.info("Loading deki-yolo model...")
-        model_path = hf_hub_download(repo_id="orasul/deki-yolo", filename="best.pt")
+        model_path = hf_hub_download(repo_id=YOLO_REPO_ID, filename=YOLO_FILENAME)
         self.yolo = YOLO(model_path)
         self.names = self.yolo.names
         logger.info("✓ Model loaded")
         logger.info("Loading EasyOCR...")
-        self.reader = easyocr.Reader(["en"], gpu=False)
+        self.reader = easyocr.Reader(OCR_LANGUAGES, gpu=False)
         logger.info("✓ OCR loaded")
 
     def describe(

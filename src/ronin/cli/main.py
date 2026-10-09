@@ -105,6 +105,27 @@ def _build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", dest="as_json", help="Emit machine-readable output for CI"
     )
 
+    setup_parser = subcommands.add_parser(
+        "setup",
+        help="Install what Ronin needs on this machine",
+        description="Install Appium, its drivers and the vision extra, then verify the result.",
+    )
+    setup_parser.add_argument(
+        "--platform",
+        default="all",
+        choices=["android", "ios", "all"],
+        help="Only set up one platform (default: all)",
+    )
+    setup_parser.add_argument(
+        "-y", "--yes", action="store_true", dest="assume_yes", help="Install without prompting"
+    )
+    setup_parser.add_argument(
+        "--dry-run", action="store_true", help="Report what would be installed, change nothing"
+    )
+    setup_parser.add_argument(
+        "--skip-models", action="store_true", help="Do not prefetch the YOLO and OCR weights"
+    )
+
     run_parser = subcommands.add_parser(
         "run",
         help="Drive the app towards a single goal, with no QA reporting",
@@ -202,6 +223,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         args = parser.parse_args(argv)
         platforms = ("android", "ios") if args.platform == "all" else (args.platform,)
         return doctor.run(platforms, args.as_json)
+    if args.command == "setup":
+        from ronin.cli import setup
+
+        args = parser.parse_args(argv)
+        platforms = ("android", "ios") if args.platform == "all" else (args.platform,)
+        return setup.run(platforms, args.assume_yes, args.dry_run, args.skip_models)
     if args.command == "test":
         return _run_test_suite(_strip_log_level(remaining))
     if args.command == "run":

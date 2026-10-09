@@ -82,9 +82,6 @@ def _streams(result: subprocess.CompletedProcess) -> str:
     return f"{result.stdout or ''}\n{result.stderr or ''}"
 
 
-# --------------------------------------------------------------- python & ronin
-
-
 def check_python() -> CheckResult:
     version = ".".join(str(part) for part in sys.version_info[:3])
     if sys.version_info[:2] >= MIN_PYTHON:
@@ -143,9 +140,6 @@ def check_credentials(model: str = DEFAULT_MODEL) -> CheckResult:
     )
 
 
-# ----------------------------------------------------------------------- appium
-
-
 def check_node() -> CheckResult:
     if not shutil.which("node"):
         return CheckResult("node", Status.FAIL, "not installed", "brew install node")
@@ -191,9 +185,6 @@ def check_appium_driver(driver: str, needed: bool = True) -> CheckResult:
         "not installed",
         f"ronin setup   (or: appium driver install {driver})",
     )
-
-
-# ---------------------------------------------------------------------- android
 
 
 def android_sdk_path() -> Optional[Path]:
@@ -304,9 +295,6 @@ def check_avds() -> CheckResult:
     )
 
 
-# -------------------------------------------------------------------------- ios
-
-
 def check_xcode() -> CheckResult:
     if not is_macos():
         return CheckResult("xcode", Status.SKIP, "iOS automation requires macOS")
@@ -341,9 +329,6 @@ def check_simulators() -> CheckResult:
         "no iPhone simulators available",
         "Install a simulator runtime: Xcode > Settings > Components",
     )
-
-
-# --------------------------------------------------------------------- assembly
 
 
 def run_checks(platforms: tuple[str, ...] = ("android", "ios")) -> list[CheckSection]:
