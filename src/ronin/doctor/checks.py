@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from ronin import __version__
-from ronin.defaults import DEFAULT_DEVICE, DEFAULT_MODEL
+from ronin.defaults import DEFAULT_MODEL
 from ronin.utils.subprocess_runner import run_command
 from ronin.utils.vision_deps import VISION_PACKAGES, missing_vision_packages
 
@@ -270,7 +270,11 @@ def check_aapt() -> CheckResult:
     )
 
 
-def check_avds() -> CheckResult:
+def check_avds(expected_device: Optional[str] = None) -> CheckResult:
+    """Lists configured AVDs, warning when the device Ronin would target is absent."""
+    from ronin.config import load_config
+
+    expected = expected_device or load_config().get("device")
     emulator = resolve_android_binary("emulator")
     if emulator is None:
         return CheckResult("avds", Status.SKIP, "emulator not found")
@@ -278,12 +282,12 @@ def check_avds() -> CheckResult:
     if result is None:
         return CheckResult("avds", Status.WARN, "could not list AVDs")
     avds = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
-    if avds and DEFAULT_DEVICE not in avds:
+    if avds and expected not in avds:
         return CheckResult(
             "avds",
             Status.WARN,
-            f"{', '.join(avds)} (no '{DEFAULT_DEVICE}')",
-            f"Ronin defaults to --device {DEFAULT_DEVICE}; pass --device {avds[0]} or rename your AVD",
+            f"{', '.join(avds)} (no '{expected}')",
+            f"Ronin targets '{expected}'; run: ronin config set device {avds[0]}",
         )
     if avds:
         return CheckResult("avds", Status.OK, ", ".join(avds))
@@ -291,7 +295,7 @@ def check_avds() -> CheckResult:
         "avds",
         Status.FAIL,
         "none configured",
-        "Create one in Android Studio > Device Manager (Ronin defaults to Pixel_8a)",
+        f"Create one with: ronin devices create {expected}",
     )
 
 

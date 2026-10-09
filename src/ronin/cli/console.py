@@ -80,6 +80,23 @@ class Console:
     def hint(self, text: str, indent: int = 6) -> None:
         self.write(f"{' ' * indent}{self.paint(text, DIM)}")
 
+    def confirm(self, prompt: str, assume_yes: bool = False) -> bool:
+        """Asks a yes/no question, reading the answer from stdin wherever it comes from.
+
+        Piped answers work (`yes | ronin setup`); a closed or empty stdin reads
+        as EOF and declines, so an unattended run never blocks or assumes yes.
+        """
+        if assume_yes:
+            return True
+        try:
+            answer = input(f"  {self.paint('?', YELLOW)} {prompt} [Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            self.write()
+            return False
+        if not sys.stdin.isatty():
+            self.write(answer)
+        return answer in ("", "y", "yes")
+
     def count(self, level: str, text: str) -> None:
         """A coloured tally line, e.g. '2 warning(s):'."""
         self.write(self.paint(text, LEVEL_COLORS[level]))

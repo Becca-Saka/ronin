@@ -4,43 +4,42 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import List
+from typing import Any, List, Optional
 
 from ronin.agent.device.platform import Platform
-from ronin.defaults import (
-    DEFAULT_APP_PATH,
-    DEFAULT_DEVICE,
-    DEFAULT_MAX_STEPS,
-    DEFAULT_MODEL,
-    DEFAULT_OUTPUT_DIR,
-    DEFAULT_PLATFORM,
-    DEFAULT_SETTLE_TIME,
-)
+from ronin.config import Config, load_config
 from .models import UserJourney
 from .runner import RoninTestRunner
 
 logger = logging.getLogger(__name__)
 
 
+def _as_bool(raw: Any) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
 class RoninCLI:
     """Encapsulates the CLI parsing, test suite execution, and summary reporting for Ronin."""
 
-    def __init__(self):
+    def __init__(self, config: Optional[Config] = None):
+        self.config = config or load_config()
         self.parser = self._create_parser()
 
     def _create_parser(self) -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser(description="Ronin QA Journey-Based Testing CLI")
         parser.add_argument("journey_file", help="Path to the journey YAML/JSON file")
-        parser.add_argument("--platform", default=DEFAULT_PLATFORM, choices=["android", "ios"], help="Target platform")
-        parser.add_argument("--device", default=DEFAULT_DEVICE, help="Name of emulator/device")
-        parser.add_argument("--app-path", default=DEFAULT_APP_PATH, help="App binary path")
-        parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory to save test outputs and reports")
-        parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS, help="Max steps per test scenario execution")
-        parser.add_argument("--settle-time", type=float, default=DEFAULT_SETTLE_TIME, help="Settle time after actions")
-        parser.add_argument("--model", default=DEFAULT_MODEL, help="LiteLLM model to use")
-        parser.add_argument("--fast-model", default=None, help="Cheaper/faster LiteLLM model for ReAct step planning")
-        parser.add_argument("--use-multimodal-vision", action="store_true", help="Toggle LLM coordinate overrides")
-        parser.add_argument("--headless", action="store_true", help="Run android emulator headlessly")
+        parser.add_argument("--platform", choices=["android", "ios"], help="Target platform")
+        parser.add_argument("--device", help="Name of emulator/device")
+        parser.add_argument("--app-path", help="App binary path")
+        parser.add_argument("--output-dir", help="Directory to save test outputs and reports")
+        parser.add_argument("--max-steps", type=int, help="Max steps per test scenario execution")
+        parser.add_argument("--settle-time", type=float, help="Settle time after actions")
+        parser.add_argument("--model", help="LiteLLM model to use")
+        parser.add_argument("--fast-model", help="Cheaper/faster LiteLLM model for ReAct step planning")
+        parser.add_argument("--use-multimodal-vision", action="store_true", default=None, help="Toggle LLM coordinate overrides")
+        parser.add_argument("--headless", action="store_true", default=None, help="Run android emulator headlessly")
         return parser
 
     def load_journeys(self, filepath: Path) -> List[UserJourney]:
@@ -153,32 +152,40 @@ class RoninCLI:
             logger.error("Failed to load journey file: %s", e)
             sys.exit(2)
             
-        # Parse device configuration overrides from the loaded suite
+        # Settings come from the flag if given, then the suite's device block,
+        # then ronin.config (project/global files, env), then the defaults.
         device_cfg = {}
         if hasattr(self, "raw_config") and isinstance(self.raw_config, dict):
             device_cfg = self.raw_config.get("device", {})
-            
-        platform_str = device_cfg.get("platform", args.platform)
-        device_name = device_cfg.get("emulator", device_cfg.get("device", args.device))
-        headless_val = device_cfg.get("headless", args.headless)
-        if isinstance(headless_val, str):
-            headless_val = (headless_val.lower() == "true")
-            
+
+        def setting(name: str, flag: Any, *journey_keys: str) -> Any:
+            if flag is not None:
+                return flag
+            for key in journey_keys or (name,):
+                if key in device_cfg:
+                    return device_cfg[key]
+            return self.config.get(name)
+
+        platform_str = setting("platform", args.platform)
+        device_name = setting("device", args.device, "emulator", "device")
+        headless_val = _as_bool(setting("headless", args.headless))
+
         record_val = device_cfg.get("record", device_cfg.get("record_session", True))
-        if isinstance(record_val, str):
-            record_val = (record_val.lower() == "true")
-            
+        record_val = _as_bool(record_val)
+
         runner = RoninTestRunner(
             platform=Platform.ANDROID if platform_str == "android" else Platform.IOS,
             device_name=device_name,
-            app_path=args.app_path,
-            model=args.model,
-            assets_dir=Path(args.output_dir),
-            max_steps=args.max_steps,
-            settle_time=args.settle_time,
-            use_multimodal_vision=args.use_multimodal_vision,
+            app_path=setting("app_path", args.app_path),
+            model=setting("model", args.model),
+            assets_dir=Path(setting("output_dir", args.output_dir)),
+            max_steps=int(setting("max_steps", args.max_steps)),
+            settle_time=float(setting("settle_time", args.settle_time)),
+            use_multimodal_vision=_as_bool(
+                setting("use_multimodal_vision", args.use_multimodal_vision)
+            ),
             headless=headless_val,
-            fast_model=args.fast_model,
+            fast_model=setting("fast_model", args.fast_model),
             record_session=record_val,
         )
         

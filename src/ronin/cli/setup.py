@@ -20,16 +20,10 @@ PLATFORM_DRIVERS = {"android": "uiautomator2", "ios": "xcuitest"}
 
 
 def _build_context(console: Console, assume_yes: bool, dry_run: bool) -> SetupContext:
-    def confirm(prompt: str) -> bool:
-        if not sys.stdin.isatty():
-            return False
-        answer = input(f"  {prompt} [Y/n] ").strip().lower()
-        return answer in ("", "y", "yes")
-
     return SetupContext(
         assume_yes=assume_yes,
         dry_run=dry_run,
-        confirm=confirm,
+        confirm=console.confirm,
         log=lambda message: console.hint(message, indent=2),
     )
 
@@ -50,7 +44,10 @@ def run(
     console.title("Ronin setup" + (" (dry run)" if dry_run else ""))
 
     if not assume_yes and not dry_run and not sys.stdin.isatty():
-        console.hint("Not running interactively — installs will be skipped. Pass -y to proceed.", indent=2)
+        console.hint(
+            "stdin is not a terminal — prompts read from it, and EOF counts as no. Pass -y to accept everything.",
+            indent=2,
+        )
 
     ctx = _build_context(console, assume_yes, dry_run)
     steps: List[StepResult] = []
