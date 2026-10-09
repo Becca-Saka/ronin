@@ -59,9 +59,17 @@ appium driver list --installed
 ### 2. Install Python Dependencies
 Sync all python packages specified in [pyproject.toml](pyproject.toml) using `uv`:
 ```bash
-uv sync
+uv sync --extra vision
 ```
-*Note: This will install Appium Client, LiteLLM, Pillow, Pydantic, NumPy, EasyOCR, and Ultralytics (YOLO).*
+This installs the `ronin` command along with Appium Client, LiteLLM, Pillow, Pydantic, and NumPy, plus the `vision` extra (EasyOCR and Ultralytics/YOLO).
+
+The `vision` extra is separate because it pulls in PyTorch — 127MB on Apple Silicon, 555MB on Linux x86_64. Plain `uv sync` gives you a much faster install that can do everything except screen perception; Ronin will tell you to add the extra if you try to run without it.
+
+Check that the command is available:
+```bash
+uv run ronin --version
+uv run ronin --help
+```
 
 ### 3. Configure Environment Variables
 Create a `.env` file in the root of the project to supply your API credentials:
@@ -122,12 +130,12 @@ security_rules:
 ### 2. Run the Test Journey
 
 ```bash
-uv run main.py test-journey example/checkout_journey.yaml
+uv run ronin test example/checkout_journey.yaml
 ```
 
 To use a more capable primary model alongside a faster/cheaper model for execution steps:
 ```bash
-uv run main.py test-journey example/checkout_journey.yaml \
+uv run ronin test example/checkout_journey.yaml \
   --model openrouter/google/gemini-2.5-pro \
   --fast-model openrouter/google/gemini-2.5-flash
 ```
@@ -176,31 +184,21 @@ All outputs are saved to the `assets/` directory (configurable via `--output-dir
 
 ## Mode 2: Single-Goal Agent
 
-For quick one-off automation tasks, you can run the agent with a hardcoded goal directly:
+For quick one-off automation tasks, pass the goal directly on the command line:
 
 ```bash
-uv run main.py
+uv run ronin run "Sign in with email 'test@email.com' and navigate to the settings screen." \
+  --app-path example/testing_app/build/app/outputs/flutter-apk/app-debug.apk
 ```
 
-Configure the goal and device in [`main.py`](main.py):
+`ronin run` accepts the same device and model flags as `ronin test` (`--device`, `--platform`, `--model`, `--fast-model`, `--max-steps`, `--settle-time`, `--headless`, `--output-dir`), plus a required `--app-path`. It exits `0` when the goal is reached and `1` otherwise.
 
-```python
-goal = "Sign in with email 'test@email.com' and navigate to the settings screen."
-app_path = "example/testing_app/build/app/outputs/flutter-apk/app-debug.apk"
-
-agent = RoninAgent(
-    device_name="Pixel_8a",
-    app_path=app_path,
-    platform=Platform.ANDROID,
-    max_steps=20,
-)
-agent.execute(goal)
-```
-
-You can override the log level:
+You can override the log level on any command:
 ```bash
-uv run main.py --log-level DEBUG
+uv run ronin --log-level DEBUG run "..." --app-path ...
 ```
 
-> **Note**: This mode does not generate test scenarios, produce reports, or perform QA auditing. Use `test-journey` for structured testing.
+> **Note**: This mode does not generate test scenarios, produce reports, or perform QA auditing. Use `ronin test` for structured testing.
+
+> `uv run main.py` still works but is deprecated — it forwards to `ronin`, mapping the old `test-journey` subcommand to `test`.
 

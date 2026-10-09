@@ -1,20 +1,43 @@
 [project]
-name = "ronin"
+name = "ronin-ai"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI-driven mobile (Android and iOS) end-to-end testing agent"
 readme = "README.md"
 requires-python = ">=3.12"
+license = { text = "MIT" }
+keywords = ["testing", "e2e", "mobile", "android", "ios", "appium", "llm", "agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
+]
 dependencies = [
     "appium-python-client>=5.0.0",
     "litellm>=1.0.0",
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
-    "ultralytics>=8.0.0",
-    "easyocr>=1.6.0",
+    "pyyaml>=6.0",
     "numpy>=1.24.0",
-    "huggingface-hub>=0.16.0",
     "pillow>=9.5.0",
     "imagehash>=4.3.1",
-    "app-use[memory]>=0.0.3",
 ]
 
+[project.optional-dependencies]
+# Pulls torch (127MB on macOS arm64, 555MB on linux x86_64), so it is kept
+# out of the base install and fetched on demand. See ronin.utils.vision_deps.
+vision = [
+    "ultralytics>=8.0.0",
+    "easyocr>=1.6.0",
+    "huggingface-hub>=0.16.0",
+]
+
+[project.scripts]
+ronin = "ronin.cli.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ronin"]
