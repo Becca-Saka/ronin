@@ -7,7 +7,6 @@ Dispatches the top-level subcommands and owns the process-wide concerns
 import argparse
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -15,15 +14,16 @@ from typing import List, Optional
 from dotenv import load_dotenv
 
 from ronin import __version__
+from ronin.defaults import (
+    DEFAULT_DEVICE,
+    DEFAULT_MAX_STEPS,
+    DEFAULT_MODEL,
+    DEFAULT_OUTPUT_DIR,
+    DEFAULT_PLATFORM,
+    DEFAULT_SETTLE_TIME,
+)
 
 logger = logging.getLogger(__name__)
-
-PROVIDER_KEYS = {
-    "openrouter/": "OPENROUTER_API_KEY",
-    "gemini/": "GEMINI_API_KEY",
-    "anthropic/": "ANTHROPIC_API_KEY",
-    "openai/": "OPENAI_API_KEY",
-}
 
 
 def _configure_logging(level: str) -> None:
@@ -34,28 +34,36 @@ def _configure_logging(level: str) -> None:
     )
 
 
-def _require_api_key(*models: Optional[str]) -> None:
-    """Fails fast when a requested model's provider key is absent from the environment."""
+def _require_credentials(*models: Optional[str]) -> None:
+    """Fails fast when a requested model's credentials are absent from the environment.
+
+    LiteLLM knows what each provider needs — one key for most, several for
+    Bedrock, a base URL for Ollama — so defer to it rather than mapping
+    prefixes to environment variables here. It reports nothing missing for
+    models it cannot route, which keeps custom endpoints working.
+    """
+    import litellm
+
     for model in models:
         if not model:
             continue
-        for prefix, env_var in PROVIDER_KEYS.items():
-            if model.startswith(prefix) and not os.getenv(env_var):
-                raise SystemExit(
-                    f"{env_var} is not set, but --model/--fast-model requests "
-                    f"'{model}'.\nAdd it to a .env file in this directory or export it."
-                )
+        missing = litellm.validate_environment(model).get("missing_keys") or []
+        if missing:
+            raise SystemExit(
+                f"Missing credentials for '{model}': {', '.join(missing)}.\n"
+                "Add them to a .env file in this directory or export them."
+            )
 
 
 def _add_device_arguments(parser: argparse.ArgumentParser) -> None:
     """Device/model flags shared by the agent-driving subcommands."""
-    parser.add_argument("--platform", default="android", choices=["android", "ios"], help="Target platform")
-    parser.add_argument("--device", default="Pixel_8a", help="Name of emulator/simulator/device")
-    parser.add_argument("--model", default="openrouter/google/gemini-2.5-flash", help="LiteLLM model to use")
+    parser.add_argument("--platform", default=DEFAULT_PLATFORM, choices=["android", "ios"], help="Target platform")
+    parser.add_argument("--device", default=DEFAULT_DEVICE, help="Name of emulator/simulator/device")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="LiteLLM model to use")
     parser.add_argument("--fast-model", default=None, help="Cheaper/faster LiteLLM model for per-step planning")
-    parser.add_argument("--output-dir", default="assets", help="Directory to save outputs and screenshots")
-    parser.add_argument("--max-steps", type=int, default=20, help="Max steps per run")
-    parser.add_argument("--settle-time", type=float, default=2.0, help="Seconds to wait after each action")
+    parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory to save outputs and screenshots")
+    parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS, help="Max steps per run")
+    parser.add_argument("--settle-time", type=float, default=DEFAULT_SETTLE_TIME, help="Seconds to wait after each action")
     parser.add_argument("--use-multimodal-vision", action="store_true", help="Allow the LLM to override detected coordinates")
     parser.add_argument("--headless", action="store_true", help="Run the emulator headlessly")
 
@@ -82,6 +90,21 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Run a journey file as a generated test suite. See 'ronin test --help'.",
     )
 
+    doctor_parser = subcommands.add_parser(
+        "doctor",
+        help="Check that this machine can run Ronin",
+        description="Report on every prerequisite Ronin needs, with the command to fix each gap.",
+    )
+    doctor_parser.add_argument(
+        "--platform",
+        default="all",
+        choices=["android", "ios", "all"],
+        help="Only check the prerequisites for one platform (default: all)",
+    )
+    doctor_parser.add_argument(
+        "--json", action="store_true", dest="as_json", help="Emit machine-readable output for CI"
+    )
+
     run_parser = subcommands.add_parser(
         "run",
         help="Drive the app towards a single goal, with no QA reporting",
@@ -98,7 +121,7 @@ def _run_goal(args: argparse.Namespace) -> int:
     from ronin.agent.device.platform import Platform
     from ronin.agent.device_agent import DeviceAgent
 
-    _require_api_key(args.model, args.fast_model)
+    _require_credentials(args.model, args.fast_model)
 
     if not Path(args.app_path).exists():
         raise SystemExit(f"App binary not found: {args.app_path}")
@@ -156,7 +179,7 @@ def _run_test_suite(argv: List[str]) -> int:
     cli = RoninCLI()
     cli.parser.prog = "ronin test"
     args = cli.parser.parse_args(argv)
-    _require_api_key(args.model, args.fast_model)
+    _require_credentials(args.model, args.fast_model)
     # RoninCLI.run() re-parses and calls sys.exit() with the suite's status.
     asyncio.run(cli.run(argv))
     return 0
@@ -173,6 +196,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     _configure_logging(args.log_level)
     load_dotenv()
 
+    if args.command == "doctor":
+        from ronin.cli import doctor
+
+        args = parser.parse_args(argv)
+        platforms = ("android", "ios") if args.platform == "all" else (args.platform,)
+        return doctor.run(platforms, args.as_json)
     if args.command == "test":
         return _run_test_suite(_strip_log_level(remaining))
     if args.command == "run":

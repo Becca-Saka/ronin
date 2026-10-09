@@ -77,6 +77,30 @@ Create a `.env` file in the root of the project to supply your API credentials:
 OPENROUTER_API_KEY=your_openrouter_api_key_here
 ```
 
+### 4. Verify Your Environment
+`ronin doctor` checks every prerequisite above and prints the command to fix anything missing:
+```bash
+uv run ronin doctor
+```
+```
+Ronin
+  ✓ python: 3.12.9
+  ✓ vision deps: ultralytics, easyocr, huggingface_hub
+  ✓ api key: OPENROUTER_API_KEY set
+
+Appium
+  ✓ node: v24.13.0
+  ✓ appium: 3.5.0
+  ✓ driver: uiautomator2: installed
+  ✗ driver: xcuitest: not installed
+      ronin setup   (or: appium driver install xcuitest)
+```
+It exits non-zero when something blocking is missing, so it works as a CI gate. Checks for a platform you don't target are reported as warnings rather than failures:
+```bash
+uv run ronin doctor --platform android   # skip the iOS checks
+uv run ronin doctor --json               # machine-readable output
+```
+
 ---
 
 ## Building the Sample App (Example)

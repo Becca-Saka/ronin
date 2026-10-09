@@ -7,6 +7,15 @@ from pathlib import Path
 from typing import List
 
 from ronin.agent.device.platform import Platform
+from ronin.defaults import (
+    DEFAULT_APP_PATH,
+    DEFAULT_DEVICE,
+    DEFAULT_MAX_STEPS,
+    DEFAULT_MODEL,
+    DEFAULT_OUTPUT_DIR,
+    DEFAULT_PLATFORM,
+    DEFAULT_SETTLE_TIME,
+)
 from .models import UserJourney
 from .runner import RoninTestRunner
 
@@ -22,13 +31,13 @@ class RoninCLI:
     def _create_parser(self) -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser(description="Ronin QA Journey-Based Testing CLI")
         parser.add_argument("journey_file", help="Path to the journey YAML/JSON file")
-        parser.add_argument("--platform", default="android", choices=["android", "ios"], help="Target platform")
-        parser.add_argument("--device", default="Pixel_8a", help="Name of emulator/device")
-        parser.add_argument("--app-path", default="example/testing_app/build/app/outputs/flutter-apk/app-debug.apk", help="App binary path")
-        parser.add_argument("--output-dir", default="assets", help="Directory to save test outputs and reports")
-        parser.add_argument("--max-steps", type=int, default=20, help="Max steps per test scenario execution")
-        parser.add_argument("--settle-time", type=float, default=2.0, help="Settle time after actions")
-        parser.add_argument("--model", default="openrouter/google/gemini-2.5-flash", help="LiteLLM model to use")
+        parser.add_argument("--platform", default=DEFAULT_PLATFORM, choices=["android", "ios"], help="Target platform")
+        parser.add_argument("--device", default=DEFAULT_DEVICE, help="Name of emulator/device")
+        parser.add_argument("--app-path", default=DEFAULT_APP_PATH, help="App binary path")
+        parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory to save test outputs and reports")
+        parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS, help="Max steps per test scenario execution")
+        parser.add_argument("--settle-time", type=float, default=DEFAULT_SETTLE_TIME, help="Settle time after actions")
+        parser.add_argument("--model", default=DEFAULT_MODEL, help="LiteLLM model to use")
         parser.add_argument("--fast-model", default=None, help="Cheaper/faster LiteLLM model for ReAct step planning")
         parser.add_argument("--use-multimodal-vision", action="store_true", help="Toggle LLM coordinate overrides")
         parser.add_argument("--headless", action="store_true", help="Run android emulator headlessly")
