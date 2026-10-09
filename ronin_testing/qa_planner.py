@@ -80,6 +80,7 @@ class QAPlanner(DevicePlanner):
         loop_nudge: Optional[str] = None,
         current_image_bytes: bytes = b"",
         visual_history: List[bytes] = None,
+        keyboard_open: Optional[bool] = None,
     ) -> QAStepResponse:
         from utils.redactor import redact_elements, redact_text
 
@@ -98,12 +99,15 @@ class QAPlanner(DevicePlanner):
             trail=trail,
             drift_warning=drift_warning,
             loop_nudge=loop_nudge,
+            keyboard_open=keyboard_open,
         )
 
         message = MultiPartMessage()
-        for idx, img_bytes in enumerate(visual_history or []):
-            message.add_text(f"Screenshot from step {idx + 1}:")
-            message.add_image(img_bytes)
+        # EXPERIMENT: visual history disabled — testing whether stale screenshot coordinates
+        # cause LLM hallucination. Rich REACTION lines in action history replace visual context.
+        # for idx, img_bytes in enumerate(visual_history or []):
+        #     message.add_text(f"Screenshot from step {idx + 1}:")
+        #     message.add_image(img_bytes)
         message.add_text("Current screenshot (newest):")
         message.add_image(current_image_bytes)
         message.add_text(prompt)
@@ -112,6 +116,7 @@ class QAPlanner(DevicePlanner):
         response: QAStepResponse = self.llm.generate_response([message], QAStepResponse)
 
         response.reasoning = redact_text(response.reasoning)
+        response.observation = redact_text(response.observation)
         response.evaluation_previous_goal = redact_text(
             response.evaluation_previous_goal
         )
@@ -130,8 +135,9 @@ class QAPlanner(DevicePlanner):
         trail: Optional[str],
         drift_warning: Optional[str],
         loop_nudge: Optional[str],
+        keyboard_open: Optional[bool] = None,
     ) -> str:
-        from agent.actuation.actions import CapabilityType, CAPABILITY_SCHEMAS
+        from agent.actuation.actions import CAPABILITY_SCHEMAS, CapabilityType
 
         expected_outcomes = self._test_case.expected_outcomes or []
         security_rules = self._security_rules
@@ -157,6 +163,7 @@ Complete the full user journey from the beginning — do not assume any state or
 
 ### Current UI Elements Detected (YOLO/OCR)
 {self._format_elements(gui_elements) if gui_elements else "None detected."}
+{"" if keyboard_open is None else chr(10) + "### Keyboard State" + chr(10) + ("VISIBLE — the soft keyboard is currently displayed. Elements in the lower ~40% of the screen may be keyboard keys, not app UI." if keyboard_open else "HIDDEN — the soft keyboard is not visible. All detected elements are app UI.")}
 
 ### Action History (with system-observed outcomes)
 {history or "No actions executed yet."}
@@ -201,33 +208,78 @@ Each action must have a `type` field set to one of:
 - "done": Goal complete or must stop. Fields: `type`, `reason`.
 
 CRITICAL CONSTRAINTS:
-1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
-2. For "type", provide both `text` AND `coordinates` of the target field.
-3. Before typing, first send a "tap" to focus the field.
-4. The soft keyboard creates a touch-blocking overlay across the bottom portion of the screen. YOLO may still detect elements in that area, but tapping their coordinates will hit keyboard keys instead of the element. If the keyboard is visible and your next tap target is in the lower half of the screen, dismiss the keyboard first with key_event 4 — on Android, back always dismisses the soft keyboard without navigating away.
-5. Do NOT repeat an action already in history unless outcome or self-assessment shows it failed or was undone. Inability to see a result visually is NOT evidence of failure.
-7. When you tap a text field and the keyboard appears, the screen layout shifts and YOLO-detected element positions change. For a TYPE action into the same field you just tapped, use the EXACT same coordinates as the TAP — do not re-derive coordinates from the post-keyboard YOLO scan.
+1. Action vocabulary is STRICT:
+   - Use "tap" for all touch interactions
+   - Use "type" only for text input
+   - Never use "click", "send_keys", or any alternative synonyms
 
+2. TYPE action requirements:
+   - Must include BOTH `text` and `coordinates`
+   - Coordinates MUST refer to the input field (not keyboard keys or overlays)
 
+3. REQUIRED SEQUENCE FOR TEXT INPUT:
+   Step A: tap(input_field_coordinates)
+   Step B: wait for keyboard to appear
+   Step C: type(text, same input_field_coordinates)
+
+4. KEYBOARD STATE RULE:
+   Assume keyboard is VISIBLE if:
+   - A previous "tap" targeted a text field, OR
+   - history shows a recent "type", OR
+   - UI bottom region is partially occluded in detection
+
+5. KEYBOARD BLOCKING RULE:
+   If keyboard is visible:
+   - Any element in the lower 45% of the screen is NOT interactable
+   - Taps in this region will hit keyboard keys instead of UI elements
+   - Before tapping such elements, dismiss keyboard using key_event 4
+
+6. KEYBOARD DISMISSAL RULE:
+   Use key_event 4 ONLY when:
+   - Target element is in lower screen region, OR
+   - Current action requires full-screen interaction (submit, login, continue buttons near bottom)
+
+   After key_event 4:
+   - Treat next UI element list as a NEW layout (coordinates fully refreshed)
+
+7. NO ACTION REPEATS:
+   Do not repeat any action in history unless:
+   - previous attempt explicitly failed, OR
+   - system outcome confirms no state change occurred
+
+   Lack of visual confirmation is NOT failure evidence.
+
+8. COORDINATE AUTHORITY RULE:
+   - Always use coordinates from CURRENT UI ELEMENTS ONLY
+   - Do NOT reuse coordinates from previous screens after any UI change event (keyboard open/close, navigation, modal, scroll)
 """
-        if self.use_multimodal_vision:
-            prompt += """
-6. Prefer element center coordinates. If multimodal override is ENABLED, you may use custom coordinates based on visual inspection when YOLO missed an element.
-"""
-        else:
-            prompt += """
-6. MUST use center coordinates of the detected UI elements. Do not use coordinates outside the detected bounding boxes.
-"""
+        # CRITICAL CONSTRAINTS:
+        # 1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
+        # 2. For "type", provide both `text` AND `coordinates` of the target field.
+        # 3. Before typing, first send a "tap" to focus the field.
+        # 4. The soft keyboard blocks taps on anything behind it. If your next target is a button or control in the lower half of the screen (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app. After dismissal, use the fresh element list for coordinates.
+        # 5. Do NOT repeat an action already in history unless outcome or self-assessment shows it failed or was undone. Inability to see a result visually is NOT evidence of failure.
+        # 6. When the keyboard is visible and you need to TYPE into a field, use text_field/input elements from the CURRENT scan in the upper portion of the screen (above the keyboard). Ignore bottom-portion detections — those are keyboard keys.
+        # """
+        #         if self.use_multimodal_vision:
+        #             prompt += """
+        # 7. Prefer element center coordinates from the Current UI Elements list. If a target is missing because the keyboard obscures it, dismiss the keyboard (rule 4) first. You may also derive coordinates from older screenshots when YOLO missed a visible element.
+        # """
+        #         else:
+        #             prompt += """
+        # 7. MUST use center coordinates from the Current UI Elements list. If a target is missing because the keyboard obscures it, do not guess coordinates from older screenshots — dismiss the keyboard (rule 4) and plan from the next scan. Older screenshots are context only.
+        # """
         prompt += """
 ### Response Instructions
 1. Set `current_screen` to the descriptive name of the current screen.
 2. Set `evaluation_previous_goal`: honestly assess the previous action outcome. Empty on first step.
-3. Set `reasoning`: explain what you observe and why you chose the next action.
-4. Audit QA issues and populate `detected_issues`.
-5. Evaluate all expected outcomes, security rules, and dynamic assertions; populate `rule_verifications`.
-6. If scenario instructions reference elements that do not exist here, set `is_scenario_feasible = False`, fill `infeasibility_reason`, set action to `done`.
-7. If all objectives are met or a critical crash terminates execution, set action to `done`.
-8. Otherwise, set `action` to the single next action to execute.
-9. Set `external_navigation = True` if the action will temporarily leave the app.
+3. Set `observation`: describe only what is currently visible on the screen (UI state, visible fields, keyboard, overlays). No action plans here.
+4. Set `reasoning`: explain why you chose the next action based on the observation.
+5. Audit QA issues and populate `detected_issues` (each must include `severity`: low, medium, high, or critical).
+6. Evaluate all expected outcomes, security rules, and dynamic assertions; populate `rule_verifications`.
+7. If scenario instructions reference elements that do not exist here, set `is_scenario_feasible = False`, fill `infeasibility_reason`, set action to `done`.
+8. If all objectives are met or a critical crash terminates execution, set action to `done`.
+9. Otherwise, set `action` to the single next action to execute.
+10. Set `external_navigation = True` if the action will temporarily leave the app.
 """
         return prompt

@@ -28,6 +28,11 @@ from agent.history import ActionEntry, ActionResult, AgentHistory
 from agent.loop_detector import RollingLoopDetector
 from agent.perception.media_manager import MediaManager
 from agent.perception.perception import ScreenPerception
+from agent.perception.scan_dump import (
+    ScanInfo,
+    build_screen_scan_record,
+    write_screen_scan_dump,
+)
 from agent.trail import SessionTrail
 from llm.llm_client import LLMClient
 from utils.redactor import redact_elements, redact_text
@@ -61,6 +66,8 @@ class _PerceptionSnapshot:
     annotated_img: Image.Image
     current_phash: Optional[str]
     timestamp: str
+    scan_info: Optional[ScanInfo] = None
+    prev_phash: Optional[str] = None
 
 
 @dataclass
@@ -73,6 +80,11 @@ class _RunContext:
     drift_warning: Optional[str] = None
     steps_executed: int = 0
     current_phash: Optional[str] = None
+    prev_element_count: Optional[int] = None
+    keyboard_open: Optional[bool] = None
+    last_action_type: Optional[str] = None
+    screen_height: Optional[int] = None
+    keyboard_off_elements: Optional[list] = None
 
 
 class DeviceAgent:
@@ -145,9 +157,11 @@ class DeviceAgent:
         QAAgent to inject a QAPlanner without re-instantiating the agent.
         """
         planner = planner_override or self._default_fast_planner
+        session_dir.mkdir(parents=True, exist_ok=True)
         ctx = _RunContext(
             history=AgentHistory(),
             loop_detector=RollingLoopDetector(),
+            screen_height=getattr(device_control, "screen_height", None),
         )
 
         self._restart_app(device_control)
@@ -204,7 +218,22 @@ class DeviceAgent:
             perception, session_trail, ctx.prev_phash
         )
         ctx.current_phash = snapshot.current_phash
-        self._save_step_screenshot(session_dir, step, snapshot)
+        self._save_step_artifacts(session_dir, step, snapshot)
+
+        needs_keyboard_check = (
+            snapshot.scan_info and snapshot.scan_info.reason in ("navigation", "layout_shift")
+        ) or ctx.last_action_type == ActionType.TYPE.value
+        if needs_keyboard_check:
+            detected = device_control.is_keyboard_open()
+            if detected is not None:
+                ctx.keyboard_open = detected
+
+        if ctx.keyboard_open is False or (ctx.keyboard_open is None and snapshot.scan_info and snapshot.scan_info.reason == "first_pass"):
+            ctx.keyboard_off_elements = snapshot.gui_elements
+
+        reaction = self._build_reaction(snapshot.scan_info, ctx.prev_element_count, ctx.keyboard_open)
+        ctx.history.update_last_reaction(reaction)
+        ctx.prev_element_count = snapshot.scan_info.element_count if snapshot.scan_info else None
 
         page_nudge = ctx.loop_detector.check(None, snapshot.current_phash)
         stagnation_result = self._page_stagnation_result(
@@ -296,18 +325,42 @@ class DeviceAgent:
             annotated_img=annotated_img,
             current_phash=current_phash,
             timestamp=time.strftime("%Y%m%d_%H%M%S"),
+            scan_info=perception.last_scan_info,
+            prev_phash=prev_phash,
         )
 
-    def _save_step_screenshot(
+    def _save_step_artifacts(
         self,
         session_dir: Path,
         step: int,
         snapshot: _PerceptionSnapshot,
     ) -> None:
-        annotated_path = (
-            session_dir / f"step{step + 1}_{snapshot.timestamp}.png"
-        )
+        session_dir.mkdir(parents=True, exist_ok=True)
+        base = f"step{step + 1}_{snapshot.timestamp}"
+        annotated_path = session_dir / f"{base}.png"
+        raw_path = session_dir / f"{base}_raw.png"
+        scan_path = session_dir / f"{base}_scan.json"
+
         snapshot.annotated_img.save(annotated_path)
+        raw_path.write_bytes(snapshot.raw_img_bytes)
+
+        if snapshot.scan_info is None:
+            return
+
+        record = build_screen_scan_record(
+            step=step + 1,
+            timestamp=snapshot.timestamp,
+            scan_info=snapshot.scan_info,
+            gui_elements=snapshot.gui_elements,
+            screenshot_paths={
+                "raw": raw_path.name,
+                "annotated": annotated_path.name,
+                "scan": scan_path.name,
+            },
+            prev_phash=snapshot.prev_phash,
+        )
+        write_screen_scan_dump(scan_path, record)
+        logger.debug("Perception scan dump saved to %s", scan_path)
 
     def _page_stagnation_result(
         self,
@@ -335,15 +388,22 @@ class DeviceAgent:
         session_trail: Optional[SessionTrail],
         loop_nudge: Optional[str],
     ) -> DeviceStepResponse:
+        if ctx.keyboard_open and ctx.keyboard_off_elements is not None:
+            gui_elements = ctx.keyboard_off_elements
+        else:
+            gui_elements = self._annotate_keyboard_keys(
+                snapshot.gui_elements, ctx.keyboard_open, ctx.screen_height
+            )
         return planner.plan_step(
             goal=goal,
-            gui_elements=snapshot.gui_elements,
+            gui_elements=gui_elements,
             history=ctx.history.format_for_prompt(),
             trail=session_trail.format_for_prompt() if session_trail else None,
             drift_warning=ctx.drift_warning,
             loop_nudge=loop_nudge,
             current_image_bytes=snapshot.raw_img_bytes,
             visual_history=list(ctx.visual_history),
+            keyboard_open=ctx.keyboard_open,
         )
 
     def _apply_plan_result(
@@ -479,6 +539,7 @@ class DeviceAgent:
         if len(ctx.visual_history) > self.visual_history_limit:
             ctx.visual_history.pop(0)
 
+        ctx.last_action_type = getattr(action, "type", None)
         return last_external_nav
 
     def _flush_trail(
@@ -675,6 +736,75 @@ class DeviceAgent:
 
         return ActionResult(success=True, observation=obs)
 
+    def _annotate_keyboard_keys(
+        self,
+        elements: list,
+        keyboard_open: Optional[bool],
+        screen_height: Optional[int],
+    ) -> list:
+        """When the keyboard is open, prefix elements that are likely keyboard keys with [key].
+
+        Keyboard keys are identified as elements in the lower 40% of the screen whose
+        text is 1-2 characters long (e.g. 'q', 'w', 'shift', '123'). App UI elements
+        in that region (longer labels like 'Login', 'Sign Up') are left unchanged.
+        """
+        if not keyboard_open or not screen_height:
+            return elements
+
+        keyboard_top = int(screen_height * 0.60)
+        annotated = []
+        for el in elements:
+            center_y = (el.bounding_box.y_min + el.bounding_box.y_max) // 2
+            text = (el.text or "").strip()
+            is_key = center_y >= keyboard_top and len(text) <= 2
+            if is_key:
+                from copy import copy
+                el = copy(el)
+                el.text = f"[key] {text}" if text else "[key]"
+            annotated.append(el)
+        return annotated
+
+    def _build_reaction(
+        self,
+        scan_info: Optional[ScanInfo],
+        prev_element_count: Optional[int],
+        keyboard_open: Optional[bool] = None,
+    ) -> str:
+        """Describe what the screen actually did after the previous action, using perception metadata."""
+        if scan_info is None or scan_info.reason == "first_pass":
+            return ""
+
+        if scan_info.reason == "stable":
+            return "screen unchanged — coordinates remain valid"
+
+        parts = []
+
+        if scan_info.reason == "navigation":
+            dist = scan_info.phash_distance
+            parts.append(f"navigation detected (pHash Δ{dist})" if dist else "navigation detected")
+        elif scan_info.reason == "layout_shift":
+            match_pct = int(scan_info.match_rate * 100) if scan_info.match_rate is not None else "?"
+            parts.append(f"layout shifted ({match_pct}% elements matched)")
+        elif scan_info.reason == "ocr_refresh":
+            parts.append("screen text updated")
+
+        if prev_element_count is not None:
+            delta = scan_info.element_count - prev_element_count
+            if keyboard_open is not None and abs(delta) > 30:
+                if keyboard_open:
+                    parts.append(f"keyboard opened (+{delta} elements, {prev_element_count}→{scan_info.element_count})")
+                else:
+                    parts.append(f"keyboard dismissed ({delta} elements, {prev_element_count}→{scan_info.element_count})")
+            elif delta != 0:
+                parts.append(f"element count {prev_element_count}→{scan_info.element_count}")
+        else:
+            parts.append(f"{scan_info.element_count} elements")
+
+        if scan_info.reason in ("navigation", "layout_shift"):
+            parts.append("coordinates invalidated")
+
+        return ", ".join(parts)
+
     def _describe_action(self, action) -> str:
         """Produce a concise, redacted human-readable action description for history."""
         from utils.redactor import redact_text
@@ -683,7 +813,8 @@ class DeviceAgent:
 
         if t == ActionType.TYPE.value:
             coords = action.coordinates
-            desc = f"type at ({coords.x}, {coords.y})"
+            text_repr = redact_text(action.text) if getattr(action, "text", None) else ""
+            desc = f"type '{text_repr}' at ({coords.x}, {coords.y})"
         elif t in (
             ActionType.TAP.value,
             ActionType.DOUBLE_TAP.value,

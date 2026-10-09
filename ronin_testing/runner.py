@@ -230,7 +230,8 @@ class RoninTestRunner:
 
             # persist reports even on Ctrl+C or mid-run crash
             duration = time.time() - start_time
-            journey_status = "PASSED" if failed_count == 0 else "FAILED"
+            nothing_ran = passed_count == 0 and failed_count == 0
+            journey_status = "FAILED" if (failed_count > 0 or nothing_ran) else "PASSED"
             report = JourneyReport(
                 journey_id=journey.id,
                 journey_name=journey.name,

@@ -7,6 +7,7 @@ import base64
 import logging
 import time
 from pathlib import Path
+from typing import Optional
 
 from appium import webdriver
 from appium.options.android import UiAutomator2Options
@@ -16,6 +17,7 @@ from selenium.webdriver.common.actions.pointer_input import PointerInput
 
 from agent.device.adb_control import AdbControl
 from agent.device.platform import Platform
+from utils.subprocess_runner import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +300,43 @@ class DeviceControl:
         except Exception as e:
             logger.warning("Failed to check SUT focus: %s", e)
         return True
+
+    def is_keyboard_open(self) -> Optional[bool]:
+        """Detect whether the soft keyboard is currently visible on screen.
+
+        Tries Appium first (cross-platform), then falls back to a native check:
+        - Android: adb dumpsys input_method
+        - iOS: idb accessibility tree query
+        Returns None if all checks fail.
+        """
+        try:
+            return bool(self.driver.is_keyboard_shown())
+        except Exception:
+            logger.debug("Appium is_keyboard_shown() unavailable, using native fallback")
+
+        if self.platform == Platform.ANDROID:
+            try:
+                serial = self.serial or self.device_name
+                result = run_command(
+                    ["adb", "-s", serial, "shell", "dumpsys", "input_method"],
+                    capture_output=True, text=True, timeout=3.0,
+                )
+                return "mInputShown=true" in (result.stdout or "")
+            except Exception as e:
+                logger.debug("ADB keyboard check failed: %s", e)
+
+        elif self.platform == Platform.IOS:
+            try:
+                udid = self.serial or self.device_name
+                result = run_command(
+                    ["idb", "ui", "describe-all", "--udid", udid],
+                    capture_output=True, text=True, timeout=3.0,
+                )
+                return "XCUIElementTypeKeyboard" in (result.stdout or "")
+            except Exception as e:
+                logger.debug("idb keyboard check failed: %s", e)
+
+        return None
 
     def recover_to_sut(self) -> None:
         """Attempts to recover the focus back to the target app under test (SUT) after drift."""

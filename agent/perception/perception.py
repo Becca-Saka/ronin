@@ -11,6 +11,7 @@ from agent.perception.image_descriptor import (
     GUIElement,
     ImageDescriptor,
 )
+from agent.perception.scan_dump import ScanInfo
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ class ScreenPerception:
         self._last_ocr_text: dict[
             str, str
         ] = {}  # suppress repeated OCR on animated elements
+        self.last_scan_info: ScanInfo | None = None
 
     @property
     def current_hash(self) -> "imagehash.ImageHash | None":
@@ -62,6 +64,7 @@ class ScreenPerception:
         self._last_elements = None
         self._consecutive_dirty.clear()
         self._last_ocr_text.clear()
+        self.last_scan_info = None
         logger.info("Perception state reset.")
 
     def perceive(self) -> tuple[list[GUIElement], Image.Image, Image.Image]:
@@ -76,12 +79,22 @@ class ScreenPerception:
         png_bytes = self.device_session.device_control.get_screenshot()
         raw_img = Image.open(io.BytesIO(png_bytes))
         current_hash = imagehash.phash(raw_img, hash_size=16)
+        phash_hex = str(current_hash)
+        w, h = raw_img.size
+        distance = (
+            current_hash - self._last_hash if self._last_hash is not None else None
+        )
 
         if self._last_screenshot is None:
             logger.info("First perception pass — running full YOLO + OCR.")
-            return self._full_scan(png_bytes, raw_img, current_hash)
+            return self._full_scan(
+                png_bytes,
+                raw_img,
+                current_hash,
+                reason="first_pass",
+                phash_distance=distance,
+            )
 
-        distance = current_hash - self._last_hash
         logger.debug(
             "pHash distance: %d (threshold: %d)", distance, NAVIGATION_THRESHOLD
         )
@@ -91,7 +104,13 @@ class ScreenPerception:
                 distance,
                 NAVIGATION_THRESHOLD,
             )
-            return self._full_scan(png_bytes, raw_img, current_hash)
+            return self._full_scan(
+                png_bytes,
+                raw_img,
+                current_hash,
+                reason="navigation",
+                phash_distance=distance,
+            )
 
         curr_elements, annotated_img = self.image_descriptor.describe(png_bytes)
 
@@ -113,7 +132,17 @@ class ScreenPerception:
                 match_rate * 100,
                 LAYOUT_SHIFT_THRESHOLD * 100,
             )
-            return self._full_scan(png_bytes, raw_img, current_hash)
+            return self._full_scan(
+                png_bytes,
+                raw_img,
+                current_hash,
+                reason="layout_shift",
+                phash_distance=distance,
+                matched=len(matched_pairs),
+                new=len(new_elements),
+                removed=len(removed),
+                match_rate=match_rate,
+            )
 
         dirty_elements = []
         for prev_el, curr_el in matched_pairs:
@@ -164,16 +193,65 @@ class ScreenPerception:
             logger.info("Screen stable — no dirty/new elements, returning cached OCR.")
 
         self._update_state(raw_img, curr_elements, current_hash)
+        self.last_scan_info = ScanInfo(
+            mode="incremental",
+            reason="ocr_refresh" if ocr_targets else "stable",
+            phash=phash_hex,
+            phash_distance=distance,
+            screen_width=w,
+            screen_height=h,
+            element_count=len(curr_elements),
+            matched=len(matched_pairs),
+            new=len(new_elements),
+            removed=len(removed),
+            match_rate=round(match_rate, 4),
+            dirty_ocr_count=len(dirty_elements),
+            uncovered_mae=round(uncovered_mae, 4),
+            thresholds=self._scan_thresholds(),
+        )
         return curr_elements, raw_img, annotated_img
 
+    def _scan_thresholds(self) -> dict[str, float | int]:
+        return {
+            "navigation_phash": NAVIGATION_THRESHOLD,
+            "dirty_mae": DIRTY_THRESHOLD,
+            "iou_match": IOU_MATCH_THRESHOLD,
+            "layout_shift_match_rate": LAYOUT_SHIFT_THRESHOLD,
+            "uncovered_mae": UNCOVERED_THRESHOLD,
+        }
+
     def _full_scan(
-        self, png_bytes: bytes, raw_img: Image.Image, current_hash: imagehash.ImageHash
+        self,
+        png_bytes: bytes,
+        raw_img: Image.Image,
+        current_hash: imagehash.ImageHash,
+        reason: str,
+        phash_distance: int | None = None,
+        matched: int | None = None,
+        new: int | None = None,
+        removed: int | None = None,
+        match_rate: float | None = None,
     ) -> tuple[list[GUIElement], Image.Image, Image.Image]:
         """Runs the complete YOLO + OCR pipeline and updates state."""
         gui_elements, annotated_img = self.image_descriptor.describe(png_bytes)
         logger.info("Full scan complete: %d elements detected.", len(gui_elements))
         self._consecutive_dirty.clear()
         self._update_state(raw_img, gui_elements, current_hash)
+        w, h = raw_img.size
+        self.last_scan_info = ScanInfo(
+            mode="full",
+            reason=reason,
+            phash=str(current_hash),
+            phash_distance=phash_distance,
+            screen_width=w,
+            screen_height=h,
+            element_count=len(gui_elements),
+            matched=matched,
+            new=new,
+            removed=removed,
+            match_rate=round(match_rate, 4) if match_rate is not None else None,
+            thresholds=self._scan_thresholds(),
+        )
         return gui_elements, raw_img, annotated_img
 
     def _update_state(

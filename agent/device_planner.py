@@ -88,6 +88,7 @@ class DevicePlanner:
         loop_nudge: Optional[str] = None,
         current_image_bytes: bytes = b"",
         visual_history: List[bytes] = None,
+        keyboard_open: Optional[bool] = None,
     ) -> DeviceStepResponse:
         """Plan the next action given current screen state and accumulated history."""
         from utils.redactor import redact_elements, redact_text
@@ -107,12 +108,15 @@ class DevicePlanner:
             trail=trail,
             drift_warning=drift_warning,
             loop_nudge=loop_nudge,
+            keyboard_open=keyboard_open,
         )
 
         message = MultiPartMessage()
-        for idx, img_bytes in enumerate(visual_history or []):
-            message.add_text(f"Screenshot from step {idx + 1}:")
-            message.add_image(img_bytes)
+        # EXPERIMENT: visual history disabled — testing whether stale screenshot coordinates
+        # cause LLM hallucination. Rich REACTION lines in action history replace visual context.
+        # for idx, img_bytes in enumerate(visual_history or []):
+        #     message.add_text(f"Screenshot from step {idx + 1}:")
+        #     message.add_image(img_bytes)
         message.add_text("Current screenshot (newest):")
         message.add_image(current_image_bytes)
         message.add_text(prompt)
@@ -136,11 +140,18 @@ class DevicePlanner:
         trail: Optional[str],
         drift_warning: Optional[str],
         loop_nudge: Optional[str],
+        keyboard_open: Optional[bool] = None,
     ) -> str:
         caps_desc = "\n".join(
             f"   - {cap.value}: {CAPABILITY_SCHEMAS.get(cap, '{}')}"
             for cap in CapabilityType
         )
+
+        kb_line = ""
+        if keyboard_open is True:
+            kb_line = "\n### Keyboard State\nVISIBLE — the soft keyboard is currently displayed. Elements in the lower ~40% of the screen may be keyboard keys, not app UI.\n"
+        elif keyboard_open is False:
+            kb_line = "\n### Keyboard State\nHIDDEN — the soft keyboard is not visible. All detected elements are app UI.\n"
 
         prompt = f"""You are an AI agent controlling a mobile app to achieve a goal.
 Your job is to execute the steps below by interacting with the app one action at a time.
@@ -150,7 +161,7 @@ Your job is to execute the steps below by interacting with the app one action at
 
 ### Current UI Elements Detected (YOLO/OCR)
 {self._format_elements(gui_elements) if gui_elements else "None detected."}
-
+{kb_line}
 ### Action History (with system-observed outcomes)
 {history or "No actions executed yet."}
 """
@@ -189,10 +200,10 @@ CRITICAL CONSTRAINTS:
 1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
 2. For "type", you MUST provide both `text` AND `coordinates` of the target field.
 3. Before typing into a field, first send a "tap" action to focus it.
-4. The soft keyboard creates a touch-blocking overlay across the bottom portion of the screen. YOLO may still detect elements in that area, but tapping their coordinates will hit keyboard keys instead of the element. If the keyboard is visible and your next tap target is in the lower half of the screen, dismiss the keyboard first with key_event 4 — on Android, back always dismisses the soft keyboard without navigating away.
+4. The soft keyboard blocks taps on anything behind it. If your next target is a button or control in the lower half of the screen (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app. After dismissal, use the fresh element list for coordinates.
 5. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
-6. When you tap a text field and the keyboard appears, the screen layout shifts and YOLO-detected element positions change. For a TYPE action into the same field you just tapped, use the EXACT same coordinates as the TAP — do not re-derive coordinates from the post-keyboard YOLO scan.
-7. You MUST use center coordinates of the detected UI elements listed above. Do not use coordinates outside the detected bounding boxes.
+6. When the keyboard is visible and you need to TYPE into a field, use text_field/input elements from the CURRENT scan in the upper portion of the screen (above the keyboard). Ignore bottom-portion detections — those are keyboard keys.
+7. You MUST use center coordinates from the Current UI Elements list. If a target you need is missing because the keyboard obscures it, do not guess coordinates from older screenshots — dismiss the keyboard (rule 4) and plan from the next scan. Older screenshots in the message are context only; they are not a coordinate source unless multimodal override is enabled.
 """
         prompt += """
 ### Response Instructions

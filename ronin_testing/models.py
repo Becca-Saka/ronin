@@ -27,7 +27,7 @@ class GeneratedTestCase(BaseModel):
         "performance_bottleneck"
     ]
     steps_instructions: List[str]
-    expected_outcomes: List[str]
+    expected_outcomes: List[str] = Field(default_factory=list)
 
 
 class BoundingBox(BaseModel):
@@ -40,19 +40,14 @@ class BoundingBox(BaseModel):
 
 class QAIssue(BaseModel):
     """Represents a visual, security, or logical issue found during testing."""
-    issue_type: Literal[
-        "render_overflow",
-        "text_clipping",
-        "overlapping_elements",
-        "empty_image_error",
-        "crash_screen",
-        "sensitive_data_exposure",
-        "unmasked_input",
-        "insecure_connection",
-        "broken_navigation",
-        "accessibility_violation",
-        "performance_hang"
-    ]
+    issue_type: str = Field(
+        ...,
+        description=(
+            "Category of the issue. Prefer: render_overflow, text_clipping, overlapping_elements, "
+            "empty_image_error, crash_screen, sensitive_data_exposure, unmasked_input, "
+            "insecure_connection, broken_navigation, accessibility_violation, performance_hang."
+        ),
+    )
     description: str
     bounding_box: Optional[BoundingBox] = None
     severity: Literal["low", "medium", "high", "critical"]

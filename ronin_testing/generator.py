@@ -46,23 +46,19 @@ For each scenario, define:
 - Expected outcomes (logical assertions) the agent must verify
 """
         message = TextMessage(content=prompt)
-        
-        try:
-            result: GeneratedTestCasesList = self.llm.generate_response(
-                messages=[message],
-                response_model=GeneratedTestCasesList
-            )
-            logger.info("Successfully generated %d test scenarios.", len(result.scenarios))
-            return result.scenarios
-        except Exception as e:
-            logger.error("Failed to generate test scenarios via LLM: %s", e)
-            # Return a fallback happy path test case if generation failed
-            return [
-                GeneratedTestCase(
-                    test_id="TS_001_fallback_happy",
-                    scenario_name="Fallback Happy Path",
-                    classification="happy_path",
-                    steps_instructions=[journey.description],
-                    expected_outcomes=["The journey completes successfully without errors."]
+
+        last_error = None
+        for attempt in range(2):
+            try:
+                result: GeneratedTestCasesList = self.llm.generate_response(
+                    messages=[message],
+                    response_model=GeneratedTestCasesList
                 )
-            ]
+                logger.info("Successfully generated %d test scenarios.", len(result.scenarios))
+                return result.scenarios
+            except Exception as e:
+                last_error = e
+                logger.warning("Scenario generation attempt %d/2 failed: %s", attempt + 1, e)
+
+        logger.error("Scenario generation failed after 2 attempts: %s", last_error)
+        raise RuntimeError(f"Scenario generation failed — aborting session: {last_error}") from last_error

@@ -24,6 +24,7 @@ class ActionEntry:
     action_desc: str
     result: ActionResult
     evaluation: str = ""  # filled in at the next step via update_last_evaluation()
+    reaction: str = ""    # system-observed screen change description, filled at next step via update_last_reaction()
 
 
 class AgentHistory:
@@ -40,6 +41,11 @@ class AgentHistory:
         if self._entries and evaluation:
             self._entries[-1].evaluation = evaluation
 
+    def update_last_reaction(self, reaction: str) -> None:
+        """Attach the system-observed screen change description to the previous step."""
+        if self._entries and reaction:
+            self._entries[-1].reaction = reaction
+
     def format_for_prompt(self) -> str:
         if not self._entries:
             return "No actions executed yet."
@@ -48,6 +54,8 @@ class AgentHistory:
             line = f"[Step {e.step_num}] {e.action_desc} → {e.result.observation}"
             if e.evaluation:
                 line += f" | Self-assessment: {e.evaluation}"
+            if e.reaction:
+                line += f"\n         REACTION: {e.reaction}"
             lines.append(line)
         return "\n".join(lines)
 
