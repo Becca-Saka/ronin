@@ -10,13 +10,16 @@ from pathlib import Path
 from typing import Optional
 
 from appium import webdriver
+from selenium.common.exceptions import WebDriverException
 from appium.options.android import UiAutomator2Options
 from appium.options.ios import XCUITestOptions
 from selenium.webdriver.common.actions.action_builder import ActionBuilder
 from selenium.webdriver.common.actions.pointer_input import PointerInput
 
 from ronin.agent.device.adb_control import AdbControl
+from ronin.agent.device.diagnostics import diagnose_avd_launch
 from ronin.agent.device.platform import Platform
+from ronin.defaults import AVD_LAUNCH_TIMEOUT_MS
 from ronin.utils.subprocess_runner import run_command
 
 logger = logging.getLogger(__name__)
@@ -58,8 +61,8 @@ class DeviceControl:
             options.device_name = device_name
             options.is_headless = is_headless
             options.avd = device_name
-            options.avd_launch_timeout = 60000
-            options.avd_ready_timeout = 60000
+            options.avd_launch_timeout = AVD_LAUNCH_TIMEOUT_MS
+            options.avd_ready_timeout = AVD_LAUNCH_TIMEOUT_MS
             options.set_capability("appium:enforceAppInstall", True)
             self.adb_control = adb_control
             adb_runner = adb_control if adb_control is not None else AdbControl
@@ -68,8 +71,25 @@ class DeviceControl:
             options.app_package = package_id
             options.app_activity = activity
 
-        self.driver = webdriver.Remote("http://localhost:4723", options=options)
+        self.driver = self._start_session(options)
         self.device_info = self._init_device_info()
+
+    def _start_session(self, options):
+        """Creates the Appium session, translating a failed AVD launch into a reason.
+
+        Appium reports any launch problem as 'Error getting AVD with retry', hiding
+        whatever the emulator actually complained about.
+        """
+        try:
+            return webdriver.Remote("http://localhost:4723", options=options)
+        except WebDriverException as exc:
+            message = str(exc)
+            if "getting AVD" not in message and "Condition unmet" not in message:
+                raise
+            raise RuntimeError(
+                f"The emulator '{self.device_name}' did not start within "
+                f"{AVD_LAUNCH_TIMEOUT_MS // 1000}s.\n{diagnose_avd_launch(self.device_name)}"
+            ) from exc
 
     def _resolve_serial(self):
         # Try to resolve emulator/device serial from capabilities

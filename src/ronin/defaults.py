@@ -11,3 +11,6 @@ DEFAULT_OUTPUT_DIR = "assets"
 DEFAULT_MAX_STEPS = 20
 DEFAULT_SETTLE_TIME = 2.0
 DEFAULT_APP_PATH = "example/testing_app/build/app/outputs/flutter-apk/app-debug.apk"
+
+# A cold emulator boot regularly exceeds Appium's 60s default.
+AVD_LAUNCH_TIMEOUT_MS = 180_000

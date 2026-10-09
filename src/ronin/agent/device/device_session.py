@@ -14,7 +14,7 @@ from appium.webdriver.appium_service import AppiumService
 from ronin.agent.device.adb_control import AdbControl
 from ronin.agent.device.device_control import DeviceControl
 from ronin.agent.device.platform import Platform
-from ronin.utils.platform_checks import run_ios_preflight, validate_app_path_for_platform
+from ronin.utils.platform_checks import run_android_preflight, run_ios_preflight
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class DeviceSession:
         if self.platform == Platform.IOS:
             run_ios_preflight(app_path)
         else:
-            validate_app_path_for_platform(app_path, self.platform)
+            run_android_preflight(app_path)
             self.adb_control = None
         self.record_session = record_session
         self.is_recording = False

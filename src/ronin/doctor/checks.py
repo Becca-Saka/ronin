@@ -18,6 +18,7 @@ from typing import Optional
 
 from ronin import __version__
 from ronin.defaults import DEFAULT_MODEL
+from ronin.utils.platform_checks import MIN_EMULATOR_FREE_GB, free_disk_gb
 from ronin.utils.subprocess_runner import run_command
 from ronin.utils.vision_deps import VISION_PACKAGES, missing_vision_packages
 
@@ -130,6 +131,26 @@ def check_credentials(model: str = DEFAULT_MODEL) -> CheckResult:
         f"{model} needs {', '.join(missing)}",
         hint,
     )
+
+
+def check_disk_space() -> CheckResult:
+    """Emulators and simulators need several GB free; model weights need a few hundred MB."""
+    free = free_disk_gb()
+    if free < MIN_EMULATOR_FREE_GB:
+        return CheckResult(
+            "disk space",
+            Status.FAIL,
+            f"{free:.1f}GB free",
+            f"Emulators need at least {MIN_EMULATOR_FREE_GB:.0f}GB free to boot",
+        )
+    if free < MIN_EMULATOR_FREE_GB * 2:
+        return CheckResult(
+            "disk space",
+            Status.WARN,
+            f"{free:.1f}GB free",
+            "Tight for an emulator plus screenshots and recordings",
+        )
+    return CheckResult("disk space", Status.OK, f"{free:.1f}GB free")
 
 
 def check_node() -> CheckResult:
@@ -332,7 +353,13 @@ def run_checks(platforms: tuple[str, ...] = ("android", "ios")) -> list[CheckSec
     sections = [
         CheckSection(
             "Ronin",
-            [check_python(), check_ronin(), check_vision_deps(), check_credentials()],
+            [
+                check_python(),
+                check_ronin(),
+                check_vision_deps(),
+                check_credentials(),
+                check_disk_space(),
+            ],
         )
     ]
 

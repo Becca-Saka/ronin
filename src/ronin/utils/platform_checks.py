@@ -1,11 +1,14 @@
 import logging
 import platform
+import shutil
 import sys
 from pathlib import Path
 
 from ronin.utils.subprocess_runner import run_command
 
 logger = logging.getLogger(__name__)
+
+MIN_EMULATOR_FREE_GB = 4.0
 
 
 class PlatformError(Exception):
@@ -136,8 +139,37 @@ def validate_app_path_for_platform(app_path: str, platform_name: str):
         )
 
 
+def free_disk_gb(path: Path = None) -> float:
+    """Free space in GiB on the volume holding path (the home directory by default)."""
+    target = path or Path.home()
+    while not target.exists() and target != target.parent:
+        target = target.parent
+    return shutil.disk_usage(target).free / 1024**3
+
+
+def check_disk_space_for_emulator():
+    """Raises PlatformError when the emulator would refuse to boot for lack of space.
+
+    The emulator's own complaint reaches Appium as a bare session timeout, so
+    check first and say what is actually wrong.
+    """
+    free = free_disk_gb()
+    if free < MIN_EMULATOR_FREE_GB:
+        raise PlatformError(
+            f"Only {free:.1f}GB free on this volume; the Android emulator needs at least "
+            f"{MIN_EMULATOR_FREE_GB:.0f}GB to boot and will fail with an unrelated-looking "
+            "session timeout. Free up space and try again."
+        )
+
+
 def run_ios_preflight(app_path: str):
     """Run all iOS-specific checks in order."""
     check_platform_for_ios()
     ensure_xcode()
     validate_app_path_for_platform(app_path, "ios")
+
+
+def run_android_preflight(app_path: str):
+    """Run all Android-specific checks in order."""
+    validate_app_path_for_platform(app_path, "android")
+    check_disk_space_for_emulator()
