@@ -1,0 +1,127 @@
+"""Replaying transitions the agent has already worked out.
+
+Every scenario starts from a fresh launch, so the same sign-in is planned over
+and over — six model calls and the better part of a minute each time. The
+transitions that worked are remembered here and replayed directly: the taps are
+real, only the deliberation is skipped.
+"""
+
+import logging
+from dataclasses import dataclass
+from typing import Optional
+
+from ronin.agent.actuation.actions import Action, ActionType, TypeAction
+
+logger = logging.getLogger(__name__)
+
+PHASH_THRESHOLD = 10
+MAX_REPLAY_ACTIONS = 30
+
+# Replay re-executes without planning or auditing, so only actions that move
+# between screens qualify. Gestures and capability changes are what destructive
+# scenarios are built from, and must never be inherited by another scenario.
+REPLAYABLE_ACTIONS = {ActionType.TAP, ActionType.TYPE, ActionType.KEY_EVENT}
+
+# Back, which is how the agent dismisses the keyboard. Other key events reach
+# system surfaces that have nothing to do with navigating the app.
+REPLAYABLE_KEYCODES = {4}
+
+
+@dataclass
+class ReplayStep:
+    """An action that is known to lead from one screen to another."""
+
+    action: Action
+    result_phash: str
+    description: str
+    target_label: str = ""
+
+
+class ReplayLedger:
+    """Remembers which action moved the app on from each screen."""
+
+    def __init__(self, threshold: int = PHASH_THRESHOLD):
+        self._steps: dict[str, ReplayStep] = {}
+        self._threshold = threshold
+
+    def __len__(self) -> int:
+        return len(self._steps)
+
+    def _match(self, phash: Optional[str]) -> Optional[str]:
+        """The known screen closest to this one, within the pHash threshold."""
+        if not phash:
+            return None
+        import imagehash
+
+        try:
+            target = imagehash.hex_to_hash(phash)
+        except Exception:
+            return None
+        for known in self._steps:
+            try:
+                if target - imagehash.hex_to_hash(known) <= self._threshold:
+                    return known
+            except Exception:
+                continue
+        return None
+
+    def record(
+        self,
+        from_phash: Optional[str],
+        action: Action,
+        to_phash: Optional[str],
+        description: str,
+        target_label: str = "",
+    ) -> None:
+        """Remembers an action that demonstrably moved the app to a new screen."""
+        if not from_phash or not to_phash or from_phash == to_phash:
+            return
+        if getattr(action, "type", None) not in REPLAYABLE_ACTIONS:
+            return
+        if self._match(from_phash) is not None:
+            return
+        self._steps[from_phash] = ReplayStep(action, to_phash, description, target_label)
+
+    def lookup(self, phash: Optional[str]) -> Optional[ReplayStep]:
+        known = self._match(phash)
+        return self._steps.get(known) if known else None
+
+    def leads_to(self, step: ReplayStep, phash: Optional[str]) -> bool:
+        """Whether the screen reached matches the one this step produced before."""
+        if not phash:
+            return False
+        import imagehash
+
+        try:
+            return (
+                imagehash.hex_to_hash(phash) - imagehash.hex_to_hash(step.result_phash)
+                <= self._threshold
+            )
+        except Exception:
+            return False
+
+
+def is_replayable(step: ReplayStep, goal_text: str) -> bool:
+    """Whether a remembered step is one this scenario actually asked for.
+
+    A tap is not safe by virtue of being a tap — the same gesture submits an
+    order, deletes an account or grants a permission. So a step only replays
+    when this scenario's own instructions name what it touches: the text it
+    types, or the label of the control it taps. Anything the scenario never
+    mentions is somebody else's path, and planning takes over there.
+    """
+    action = step.action
+    action_type = getattr(action, "type", None)
+    if action_type not in REPLAYABLE_ACTIONS:
+        return False
+
+    goal = goal_text.lower()
+
+    if isinstance(action, TypeAction):
+        return (action.text or "").lower() in goal
+
+    if action_type == ActionType.KEY_EVENT:
+        return getattr(action, "key", None) in REPLAYABLE_KEYCODES
+
+    label = (step.target_label or "").strip().lower()
+    return bool(label) and label in goal
