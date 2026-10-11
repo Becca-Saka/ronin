@@ -9,9 +9,10 @@ logger = logging.getLogger(__name__)
 
 
 class ActionOrchestrator:
-    def __init__(self, device_control: DeviceControl):
+    def __init__(self, device_control: DeviceControl, scrubber=None):
         self.device_control = device_control
         self.capability_controller = CapabilityController(device_control)
+        self._scrubber = scrubber
 
     def execute(self, action: Action) -> None:
         """Execute a single Action object. Used by DeviceAgent."""
@@ -22,41 +23,45 @@ class ActionOrchestrator:
         for action in action_plan.actions:
             self._run_action(action)
 
+    def _reason(self, action: Action) -> str:
+        reason = getattr(action, "reason", "")
+        return self._scrubber.scrub(reason) if self._scrubber else reason
+
     def _run_action(self, action: Action) -> None:
         match action.type:
             case ActionType.TYPE:
                 coordinates = action.coordinates
                 logger.info(
                     "Executing action: %s at (%d, %d) — %s",
-                    action.type, coordinates.x, coordinates.y, action.reason,
+                    action.type, coordinates.x, coordinates.y, self._reason(action),
                 )
                 self.device_control.type(action.text, coordinates.x, coordinates.y)
             case ActionType.CLEAR:
                 coordinates = action.coordinates
                 logger.info(
                     "Executing action: %s at (%d, %d) — %s",
-                    action.type, coordinates.x, coordinates.y, action.reason,
+                    action.type, coordinates.x, coordinates.y, self._reason(action),
                 )
                 self.device_control.clear(coordinates.x, coordinates.y)
             case ActionType.TAP:
                 coordinates = action.coordinates
                 logger.info(
                     "Executing action: %s at (%d, %d) — %s",
-                    action.type, coordinates.x, coordinates.y, action.reason,
+                    action.type, coordinates.x, coordinates.y, self._reason(action),
                 )
                 self.device_control.tap(coordinates.x, coordinates.y, with_feedback=True)
             case ActionType.DOUBLE_TAP:
                 coordinates = action.coordinates
                 logger.info(
                     "Executing action: %s at (%d, %d) — %s",
-                    action.type, coordinates.x, coordinates.y, action.reason,
+                    action.type, coordinates.x, coordinates.y, self._reason(action),
                 )
                 self.device_control.double_tap(coordinates.x, coordinates.y, with_feedback=True)
             case ActionType.LONG_PRESS:
                 coordinates = action.coordinates
                 logger.info(
                     "Executing action: %s at (%d, %d) duration=%s — %s",
-                    action.type, coordinates.x, coordinates.y, action.duration, action.reason,
+                    action.type, coordinates.x, coordinates.y, action.duration, self._reason(action),
                 )
                 self.device_control.long_press(
                     coordinates.x, coordinates.y, action.duration
@@ -67,7 +72,7 @@ class ActionOrchestrator:
                     action.type,
                     action.source_x, action.source_y,
                     action.destination_x, action.destination_y,
-                    action.reason,
+                    self._reason(action),
                 )
                 self.device_control.drag_and_drop(
                     action.source_x,
@@ -78,7 +83,7 @@ class ActionOrchestrator:
             case ActionType.KEY_EVENT:
                 logger.info(
                     "Executing action: %s key=%s — %s",
-                    action.type, action.key, action.reason,
+                    action.type, action.key, self._reason(action),
                 )
                 self.device_control.key_event(action.key)
             case ActionType.SWIPE:
@@ -87,7 +92,7 @@ class ActionOrchestrator:
                     action.type,
                     action.start_x, action.start_y,
                     action.end_x, action.end_y,
-                    action.reason,
+                    self._reason(action),
                 )
                 self.device_control.swipe(
                     action.start_x, action.start_y, action.end_x, action.end_y
@@ -95,7 +100,7 @@ class ActionOrchestrator:
             case ActionType.CAPABILITY:
                 logger.info(
                     "Executing action: %s capability=%s — %s",
-                    action.type, action.capability, action.reason,
+                    action.type, action.capability, self._reason(action),
                 )
                 self.capability_controller.execute(action.capability, action.parameters)
         time.sleep(1.5)
