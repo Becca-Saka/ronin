@@ -14,3 +14,9 @@ docs/
 test_models/
 # macOS
 .DS_Store
+
+# Agent instructions and skills, kept local
+.agents/
+AGENTS.md
+CLAUDE.md
+.claude/

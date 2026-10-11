@@ -2,7 +2,6 @@ id: food_delivery_suite
 name: Food Delivery Test Suite
 device:
   platform: android
-  emulator: Pixel_8a
   headless: false
   record: true
 journeys:

@@ -2,7 +2,6 @@ id: notification_journey_01
 name: E2E Notification Detail and Switch Toggle Journey
 device:
   platform: android
-  emulator: Pixel_8a
   headless: false
 journey: >
   A user opens the app and lands on the sign-in screen.
