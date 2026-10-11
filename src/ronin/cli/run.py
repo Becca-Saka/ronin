@@ -4,6 +4,7 @@ import argparse
 import logging
 from pathlib import Path
 
+from ronin.app_discovery import resolve_app_path
 from ronin.config import Config
 from ronin.llm.credentials import require_credentials
 
@@ -42,7 +43,25 @@ def register(subcommands: argparse._SubParsersAction) -> None:
     )
     parser.add_argument("goal", help="What the agent should accomplish, in plain English")
     parser.add_argument(
-        "--app-path", required=True, help="Path to the app binary (.apk, .app or .ipa)"
+        "--app-path",
+        help="Path to the app binary (.apk, .app or .ipa). Discovered from the "
+        "current directory when omitted.",
+    )
+    parser.add_argument(
+        "--keep-device",
+        action="store_true",
+        help="Leave the emulator running and the app installed, so the next run starts warm",
+    )
+    parser.add_argument(
+        "--reuse-app",
+        action="store_true",
+        help="Skip reinstalling the app. Only use when the build has not changed — "
+        "a rebuilt debug APK keeps its version and would be silently skipped",
+    )
+    parser.add_argument(
+        "--no-record",
+        action="store_true",
+        help="Skip the screen recording",
     )
     add_device_arguments(parser)
     parser.set_defaults(handler=run)
@@ -58,12 +77,13 @@ def run(args: argparse.Namespace, config: Config) -> int:
 
     require_credentials(model, fast_model)
 
-    if not Path(args.app_path).exists():
-        raise SystemExit(f"App binary not found: {args.app_path}")
+    app_path = resolve_app_path(
+        config.resolve("app_path", args.app_path), platform, Path.cwd()
+    )
 
     agent = DeviceAgent(
         device_name=config.resolve("device", args.device),
-        app_path=args.app_path,
+        app_path=str(app_path),
         platform=Platform.ANDROID if platform == "android" else Platform.IOS,
         model=model,
         fast_model=fast_model,
@@ -72,10 +92,14 @@ def run(args: argparse.Namespace, config: Config) -> int:
         settle_time=config.resolve("settle_time", args.settle_time),
         use_multimodal_vision=config.resolve("use_multimodal_vision", args.use_multimodal_vision),
         headless=config.resolve("headless", args.headless),
+        # A single goal is done when it is done; journeys keep auditing past it.
+        stop_when_satisfied=True,
+        keep_device=args.keep_device,
+        reuse_app=args.reuse_app,
     )
 
     try:
-        result = agent.run_standalone(args.goal)
+        result = agent.run_standalone(args.goal, record_session=not args.no_record)
     except KeyboardInterrupt:
         logger.info("Agent execution interrupted by user")
         return 130
