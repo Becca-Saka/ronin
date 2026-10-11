@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from typing import Optional
 
 from ronin.utils.subprocess_runner import run_command, SubprocessRunError
 
@@ -132,6 +133,45 @@ class AdbControl:
             raise RuntimeError(f"Failed to disable feedback: {e}")
 
     @staticmethod
+    def avd_name(serial: str) -> Optional[str]:
+        """The AVD a running emulator was started from.
+
+        'adb emu avd name' needs the emulator console auth token and prints
+        nothing without it, so read the boot property instead.
+        """
+        for command in (
+            ["adb", "-s", serial, "shell", "getprop", "ro.boot.qemu.avd_name"],
+            ["adb", "-s", serial, "emu", "avd", "name"],
+        ):
+            try:
+                result = run_command(command, timeout=10, log_command=False)
+            except Exception as exc:
+                logger.debug("Could not read the AVD name via %s: %s", command[-1], exc)
+                continue
+            name = (result.stdout or "").strip().splitlines()
+            if result.returncode == 0 and name and name[0].strip():
+                return name[0].strip()
+        return None
+
+    @staticmethod
+    def installed_packages(serial: str) -> set[str]:
+        """Package names currently installed on a device, empty when adb cannot answer."""
+        try:
+            result = run_command(
+                ["adb", "-s", serial, "shell", "pm", "list", "packages"],
+                timeout=20,
+                log_command=False,
+            )
+        except Exception as exc:
+            logger.debug("Could not list packages on %s: %s", serial, exc)
+            return set()
+        return {
+            line.strip().removeprefix("package:")
+            for line in (result.stdout or "").splitlines()
+            if line.strip()
+        }
+
+    @staticmethod
     def resolve_emulator_serial(device_name: str) -> str | None:
         """Resolves an AVD profile name or serial to an active emulator serial number."""
         try:
@@ -145,17 +185,8 @@ class AdbControl:
                     return serial
 
                 # If it's an emulator serial, query its AVD profile name
-                if serial.startswith("emulator-"):
-                    avd_result = run_command(
-                        ["adb", "-s", serial, "emu", "avd", "name"],
-                        capture_output=True,
-                        text=True,
-                        timeout=3.0
-                    )
-                    if avd_result.returncode == 0:
-                        avd_name = avd_result.stdout.strip()
-                        if avd_name == device_name:
-                            return serial
+                if serial.startswith("emulator-") and AdbControl.avd_name(serial) == device_name:
+                    return serial
         except Exception as e:
             logger.warning("Failed to resolve emulator serial for %s: %s", device_name, e)
         return None

@@ -14,3 +14,7 @@ DEFAULT_APP_PATH = "example/testing_app/build/app/outputs/flutter-apk/app-debug.
 
 # A cold emulator boot regularly exceeds Appium's 60s default.
 AVD_LAUNCH_TIMEOUT_MS = 180_000
+
+# Focus is polled after a tap rather than slept on.
+FOCUS_POLL_INTERVAL = 0.1
+FOCUS_POLL_TIMEOUT = 1.5

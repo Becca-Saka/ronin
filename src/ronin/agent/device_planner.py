@@ -58,6 +58,18 @@ class DeviceStepResponse(BaseModel):
         ...,
         description="Explain why the chosen action is the best next step.",
     )
+    goal_satisfied: bool = Field(
+        default=False,
+        description=(
+            "True when the goal's stated outcome is observable on the current screen, before "
+            "any further action. Judge the goal only — ignore follow-on work such as onboarding "
+            "or permission prompts."
+        ),
+    )
+    goal_evidence: str = Field(
+        default="",
+        description="What on the current screen shows the goal is met. Empty unless goal_satisfied.",
+    )
     action: DeviceAction = Field(
         ...,
         description="The single action to execute next. Use done() when the goal is complete.",
@@ -199,7 +211,7 @@ Each action must have a `type` field set to one of:
 CRITICAL CONSTRAINTS:
 1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
 2. For "type", you MUST provide both `text` AND `coordinates` of the target field.
-3. Before typing into a field, first send a "tap" action to focus it.
+3. "type" focuses the field at those coordinates itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
 4. The soft keyboard blocks taps on anything behind it. If your next target is a button or control in the lower half of the screen (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app. After dismissal, use the fresh element list for coordinates.
 5. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
 6. When the keyboard is visible and you need to TYPE into a field, use text_field/input elements from the CURRENT scan in the upper portion of the screen (above the keyboard). Ignore bottom-portion detections — those are keyboard keys.
@@ -211,20 +223,96 @@ CRITICAL CONSTRAINTS:
 2. Set `evaluation_previous_goal`: honestly assess whether your PREVIOUS action succeeded, failed, or is uncertain. Leave empty on the first step.
 3. Set `observation`: describe only what is currently visible.
 4. Set `reasoning`: explain why the chosen action is the best next step.
-4. Set `action`: choose exactly ONE action. If the goal is fully complete, use `done`.
-5. Set `external_navigation` to True if the action will temporarily leave the app.
+5. Set `goal_satisfied` True when the goal's outcome is already visible on this screen, and put the evidence in `goal_evidence`. Judge the goal as stated: a post-login onboarding or permission screen still means a sign-in goal is met.
+6. Set `action`: choose exactly ONE action. If the goal is fully complete, use `done`.
+7. Set `external_navigation` to True if the action will temporarily leave the app.
 """
         return prompt
 
+    ROW_BAND = 60
+    DUPLICATE_OVERLAP = 0.9
+
+    @staticmethod
+    def _center(el) -> tuple[int, int]:
+        box = el.bounding_box
+        return (box.x_min + box.x_max) // 2, (box.y_min + box.y_max) // 2
+
+    @staticmethod
+    def _overlap(a, b) -> float:
+        """Intersection over union of two bounding boxes."""
+        left = max(a.x_min, b.x_min)
+        top = max(a.y_min, b.y_min)
+        right = min(a.x_max, b.x_max)
+        bottom = min(a.y_max, b.y_max)
+        if right <= left or bottom <= top:
+            return 0.0
+        intersection = (right - left) * (bottom - top)
+        areas = (a.x_max - a.x_min) * (a.y_max - a.y_min) + (b.x_max - b.x_min) * (
+            b.y_max - b.y_min
+        )
+        union = areas - intersection
+        return intersection / union if union else 0.0
+
+    def _deduplicate(self, elements) -> list:
+        """Drops repeat detections of the same thing, which only add noise."""
+        kept = []
+        for el in elements:
+            if any(
+                el.text == other.text
+                and self._overlap(el.bounding_box, other.bounding_box) >= self.DUPLICATE_OVERLAP
+                for other in kept
+            ):
+                continue
+            kept.append(el)
+        return kept
+
+    ROW_LABEL_LIMIT = 3
+
+    def _row_label(self, el, elements) -> Optional[str]:
+        """The texts sharing a row with an element, naming which row it is in.
+
+        List screens repeat the same label on every row — eight 'Menu' buttons
+        for eight restaurants — and coordinates alone have proven easy to
+        mismatch by one row. All the row's text is offered rather than the
+        nearest one, since the closest line is often a subtitle while the
+        identifying name sits a few pixels further away.
+        """
+        _, cy = self._center(el)
+        neighbours = []
+        for other in elements:
+            if other is el or not other.text or other.text == el.text:
+                continue
+            ox, oy = self._center(other)
+            if abs(oy - cy) <= self.ROW_BAND:
+                neighbours.append((abs(oy - cy), ox, other.text))
+        if not neighbours:
+            return None
+        neighbours.sort()
+        return ", ".join(f"'{text}'" for _, _, text in neighbours[: self.ROW_LABEL_LIMIT])
+
     def _format_elements(self, elements) -> str:
+        elements = self._deduplicate(elements)
+        elements = sorted(
+            elements,
+            key=lambda el: (self._center(el)[1] // 25, self._center(el)[0]),
+        )
+
+        repeated = {
+            el.text
+            for el in elements
+            if el.text and sum(1 for other in elements if other.text == el.text) > 1
+        }
+
         lines = []
         for el in elements:
-            cx = (el.bounding_box.x_min + el.bounding_box.x_max) // 2
-            cy = (el.bounding_box.y_min + el.bounding_box.y_max) // 2
+            cx, cy = self._center(el)
             if el.text:
-                lines.append(
-                    f"- {el.element} | text: '{el.text}' | center: ({cx}, {cy})"
-                )
+                line = f"- {el.element} | text: '{el.text}' | center: ({cx}, {cy})"
+                if el.text in repeated:
+                    row = self._row_label(el, elements)
+                    if row:
+                        line += f" | in row with: {row}"
             else:
-                lines.append(f"- {el.element} | center: ({cx}, {cy})")
+                line = f"- {el.element} | center: ({cx}, {cy})"
+            lines.append(line)
         return "\n".join(lines)

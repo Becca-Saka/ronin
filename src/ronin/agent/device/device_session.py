@@ -30,6 +30,8 @@ class DeviceSession:
         session_dir: Path = Path("sessions"),
         platform: Platform = Platform.ANDROID,
         session_id: str = None,
+        keep_device: bool = False,
+        reuse_app: bool = False,
     ):
         """Initializes a DeviceSession.
 
@@ -40,6 +42,11 @@ class DeviceSession:
             session_dir: Directory where screen recordings will be saved.
             platform: Platform name ('android' or 'ios').
             session_id: Optional existing session ID to reuse.
+            keep_device: If True, leaves the emulator running when the session
+                ends, so the next run skips the boot.
+            reuse_app: If True, skips reinstalling the app. Only safe when the
+                build has not changed — a debug rebuild keeps its version, so
+                Appium would consider the stale install current.
         """
 
         self.session_dir = session_dir
@@ -47,6 +54,8 @@ class DeviceSession:
         self.app_path = app_path
         self.platform = platform
         self.device_control: DeviceControl | None = None
+        self.keep_device = keep_device
+        self.reuse_app = reuse_app
         # Run all preflight checks before touching any hardware
         if self.platform == Platform.IOS:
             run_ios_preflight(app_path)
@@ -112,6 +121,8 @@ class DeviceSession:
             platform=self.platform,
             adb_control=None,
             is_headless=is_headless,
+            keep_device=self.keep_device,
+            reuse_app=self.reuse_app,
         )
         if self.platform == Platform.ANDROID:
             serial = self.device_control.serial or self.device_name

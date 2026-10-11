@@ -19,7 +19,11 @@ from selenium.webdriver.common.actions.pointer_input import PointerInput
 from ronin.agent.device.adb_control import AdbControl
 from ronin.agent.device.diagnostics import diagnose_avd_launch
 from ronin.agent.device.platform import Platform
-from ronin.defaults import AVD_LAUNCH_TIMEOUT_MS
+from ronin.defaults import (
+    AVD_LAUNCH_TIMEOUT_MS,
+    FOCUS_POLL_INTERVAL,
+    FOCUS_POLL_TIMEOUT,
+)
 from ronin.utils.subprocess_runner import run_command
 
 logger = logging.getLogger(__name__)
@@ -40,11 +44,15 @@ class DeviceControl:
         adb_control: AdbControl = None,
         is_headless: bool = False,
         platform: Platform = Platform.ANDROID,
+        keep_device: bool = False,
+        reuse_app: bool = False,
     ):
         self.platform = platform
         self.device_name = device_name
         self.app_path = app_path
         self.bundle_id = None
+        self.keep_device = keep_device
+        self.reuse_app = reuse_app
         if platform == Platform.IOS:
             options = XCUITestOptions()
             options.platform_name = "iOS"
@@ -52,7 +60,7 @@ class DeviceControl:
             options.device_name = device_name
             options.app = app_path
             options.is_headless = is_headless
-            options.set_capability("appium:enforceAppInstall", True)
+            options.set_capability("appium:enforceAppInstall", not reuse_app)
             self.adb_control = None
         else:
             options = UiAutomator2Options()
@@ -63,7 +71,9 @@ class DeviceControl:
             options.avd = device_name
             options.avd_launch_timeout = AVD_LAUNCH_TIMEOUT_MS
             options.avd_ready_timeout = AVD_LAUNCH_TIMEOUT_MS
-            options.set_capability("appium:enforceAppInstall", True)
+            options.set_capability("appium:enforceAppInstall", not reuse_app)
+            if keep_device:
+                self._skip_redundant_setup(options)
             self.adb_control = adb_control
             adb_runner = adb_control if adb_control is not None else AdbControl
             package_id, activity = adb_runner.get_apk_info(app_path)
@@ -73,6 +83,24 @@ class DeviceControl:
 
         self.driver = self._start_session(options)
         self.device_info = self._init_device_info()
+
+    def _skip_redundant_setup(self, options) -> None:
+        """Reuses the Appium helper apps already on a warm device.
+
+        Session creation spends most of its time reinstalling and restarting
+        the UiAutomator2 server and settings app. Skipping that is only safe
+        once they are actually present, so check before claiming they are.
+        """
+        serial = AdbControl.resolve_emulator_serial(self.device_name) or self.device_name
+        packages = AdbControl.installed_packages(serial)
+        required = {"io.appium.uiautomator2.server", "io.appium.uiautomator2.server.test"}
+        if not required.issubset(packages):
+            logger.info("Appium server not yet on %s; doing a full device setup.", serial)
+            return
+        logger.info("Reusing the Appium server already installed on %s.", serial)
+        options.set_capability("appium:skipServerInstallation", True)
+        if "io.appium.settings" in packages:
+            options.set_capability("appium:skipDeviceInitialization", True)
 
     def _start_session(self, options):
         """Creates the Appium session, translating a failed AVD launch into a reason.
@@ -155,19 +183,108 @@ class DeviceControl:
         else:
             self.driver.tap([(x, y)])
 
+    def _focused_element(self):
+        try:
+            return self.driver.switch_to.active_element
+        except Exception as exc:
+            logger.debug("Could not read the focused element: %s", exc)
+            return None
+
+    def _assert_focus_at(self, x, y, action: str) -> None:
+        """Raises unless focus is on the element at (x, y).
+
+        Text goes to whatever holds focus, so a tap that misses — because the
+        keyboard shifted the layout, or the coordinates are stale — would
+        otherwise write into the previously focused field without any sign.
+
+        Focus merely *changing* is not evidence the right field was hit: any
+        text field opens the keyboard, so a tap landing on the wrong one looks
+        identical to the layout reflowing. The planner re-reads the screen and
+        tries again, which costs a step and cannot type into the wrong field.
+        """
+        element = self._focused_element()
+        if element is None:
+            return
+        try:
+            rect = element.rect
+        except Exception as exc:
+            logger.debug("Could not read focused element bounds: %s", exc)
+            return
+
+        width, height = rect.get("width", 0), rect.get("height", 0)
+        logger.debug("Focused element after tap: %s at %s", element.id, rect)
+
+        screen_area = getattr(self, "screen_width", 0) * getattr(self, "screen_height", 0)
+        if screen_area and width * height >= 0.8 * screen_area:
+            # A single full-screen surface (Flutter, WebView) tells us nothing.
+            logger.debug("Focused element covers the screen; skipping the focus check.")
+            return
+
+        inside = (
+            rect.get("x", 0) <= x <= rect.get("x", 0) + width
+            and rect.get("y", 0) <= y <= rect.get("y", 0) + height
+        )
+        if not inside:
+            raise RuntimeError(
+                f"{action} at ({x}, {y}) did not focus anything there — focus is on the "
+                f"element at x={rect.get('x')},y={rect.get('y')} "
+                f"({width}x{height}). Nothing was entered. The layout has probably moved "
+                "since these coordinates were read; re-check the field's current position."
+            )
+
+    def _focus_contains(self, x, y) -> bool:
+        """Whether the active element contains the requested coordinates.
+
+        A focused element covering the screen (Flutter, WebView) answers for
+        every point, so it cannot stand in for a real field.
+        """
+        element = self._focused_element()
+        if element is None:
+            return False
+        try:
+            rect = element.rect
+        except Exception as exc:
+            logger.debug("Could not read focused element bounds: %s", exc)
+            return False
+
+        width, height = rect.get("width", 0), rect.get("height", 0)
+        screen_area = getattr(self, "screen_width", 0) * getattr(self, "screen_height", 0)
+        if screen_area and width * height >= 0.8 * screen_area:
+            return False
+
+        return (
+            rect.get("x", 0) <= x <= rect.get("x", 0) + width
+            and rect.get("y", 0) <= y <= rect.get("y", 0) + height
+        )
+
+    def _await_focus(self, x, y) -> None:
+        """Polls until focus lands on (x, y), instead of sleeping a flat second."""
+        for _ in range(max(1, int(FOCUS_POLL_TIMEOUT / FOCUS_POLL_INTERVAL))):
+            if self._focus_contains(x, y):
+                return
+            time.sleep(FOCUS_POLL_INTERVAL)
+
     def type(self, text, x, y):
-        self.tap(x, y)
-        time.sleep(1.0)
         if self.platform == Platform.IOS:
+            self.tap(x, y)
+            time.sleep(1.0)
             self.execute_script("mobile: type", {"text": text})
         else:
+            # The planner focuses a field in the preceding step. Avoid tapping it
+            # again after the keyboard has reflowed the layout when it is already
+            # the active element at the current coordinates.
+            if not self._focus_contains(x, y):
+                self.tap(x, y)
+                self._await_focus(x, y)
+            self._assert_focus_at(x, y, "TYPE")
             self.driver.switch_to.active_element.send_keys(text)
-        time.sleep(0.5)
 
     def clear(self, x, y):
         try:
             self.tap(x, y)
-            time.sleep(1.0)
+            self._await_focus(x, y)
+            if self.platform != Platform.IOS:
+                self._assert_focus_at(x, y, "CLEAR")
             if self.platform == Platform.IOS:
                 self.driver.switch_to.active_element.clear()
             else:
@@ -182,7 +299,7 @@ class DeviceControl:
                     self.driver.switch_to.active_element.clear()
         except Exception as e:
             logger.error("Failed to clear text field at (%s, %s): %s", x, y, e)
-        time.sleep(0.5)
+            raise
 
     def double_tap(self, x, y, with_feedback: bool = True):
         if self.platform == Platform.IOS:
@@ -281,6 +398,9 @@ class DeviceControl:
                 AdbControl.disable_feedback(serial)
             except Exception as e:
                 logger.warning("Failed to disable feedback: %s", e)
+            if self.keep_device:
+                logger.info("Leaving '%s' running for the next run.", self.device_name)
+                return
             try:
                 AdbControl.kill_emulator(self.device_name, serial=self.serial)
             except Exception as e:
