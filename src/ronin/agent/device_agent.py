@@ -25,7 +25,10 @@ from ronin.agent.device_planner import (
     DoneAction,
 )
 from ronin.agent.history import ActionEntry, ActionResult, AgentHistory
+from ronin.defaults import SETTLE_POLL_INTERVAL, SETTLE_STABLE_READINGS
 from ronin.agent.loop_detector import RollingLoopDetector
+from ronin.agent.replay import MAX_REPLAY_ACTIONS, ReplayLedger, is_replayable
+from ronin.utils.secrets import SecretScrubber
 from ronin.agent.perception.media_manager import MediaManager
 from ronin.agent.perception.perception import ScreenPerception
 from ronin.agent.perception.scan_dump import (
@@ -84,7 +87,7 @@ class _RunContext:
     keyboard_open: Optional[bool] = None
     last_action_type: Optional[str] = None
     screen_height: Optional[int] = None
-    keyboard_off_elements: Optional[list] = None
+    pending_loop_nudge: Optional[str] = None
 
 
 class DeviceAgent:
@@ -110,6 +113,10 @@ class DeviceAgent:
         headless: bool = True,
         fast_model: str = None,
         planner: Optional[DevicePlanner] = None,
+        stop_when_satisfied: bool = False,
+        keep_device: bool = False,
+        reuse_app: bool = False,
+        replay_ledger: Optional[ReplayLedger] = None,
     ):
         self.device_name = device_name
         self.app_path = app_path
@@ -120,6 +127,11 @@ class DeviceAgent:
         self.visual_history_limit = visual_history_limit
         self.headless = headless
         self.use_multimodal_vision = use_multimodal_vision
+        self.stop_when_satisfied = stop_when_satisfied
+        self.keep_device = keep_device
+        self.reuse_app = reuse_app
+        self.replay_ledger = replay_ledger
+        self.scrubber = SecretScrubber()
 
         self.llm = LLMClient(model=model)
         self.fast_llm = (
@@ -148,6 +160,7 @@ class DeviceAgent:
         session_trail: Optional[SessionTrail] = None,
         step_hook: Optional[StepHookFn] = None,
         planner_override: Optional[DevicePlanner] = None,
+        max_steps: Optional[int] = None,
     ) -> DeviceRunResult:
         """
         Execute the ReAct loop until the goal is reached, the step limit is hit,
@@ -158,6 +171,7 @@ class DeviceAgent:
         """
         planner = planner_override or self._default_fast_planner
         session_dir.mkdir(parents=True, exist_ok=True)
+        self.scrubber.learn_from_instructions(goal)
         ctx = _RunContext(
             history=AgentHistory(),
             loop_detector=RollingLoopDetector(),
@@ -165,9 +179,11 @@ class DeviceAgent:
         )
 
         self._restart_app(device_control)
+        self._replay_known_path(device_control, goal, ctx)
 
         try:
-            for step in range(self.max_steps):
+            self._step_limit = max_steps or self.max_steps
+            for step in range(self._step_limit):
                 result = self._run_step(
                     step=step,
                     goal=goal,
@@ -228,9 +244,6 @@ class DeviceAgent:
             if detected is not None:
                 ctx.keyboard_open = detected
 
-        if ctx.keyboard_open is False or (ctx.keyboard_open is None and snapshot.scan_info and snapshot.scan_info.reason == "first_pass"):
-            ctx.keyboard_off_elements = snapshot.gui_elements
-
         reaction = self._build_reaction(snapshot.scan_info, ctx.prev_element_count, ctx.keyboard_open)
         ctx.history.update_last_reaction(reaction)
         ctx.prev_element_count = snapshot.scan_info.element_count if snapshot.scan_info else None
@@ -242,13 +255,18 @@ class DeviceAgent:
         if stagnation_result is not None:
             return stagnation_result
 
+        loop_nudge = "\n".join(
+            filter(None, [ctx.pending_loop_nudge, page_nudge])
+        ) or None
+        ctx.pending_loop_nudge = None
+
         step_response = self._plan_step(
             planner=planner,
             goal=goal,
             snapshot=snapshot,
             ctx=ctx,
             session_trail=session_trail,
-            loop_nudge=page_nudge,
+            loop_nudge=loop_nudge,
         )
         self._apply_plan_result(step_response, snapshot, session_trail, ctx)
 
@@ -275,9 +293,7 @@ class DeviceAgent:
         if loop_result is not None:
             return loop_result
 
-        combined_nudge = (
-            "\n".join(filter(None, [page_nudge, action_nudge])) or None
-        )
+        ctx.pending_loop_nudge = action_nudge
 
         self._save_action_screenshot(session_dir, step, snapshot, action)
         ctx.last_external_nav = self._execute_and_record(
@@ -289,9 +305,6 @@ class DeviceAgent:
             session_trail=session_trail,
             ctx=ctx,
         )
-
-        if combined_nudge:
-            ctx.loop_detector.check(None, None)  # preserve detector state; nudge not yet wired to next plan_step
 
         ctx.prev_phash = snapshot.current_phash
         return None
@@ -388,12 +401,11 @@ class DeviceAgent:
         session_trail: Optional[SessionTrail],
         loop_nudge: Optional[str],
     ) -> DeviceStepResponse:
-        if ctx.keyboard_open and ctx.keyboard_off_elements is not None:
-            gui_elements = ctx.keyboard_off_elements
-        else:
-            gui_elements = self._annotate_keyboard_keys(
-                snapshot.gui_elements, ctx.keyboard_open, ctx.screen_height
-            )
+        # Keyboard appearance commonly resizes the app and moves every field.
+        # Always plan from the current scan; pre-keyboard coordinates are stale.
+        gui_elements = self._annotate_keyboard_keys(
+            snapshot.gui_elements, ctx.keyboard_open, ctx.screen_height
+        )
         return planner.plan_step(
             goal=goal,
             gui_elements=gui_elements,
@@ -413,11 +425,15 @@ class DeviceAgent:
         session_trail: Optional[SessionTrail],
         ctx: _RunContext,
     ) -> None:
+        action_text = getattr(step_response.action, "text", None)
+        self.scrubber.learn(action_text)
+
         logger.info("Screen: %s", step_response.current_screen)
-        logger.info("Reasoning: %s", step_response.reasoning)
+        logger.info("Reasoning: %s", self.scrubber.scrub(step_response.reasoning))
         if step_response.evaluation_previous_goal:
             logger.info(
-                "Previous step eval: %s", step_response.evaluation_previous_goal
+                "Previous step eval: %s",
+                self.scrubber.scrub(step_response.evaluation_previous_goal),
             )
 
         ctx.history.update_last_evaluation(step_response.evaluation_previous_goal)
@@ -455,10 +471,17 @@ class DeviceAgent:
         current_phash: Optional[str],
         ctx: _RunContext,
     ) -> Optional[DeviceRunResult]:
-        if not isinstance(step_response.action, DoneAction):
+        satisfied = self.stop_when_satisfied and getattr(
+            step_response, "goal_satisfied", False
+        )
+        if not isinstance(step_response.action, DoneAction) and not satisfied:
             return None
 
-        logger.info("Goal reached: %s", step_response.action.reason)
+        if isinstance(step_response.action, DoneAction):
+            reason = step_response.action.reason
+        else:
+            reason = getattr(step_response, "goal_evidence", "") or "goal observed as complete"
+        logger.info("Goal reached: %s", reason)
         self._flush_trail(session_trail, current_phash)
         return DeviceRunResult(
             status="goal_reached",
@@ -511,19 +534,26 @@ class DeviceAgent:
         error: Optional[str] = None
         last_external_nav = ctx.last_external_nav
         try:
-            ActionOrchestrator(device_control).execute(action)
+            ActionOrchestrator(device_control, self.scrubber).execute(action)
             last_external_nav = step_response.external_navigation
         except Exception as exc:
             error = str(exc)
             logger.error("Action execution failed: %s", error)
 
-        time.sleep(self.settle_time)
-
-        post_phash = self._quick_phash(device_control)
+        post_phash = self._settle(device_control)
         action_result = self._build_action_result(
             action, snapshot.current_phash, post_phash, error
         )
         action_desc = self._describe_action(action)
+
+        if self.replay_ledger is not None and error is None:
+            self.replay_ledger.record(
+                snapshot.current_phash,
+                action,
+                post_phash,
+                action_desc,
+                self._target_label(action, snapshot.gui_elements),
+            )
         ctx.history.append(
             ActionEntry(
                 step_num=step + 1,
@@ -570,16 +600,17 @@ class DeviceAgent:
         ctx: _RunContext,
         session_trail: Optional[SessionTrail],
     ) -> DeviceRunResult:
-        logger.warning("Reached max step limit (%d).", self.max_steps)
+        limit = getattr(self, "_step_limit", self.max_steps)
+        logger.warning("Reached max step limit (%d).", limit)
         self._flush_trail(session_trail, ctx.current_phash)
         return DeviceRunResult(
             status="step_limit",
             steps_executed=ctx.steps_executed,
-            failure_reason=f"Reached maximum step limit ({self.max_steps}) before goal was completed.",
+            failure_reason=f"Reached maximum step limit ({limit}) before goal was completed.",
             history=ctx.history,
         )
 
-    def run_standalone(self, goal: str) -> DeviceRunResult:
+    def run_standalone(self, goal: str, record_session: bool = True) -> DeviceRunResult:
         """
         Convenience method for running a simple goal with a self-managed device session.
         Used by main.py and other non-testing callers.
@@ -588,8 +619,10 @@ class DeviceAgent:
             device_name=self.device_name,
             app_path=self.app_path,
             platform=self.platform,
-            record_session=True,
+            record_session=record_session,
             session_dir=self.assets_dir,
+            keep_device=self.keep_device,
+            reuse_app=self.reuse_app,
         )
         try:
             device_control = session.start(is_headless=self.headless)
@@ -673,6 +706,90 @@ class DeviceAgent:
             time.sleep(2.5)
         except Exception as exc:
             logger.warning("Failed to restart app: %s", exc)
+
+    @staticmethod
+    def _target_label(action, elements) -> str:
+        """The visible text of the element an action targets, if it has one."""
+        coordinates = getattr(action, "coordinates", None)
+        if coordinates is None or not elements:
+            return ""
+        for element in elements:
+            box = element.bounding_box
+            if (
+                box.x_min <= coordinates.x <= box.x_max
+                and box.y_min <= coordinates.y <= box.y_max
+                and (element.text or "").strip()
+            ):
+                return element.text.strip()
+        return ""
+
+    def _replay_known_path(self, device_control, goal, ctx: _RunContext) -> None:
+        """Re-executes transitions already worked out, without consulting the planner.
+
+        Each replayed action is verified against the screen it produced before;
+        the first disagreement hands control back to planning, so a changed app
+        costs one wasted tap rather than a wrong result.
+        """
+        ledger = self.replay_ledger
+        if not ledger or not len(ledger):
+            return
+
+        goal_text = "\n".join(goal) if isinstance(goal, list) else str(goal)
+        replayed = 0
+
+        while replayed < MAX_REPLAY_ACTIONS:
+            phash = self._quick_phash(device_control)
+            step = ledger.lookup(phash)
+            if step is None:
+                break
+            if not is_replayable(step, goal_text):
+                logger.info("Replay stops here: %s is this scenario's own input.", step.description)
+                break
+
+            try:
+                ActionOrchestrator(device_control, self.scrubber).execute(step.action)
+            except Exception as exc:
+                logger.info("Replay stopped — %s failed: %s", step.description, exc)
+                break
+
+            reached = self._settle(device_control)
+            if not ledger.leads_to(step, reached):
+                logger.info("Replay stopped — %s did not lead where it used to.", step.description)
+                break
+
+            replayed += 1
+            ctx.history.append(
+                ActionEntry(
+                    step_num=0,
+                    action_desc=f"{step.description} (replayed)",
+                    result=ActionResult(success=True, observation="Replayed a known transition"),
+                )
+            )
+
+        if replayed:
+            logger.info("Replayed %d known step(s) before planning.", replayed)
+
+    def _settle(self, device_control) -> Optional[str]:
+        """Waits for the screen to stop changing, up to settle_time.
+
+        A fixed sleep pays the worst case on every action; most screens are
+        static again well before it elapses. Returns the settled pHash so the
+        caller does not need a further screenshot.
+        """
+        deadline = max(1, int(self.settle_time / SETTLE_POLL_INTERVAL))
+        phash = self._quick_phash(device_control)
+        stable = 1
+        for _ in range(deadline):
+            time.sleep(SETTLE_POLL_INTERVAL)
+            current = self._quick_phash(device_control)
+            if current is not None and current == phash:
+                stable += 1
+                if stable >= SETTLE_STABLE_READINGS:
+                    return current
+            else:
+                stable = 1
+            phash = current
+        return phash
 
     def _quick_phash(self, device_control) -> Optional[str]:
         """Lightweight pHash capture after action — no YOLO/OCR, just a screenshot."""
@@ -807,14 +924,14 @@ class DeviceAgent:
 
     def _describe_action(self, action) -> str:
         """Produce a concise, redacted human-readable action description for history."""
-        from ronin.utils.redactor import redact_text
+        from ronin.utils.redactor import mask_typed_text, redact_text
 
         t = action.type.value if hasattr(action.type, "value") else str(action.type)
 
         if t == ActionType.TYPE.value:
             coords = action.coordinates
-            text_repr = redact_text(action.text) if getattr(action, "text", None) else ""
-            desc = f"type '{text_repr}' at ({coords.x}, {coords.y})"
+            text_repr = mask_typed_text(getattr(action, "text", ""))
+            desc = f"type {text_repr} at ({coords.x}, {coords.y})"
         elif t in (
             ActionType.TAP.value,
             ActionType.DOUBLE_TAP.value,
