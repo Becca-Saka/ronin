@@ -43,8 +43,9 @@ class QAStepResponse(DeviceStepResponse):
     is_scenario_feasible: bool = Field(
         default=True,
         description=(
-            "Set False if the scenario instructions are invalid or impossible for the current screen "
-            "(e.g. references fields that do not exist). Otherwise True."
+            "Set False only when the scenario can never be carried out — it contradicts the app, "
+            "or the screen it needs cannot be reached from here. Not yet being on the right screen "
+            "is not infeasible: navigate there instead."
         ),
     )
     infeasibility_reason: Optional[str] = Field(
@@ -68,6 +69,12 @@ class QAPlanner(DevicePlanner):
     ):
         super().__init__(llm_client, use_multimodal_vision)
         self._test_case = test_case
+        from ronin.utils.secrets import SecretScrubber
+
+        self._scrubber = SecretScrubber()
+        self._scrubber.learn_from_instructions(getattr(test_case, "steps_instructions", None))
+        self._scrubber.learn_from_instructions(getattr(test_case, "expected_outcomes", None))
+        self._scrubber.learn_from_instructions(security_rules)
         self._security_rules = security_rules or []
 
     def plan_step(
@@ -115,15 +122,18 @@ class QAPlanner(DevicePlanner):
         logger.info("Querying QAPlanner for next step with QA auditing...")
         response: QAStepResponse = self.llm.generate_response([message], QAStepResponse)
 
-        response.reasoning = redact_text(response.reasoning)
-        response.observation = redact_text(response.observation)
-        response.evaluation_previous_goal = redact_text(
-            response.evaluation_previous_goal
-        )
+        def clean(text):
+            return self._scrubber.scrub(redact_text(text))
+
+        response.reasoning = clean(response.reasoning)
+        response.observation = clean(response.observation)
+        response.evaluation_previous_goal = clean(response.evaluation_previous_goal)
+        response.infeasibility_reason = clean(response.infeasibility_reason)
         for issue in response.detected_issues:
-            issue.description = redact_text(issue.description)
+            issue.description = clean(issue.description)
         for verify in response.rule_verifications:
-            verify.reasoning = redact_text(verify.reasoning)
+            verify.reasoning = clean(verify.reasoning)
+            verify.rule = clean(verify.rule)
 
         return response
 
@@ -190,7 +200,7 @@ Inspect the visual screenshots and audit the current screen for defects:
 2. **Security Vulnerabilities**: Scan for plain-text passwords, unmasked PINs, exposed auth tokens, credit card digits, or accessible admin/debug routes.
 3. **Dynamic Screen Assertions**: Generate context-specific assertions for the current layout (e.g. "Login button is visible and enabled", "Password field masks input"). Verify each as passed, failed, or untested.
 4. **Rule Verifications**: For each expected outcome, custom security rule, and dynamic assertion, determine its status on the current screen: "passed", "failed", or "untested".
-5. **Scenario Feasibility**: Verify the scenario instructions are valid for the current screen. If they require elements that do not exist, set `is_scenario_feasible = False` and fill `infeasibility_reason`.
+5. **Scenario Feasibility**: A scenario starts from a freshly launched app, so the screen it targets usually needs navigating to first. If its elements are not here yet, work towards them — sign in, open the relevant section — and keep going. Mark `is_scenario_feasible = False` only when the scenario is genuinely impossible: it contradicts how the app works, or its target cannot be reached from here at all.
 
 ### Allowed Action Types
 Each action must have a `type` field set to one of:
@@ -277,7 +287,7 @@ CRITICAL CONSTRAINTS:
 4. Set `reasoning`: explain why you chose the next action based on the observation.
 5. Audit QA issues and populate `detected_issues` (each must include `severity`: low, medium, high, or critical).
 6. Evaluate all expected outcomes, security rules, and dynamic assertions; populate `rule_verifications`.
-7. If scenario instructions reference elements that do not exist here, set `is_scenario_feasible = False`, fill `infeasibility_reason`, set action to `done`.
+7. If the scenario's target screen has not been reached yet, navigate towards it. Set `is_scenario_feasible = False` with an `infeasibility_reason` and action `done` only when it is genuinely unreachable or contradicts the app.
 8. If all objectives are met or a critical crash terminates execution, set action to `done`.
 9. Otherwise, set `action` to the single next action to execute.
 10. Set `external_navigation = True` if the action will temporarily leave the app.

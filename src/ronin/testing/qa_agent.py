@@ -13,6 +13,17 @@ from ronin.agent.device_agent import DeviceAgent, DeviceRunResult
 from ronin.agent.device_planner import DeviceStepResponse, DoneAction
 from ronin.agent.trail import SessionTrail
 from ronin.agent.device.platform import Platform
+from ronin.agent.replay import ReplayLedger
+
+# Replay skips perception and auditing on the screens it passes through, so
+# any scenario whose assertions can apply mid-navigation must not use it.
+REPLAY_EXEMPT_CLASSIFICATIONS = {
+    "accessibility_audit",
+    "destructive_monkey",
+    "security_compliance",
+    "performance_bottleneck",
+}
+from ronin.defaults import STEP_BUDGET_FLOOR, STEP_BUDGET_PER_INSTRUCTION
 from ronin.llm.llm_client import LLMClient
 from ronin.testing.models import (
     GeneratedTestCase,
@@ -46,6 +57,7 @@ class QAAgent:
         use_multimodal_vision: bool = False,
         headless: bool = True,
         fast_model: str = None,
+        replay_ledger: Optional[ReplayLedger] = None,
     ):
         self._use_multimodal_vision = use_multimodal_vision
 
@@ -60,8 +72,20 @@ class QAAgent:
             use_multimodal_vision=use_multimodal_vision,
             headless=headless,
             fast_model=fast_model,
+            replay_ledger=replay_ledger,
         )
         self._fast_llm: LLMClient = self._device_agent.fast_llm
+
+    def _step_budget(self, test_case: GeneratedTestCase) -> int:
+        """How many agent steps a scenario may use.
+
+        Scenarios differ wildly in size — a five-line security check and a
+        nineteen-line end-to-end order cannot share one number — so each gets
+        a budget from its own instructions, under the configured ceiling.
+        """
+        wanted = len(test_case.steps_instructions) * STEP_BUDGET_PER_INSTRUCTION
+        ceiling = self._device_agent.max_steps
+        return min(ceiling, max(STEP_BUDGET_FLOOR, wanted))
 
     def execute_scenario(
         self,
@@ -91,10 +115,14 @@ class QAAgent:
 
             if not step_response.is_scenario_feasible:
                 logger.warning(
-                    "Scenario flagged infeasible: %s", step_response.infeasibility_reason
+                    "Scenario flagged infeasible: %s",
+                    self._device_agent.scrubber.scrub(step_response.infeasibility_reason),
                 )
                 stop_reason["value"] = (
-                    f"Scenario is infeasible: {step_response.infeasibility_reason or 'No reason provided'}"
+                    "Scenario is infeasible: "
+                    + self._device_agent.scrubber.scrub(
+                        step_response.infeasibility_reason or "No reason provided"
+                    )
                 )
                 return False
 
@@ -107,6 +135,25 @@ class QAAgent:
             security_rules=security_rules,
         )
 
+        replay = self._device_agent.replay_ledger
+        audits_every_screen = test_case.classification in REPLAY_EXEMPT_CLASSIFICATIONS
+        if audits_every_screen:
+            # Replayed screens are never perceived or audited, which is the
+            # whole point of these scenarios.
+            self._device_agent.replay_ledger = None
+
+        self._device_agent.scrubber.learn_from_instructions(test_case.steps_instructions)
+        self._device_agent.scrubber.learn_from_instructions(test_case.expected_outcomes)
+        self._device_agent.scrubber.learn_from_instructions(security_rules)
+
+        step_budget = self._step_budget(test_case)
+        logger.info(
+            "Scenario %s: %d instruction(s), %d step budget",
+            test_case.test_id,
+            len(test_case.steps_instructions),
+            step_budget,
+        )
+
         run_result: DeviceRunResult = self._device_agent.run(
             goal=test_case.steps_instructions,
             device_control=device_control,
@@ -115,7 +162,10 @@ class QAAgent:
             session_trail=session_trail,
             step_hook=step_hook,
             planner_override=qa_planner,
+            max_steps=step_budget,
         )
+
+        self._device_agent.replay_ledger = replay
 
         return self._build_report(
             test_case=test_case,
@@ -136,14 +186,21 @@ class QAAgent:
         all_verifications: List[RuleVerification] = []
         all_issues: List[QAIssue] = []
 
+        scrub = self._device_agent.scrubber.scrub
+
         for step_resp in qa_outputs:
             for verify in step_resp.rule_verifications:
                 if not verify.screen_name:
                     verify.screen_name = step_resp.current_screen
+                # An audit naming the value it found — "password123 is visible
+                # unmasked" — would otherwise write it into logs and reports.
+                verify.rule = scrub(verify.rule)
+                verify.reasoning = scrub(verify.reasoning)
                 all_verifications.append(verify)
 
             for issue in step_resp.detected_issues:
                 issue.current_screen = step_resp.current_screen
+                issue.description = scrub(issue.description)
                 all_issues.append(issue)
                 logger.info(
                     "QA issue [%s/%s] on '%s': %s",
@@ -168,7 +225,7 @@ class QAAgent:
             steps_executed=run_result.steps_executed,
             rule_verifications=all_verifications,
             detected_issues=all_issues,
-            failure_reason=failure_reason,
+            failure_reason=scrub(failure_reason or "") or None,
         )
 
     def _determine_status(

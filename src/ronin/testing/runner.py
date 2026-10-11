@@ -8,7 +8,9 @@ from ronin.agent.trail import SessionTrail
 from ronin.agent.device.device_session import DeviceSession
 from ronin.agent.device.platform import Platform
 from ronin.agent.perception.perception import ScreenPerception
+from ronin.agent.replay import ReplayLedger
 from .generator import ScenarioGenerator
+from .progress import ScenarioProgress
 from .models import UserJourney, JourneyReport, ScenarioReport
 from .qa_agent import QAAgent
 from .usage_tracker import LLMUsageTracker
@@ -52,6 +54,7 @@ class RoninTestRunner:
         model: str = "openrouter/google/gemini-2.5-flash",
         assets_dir: Path = Path("assets"),
         max_steps: int = 40,
+        replay: bool = False,
         settle_time: float = 2.0,
         use_multimodal_vision: bool = False,
         headless: bool = True,
@@ -64,6 +67,7 @@ class RoninTestRunner:
         self.model = model
         self.assets_dir = assets_dir
         self.max_steps = max_steps
+        self.replay = replay
         self.settle_time = settle_time
         self.use_multimodal_vision = use_multimodal_vision
         self.headless = headless
@@ -93,6 +97,7 @@ class RoninTestRunner:
             use_multimodal_vision=self.use_multimodal_vision,
             headless=self.headless,
             fast_model=self.fast_model,
+            replay_ledger=ReplayLedger() if self.replay else None,
         )
 
         usage_tracker = LLMUsageTracker(output_dir=session.telemetry_dir)
@@ -108,6 +113,7 @@ class RoninTestRunner:
 
         scenarios = []
         scenario_reports: List[ScenarioReport] = []
+        progress = None
         passed_count = 0
         failed_count = 0
         skipped_count = 0
@@ -131,6 +137,10 @@ class RoninTestRunner:
                     s.test_id,
                 )
 
+            progress = ScenarioProgress(session.telemetry_dir, journey, scenarios)
+            progress.write()
+            logger.info("Scenario plan: %s", progress.path)
+
             current_component = "ronin_agent_planner"
 
             logger.info(
@@ -142,6 +152,7 @@ class RoninTestRunner:
 
             total_scenarios = len(scenarios)
             for idx, scenario in enumerate(scenarios):
+                progress.start(scenario.test_id)
                 logger.info("========================================")
                 logger.info(
                     "Executing Scenario %d/%d: %s (%s) - Category: %s",
@@ -190,6 +201,8 @@ class RoninTestRunner:
                     session_trail=trail,
                 )
 
+                progress.record(scenario.test_id, scen_report)
+
                 scenario_reports.append(scen_report)
                 if scen_report.status == "PASSED":
                     passed_count += 1
@@ -202,6 +215,8 @@ class RoninTestRunner:
             logger.exception(
                 "Fatal exception or interrupt encountered during run: %s", e
             )
+            if progress is not None:
+                progress.abort(f"Aborted due to run failure/interrupt: {e}")
             for scenario in scenarios:
                 if not any(r.test_id == scenario.test_id for r in scenario_reports):
                     scenario_reports.append(

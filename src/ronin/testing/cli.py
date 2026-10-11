@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from ronin.agent.device.platform import Platform
+from ronin.app_discovery import find_journey_files, resolve_app_path
 from ronin.config import Config, load_config
 from .models import UserJourney
 from .runner import RoninTestRunner
@@ -29,7 +30,11 @@ class RoninCLI:
 
     def _create_parser(self) -> argparse.ArgumentParser:
         parser = argparse.ArgumentParser(description="Ronin QA Journey-Based Testing CLI")
-        parser.add_argument("journey_file", help="Path to the journey YAML/JSON file")
+        parser.add_argument(
+            "journey_file",
+            nargs="?",
+            help="Path to the journey YAML/JSON file. Found in this directory when omitted.",
+        )
         parser.add_argument("--platform", choices=["android", "ios"], help="Target platform")
         parser.add_argument("--device", help="Name of emulator/device")
         parser.add_argument("--app-path", help="App binary path")
@@ -40,7 +45,33 @@ class RoninCLI:
         parser.add_argument("--fast-model", help="Cheaper/faster LiteLLM model for ReAct step planning")
         parser.add_argument("--use-multimodal-vision", action="store_true", default=None, help="Toggle LLM coordinate overrides")
         parser.add_argument("--headless", action="store_true", default=None, help="Run android emulator headlessly")
+        parser.add_argument(
+            "--replay",
+            action="store_true",
+            help="Re-execute navigation already worked out in an earlier scenario instead of "
+            "re-planning it. Faster, but replayed screens are not perceived or audited",
+        )
         return parser
+
+    def _resolve_journey_file(self, given: Optional[str]) -> Path:
+        """Finds the journey file to run, looking in the working directory."""
+        if given:
+            return Path(given)
+
+        candidates = find_journey_files(Path.cwd())
+        if len(candidates) == 1:
+            logger.info("Using journey file %s", candidates[0].name)
+            return candidates[0]
+        if not candidates:
+            raise SystemExit(
+                f"No journey file found in {Path.cwd()}.\n"
+                "Pass one: ronin test <journey.yaml>"
+            )
+        listed = "\n".join(f"  {path.name}" for path in candidates)
+        raise SystemExit(
+            f"Several journey files found in {Path.cwd()}:\n{listed}\n"
+            "Pass the one you want: ronin test <journey.yaml>"
+        )
 
     def load_journeys(self, filepath: Path) -> List[UserJourney]:
         """Loads one or more UserJourneys from a JSON or YAML file."""
@@ -144,7 +175,7 @@ class RoninCLI:
     async def run(self, args_list: List[str] = None):
         """Parses arguments, executes all loaded journeys, prints a summary, and exits."""
         args = self.parser.parse_args(args_list)
-        filepath = Path(args.journey_file)
+        filepath = self._resolve_journey_file(args.journey_file)
         
         try:
             journeys = self.load_journeys(filepath)
@@ -167,6 +198,14 @@ class RoninCLI:
             return self.config.get(name)
 
         platform_str = setting("platform", args.platform)
+        # The journey file's directory counts as a search root, so a suite can
+        # live beside the app it tests and be run from anywhere.
+        app_path = resolve_app_path(
+            setting("app_path", args.app_path),
+            platform_str,
+            Path.cwd(),
+            filepath.resolve().parent,
+        )
         device_name = setting("device", args.device, "emulator", "device")
         headless_val = _as_bool(setting("headless", args.headless))
 
@@ -176,7 +215,7 @@ class RoninCLI:
         runner = RoninTestRunner(
             platform=Platform.ANDROID if platform_str == "android" else Platform.IOS,
             device_name=device_name,
-            app_path=setting("app_path", args.app_path),
+            app_path=str(app_path),
             model=setting("model", args.model),
             assets_dir=Path(setting("output_dir", args.output_dir)),
             max_steps=int(setting("max_steps", args.max_steps)),
@@ -187,6 +226,7 @@ class RoninCLI:
             headless=headless_val,
             fast_model=setting("fast_model", args.fast_model),
             record_session=record_val,
+            replay=bool(args.replay),
         )
         
         logger.info("==================================================")
