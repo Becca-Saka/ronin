@@ -14,11 +14,13 @@ from typing import Callable, Literal, Optional
 import imagehash
 from PIL import Image
 
-from ronin.agent.actuation.actions import ActionType
+from ronin.agent.actuation.actions import ActionType, Coordinates
 from ronin.agent.actuation.orchestrator import ActionOrchestrator
 from ronin.agent.device.device_session import DeviceSession
 from ronin.agent.device.platform import Platform
 from ronin.agent.device_planner import (
+    GROUNDING_COORDINATES,
+    GROUNDING_MARKS,
     DevicePlanner,
     DeviceStepResponse,
     DoneAction,
@@ -28,7 +30,9 @@ from ronin.agent.launch import restart_app
 from ronin.defaults import SETTLE_POLL_INTERVAL, SETTLE_STABLE_READINGS
 from ronin.agent.loop_detector import RollingLoopDetector
 from ronin.agent.replay import ReplayLedger, replay_known_path, target_label
+from ronin.agent import targeting
 from ronin.utils.secrets import SecretScrubber
+from ronin.agent.perception import marks
 from ronin.agent.perception.media_manager import MediaManager
 from ronin.agent.perception.perception import ScreenPerception
 from ronin.agent.perception.scan_dump import (
@@ -65,7 +69,9 @@ class DeviceRunResult:
 @dataclass
 class _PerceptionSnapshot:
     gui_elements: list
+    marks: list
     raw_img_bytes: bytes
+    planner_img_bytes: bytes
     annotated_img: Image.Image
     current_phash: Optional[str]
     timestamp: str
@@ -91,6 +97,9 @@ class _RunContext:
 
 
 class DeviceAgent:
+    # Class-level so an agent built without __init__ still answers sensibly.
+    grounding = GROUNDING_COORDINATES
+
     """
     LLM-driven ReAct agent for mobile device control.
 
@@ -117,6 +126,7 @@ class DeviceAgent:
         keep_device: bool = False,
         reuse_app: bool = False,
         replay_ledger: Optional[ReplayLedger] = None,
+        grounding: str = GROUNDING_COORDINATES,
     ):
         self.device_name = device_name
         self.app_path = app_path
@@ -127,6 +137,7 @@ class DeviceAgent:
         self.visual_history_limit = visual_history_limit
         self.headless = headless
         self.use_multimodal_vision = use_multimodal_vision
+        self.grounding = grounding
         self.stop_when_satisfied = stop_when_satisfied
         self.keep_device = keep_device
         self.reuse_app = reuse_app
@@ -144,9 +155,11 @@ class DeviceAgent:
             self._default_planner = planner
             self._default_fast_planner = planner
         else:
-            self._default_planner = DevicePlanner(self.llm, use_multimodal_vision)
+            self._default_planner = DevicePlanner(
+                self.llm, use_multimodal_vision, grounding
+            )
             self._default_fast_planner = DevicePlanner(
-                self.fast_llm, use_multimodal_vision
+                self.fast_llm, use_multimodal_vision, grounding
             )
 
         self.media_manager = MediaManager(self.scrubber)
@@ -304,6 +317,26 @@ class DeviceAgent:
 
         ctx.pending_loop_nudge = action_nudge
 
+        decision = targeting.evaluate(
+            action, snapshot, device_control, self.grounding
+        )
+        if not decision.ok:
+            targeting.record_unexecuted(
+                ctx.history, step, self._describe_action(action), decision.observation
+            )
+            if decision.unmatched:
+                targeting.save_unmatched_screen(
+                    self.media_manager,
+                    session_dir / f"not_listed_step{step + 1}_{snapshot.timestamp}.png",
+                    snapshot,
+                )
+            if decision.stop_scenario:
+                return self._loop_detected_result(
+                    ctx, session_trail, snapshot.current_phash, decision.stop_scenario
+                )
+            return None
+
+        action = decision.action or action
         self._save_action_screenshot(session_dir, step, snapshot, action)
         ctx.last_external_nav = self._execute_and_record(
             step=step,
@@ -339,10 +372,13 @@ class DeviceAgent:
 
         buf = io.BytesIO()
         raw_img.save(buf, format="PNG")
+        raw_bytes = buf.getvalue()
 
         return _PerceptionSnapshot(
             gui_elements=gui_elements,
-            raw_img_bytes=buf.getvalue(),
+            marks=[],
+            raw_img_bytes=raw_bytes,
+            planner_img_bytes=raw_bytes,
             annotated_img=annotated_img,
             current_phash=current_phash,
             timestamp=time.strftime("%Y%m%d_%H%M%S"),
@@ -414,9 +450,10 @@ class DeviceAgent:
     ) -> DeviceStepResponse:
         # Keyboard appearance commonly resizes the app and moves every field.
         # Always plan from the current scan; pre-keyboard coordinates are stale.
-        gui_elements = self._annotate_keyboard_keys(
+        gui_elements = marks.annotate_keyboard_keys(
             snapshot.gui_elements, ctx.keyboard_open, ctx.screen_height
         )
+        self._number_targets(snapshot, ctx)
         return planner.plan_step(
             goal=goal,
             gui_elements=gui_elements,
@@ -424,10 +461,35 @@ class DeviceAgent:
             trail=session_trail.format_for_prompt() if session_trail else None,
             drift_warning=ctx.drift_warning,
             loop_nudge=loop_nudge,
-            current_image_bytes=snapshot.raw_img_bytes,
+            current_image_bytes=snapshot.planner_img_bytes,
+            marks=snapshot.marks,
+            screen_height=ctx.screen_height or 0,
             visual_history=list(ctx.visual_history),
             keyboard_open=ctx.keyboard_open,
         )
+
+    def _number_targets(self, snapshot: _PerceptionSnapshot, ctx: _RunContext) -> None:
+        """Numbers the elements and redraws the screenshot to match.
+
+        Done here rather than at perception time because the keyboard state is
+        only known now, and the keyboard's own keys must not be numbered — they
+        would outnumber the app's controls several times over.
+        """
+        if self.grounding != GROUNDING_MARKS:
+            return
+
+        targets, keys = marks.split_keyboard(
+            snapshot.gui_elements, ctx.keyboard_open, ctx.screen_height
+        )
+        raw_img = Image.open(io.BytesIO(snapshot.raw_img_bytes))
+        width, height = raw_img.size
+        snapshot.marks = marks.build(targets, screen_area=width * height)
+
+        marked = io.BytesIO()
+        marks.render(
+            raw_img, snapshot.marks, band=marks.keyboard_band(keys, width)
+        ).save(marked, format="PNG")
+        snapshot.planner_img_bytes = marked.getvalue()
 
     def _apply_plan_result(
         self,
@@ -755,34 +817,6 @@ class DeviceAgent:
 
         return ActionResult(success=True, observation=obs)
 
-    def _annotate_keyboard_keys(
-        self,
-        elements: list,
-        keyboard_open: Optional[bool],
-        screen_height: Optional[int],
-    ) -> list:
-        """When the keyboard is open, prefix elements that are likely keyboard keys with [key].
-
-        Keyboard keys are identified as elements in the lower 40% of the screen whose
-        text is 1-2 characters long (e.g. 'q', 'w', 'shift', '123'). App UI elements
-        in that region (longer labels like 'Login', 'Sign Up') are left unchanged.
-        """
-        if not keyboard_open or not screen_height:
-            return elements
-
-        keyboard_top = int(screen_height * 0.60)
-        annotated = []
-        for el in elements:
-            center_y = (el.bounding_box.y_min + el.bounding_box.y_max) // 2
-            text = (el.text or "").strip()
-            is_key = center_y >= keyboard_top and len(text) <= 2
-            if is_key:
-                from copy import copy
-                el = copy(el)
-                el.text = f"[key] {text}" if text else "[key]"
-            annotated.append(el)
-        return annotated
-
     def _build_reaction(
         self,
         scan_info: Optional[ScanInfo],
@@ -830,18 +864,24 @@ class DeviceAgent:
 
         t = action.type.value if hasattr(action.type, "value") else str(action.type)
 
+        coords = getattr(action, "coordinates", None)
+        # An unresolved mark has no point to report; name the number instead.
+        where = (
+            f"({coords.x}, {coords.y})"
+            if coords is not None
+            else f"element {getattr(action, 'mark', '?')}"
+        )
+
         if t == ActionType.TYPE.value:
-            coords = action.coordinates
             text_repr = mask_typed_text(getattr(action, "text", ""))
-            desc = f"type {text_repr} at ({coords.x}, {coords.y})"
+            desc = f"type {text_repr} at {where}"
         elif t in (
             ActionType.TAP.value,
             ActionType.DOUBLE_TAP.value,
             ActionType.LONG_PRESS.value,
             ActionType.CLEAR.value,
         ):
-            coords = action.coordinates
-            desc = f"{t} at ({coords.x}, {coords.y})"
+            desc = f"{t} at {where}"
         elif t == ActionType.KEY_EVENT.value:
             desc = f"key_event {action.key}"
         elif t == ActionType.SWIPE.value:

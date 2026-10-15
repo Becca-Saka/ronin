@@ -14,11 +14,15 @@ from ronin.agent.actuation.actions import (
     Action,
     ActionType,
     CapabilityType,
+    MarksAction,
 )
 from ronin.llm.llm_client import LLMClient
 from ronin.llm.messages import MultiPartMessage
 
 logger = logging.getLogger(__name__)
+
+GROUNDING_COORDINATES = "coordinates"
+GROUNDING_MARKS = "marks"
 
 
 class DoneAction(BaseModel):
@@ -31,6 +35,7 @@ class DoneAction(BaseModel):
 
 
 DeviceAction = Annotated[Action | DoneAction, Field(discriminator="type")]
+MarksDeviceAction = Annotated[MarksAction | DoneAction, Field(discriminator="type")]
 
 
 class DeviceStepResponse(BaseModel):
@@ -83,12 +88,31 @@ class DeviceStepResponse(BaseModel):
     )
 
 
+class MarksStepResponse(DeviceStepResponse):
+    """The step response used in marks mode, where targets have no coordinates."""
+
+    action: MarksDeviceAction = Field(
+        ..., description="The single next action, naming its target by number."
+    )
+
+
 class DevicePlanner:
+    # Class-level so a planner built without __init__ still answers sensibly.
+    grounding = GROUNDING_COORDINATES
+
     """Builds prompts and calls the LLM to determine the next device action."""
 
-    def __init__(self, llm_client: LLMClient, use_multimodal_vision: bool = False):
+    def __init__(
+        self,
+        llm_client: LLMClient,
+        use_multimodal_vision: bool = False,
+        grounding: str = GROUNDING_COORDINATES,
+    ):
         self.llm = llm_client
         self.use_multimodal_vision = use_multimodal_vision
+        # "marks" offers numbered elements and no coordinates, so a target the
+        # planner cannot find becomes a refusal rather than an invented point.
+        self.grounding = grounding
 
     def plan_step(
         self,
@@ -101,6 +125,8 @@ class DevicePlanner:
         current_image_bytes: bytes = b"",
         visual_history: List[bytes] = None,
         keyboard_open: Optional[bool] = None,
+        marks: Optional[list] = None,
+        screen_height: int = 0,
     ) -> DeviceStepResponse:
         """Plan the next action given current screen state and accumulated history."""
         from ronin.utils.redactor import redact_elements, redact_text
@@ -121,6 +147,8 @@ class DevicePlanner:
             drift_warning=drift_warning,
             loop_nudge=loop_nudge,
             keyboard_open=keyboard_open,
+            marks=marks,
+            screen_height=screen_height,
         )
 
         message = MultiPartMessage()
@@ -135,7 +163,7 @@ class DevicePlanner:
 
         logger.info("Querying DevicePlanner for next step...")
         response: DeviceStepResponse = self.llm.generate_response(
-            [message], DeviceStepResponse
+            [message], self.step_response_model()
         )
 
         response.reasoning = redact_text(response.reasoning)
@@ -154,15 +182,29 @@ class DevicePlanner:
             f"   - {cap.value}: {CAPABILITY_SCHEMAS.get(cap, '{}')}"
             for cap in CapabilityType
         )
-        return (
-            """
+        if self.grounding == GROUNDING_MARKS:
+            targeting = """
+### Allowed Action Types
+Each action must have a `type` field set to one of:
+- "tap": Tap an element. Fields: `type`, `mark` (int), `reason`.
+- "type": Type text into an element. Fields: `type`, `text`, `mark` (int), `reason`.
+- "clear": Clear a text field. Fields: `type`, `mark` (int), `reason`.
+- "double_tap": Double-tap an element. Fields: `type`, `mark` (int), `reason`.
+- "long_press": Long press an element. Fields: `type`, `duration` (float seconds), `mark` (int), `reason`.
+- "target_not_listed": The element you need is not numbered on the screenshot. Fields: `type`, `description` (what it looks like and roughly where), `reason`."""
+        else:
+            targeting = """
 ### Allowed Action Types
 Each action must have a `type` field set to one of:
 - "tap": Tap at coordinates. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
 - "type": Type text into a field. Fields: `type`, `text`, `coordinates` as {"x": int, "y": int}, `reason`.
 - "clear": Clear a text field. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
 - "double_tap": Double-tap. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
-- "long_press": Long press. Fields: `type`, `duration` (float seconds), `coordinates` as {"x": int, "y": int}, `reason`.
+- "long_press": Long press. Fields: `type`, `duration` (float seconds), `coordinates` as {"x": int, "y": int}, `reason`."""
+
+        return (
+            targeting
+            + """
 - "drag_and_drop": Drag from source to destination. Fields: `type`, `source_x`, `source_y`, `destination_x`, `destination_y`, `reason`.
 - "key_event": Trigger a key event. Fields: `type`, `key` (int keycode: 4=back, 3=home, 66=enter, 67=backspace), `reason`.
 - "swipe": Swipe from start to end. Fields: `type`, `start_x`, `start_y`, `end_x`, `end_y`, `reason`.
@@ -178,6 +220,18 @@ Each action must have a `type` field set to one of:
 
     def _action_constraints(self) -> str:
         """The rules for choosing an action. Shared with QAPlanner — see above."""
+        if self.grounding == GROUNDING_MARKS:
+            return """
+CRITICAL CONSTRAINTS:
+1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
+2. Every element on the screenshot carries a number. Name the number in `mark`. Never send coordinates — they are not accepted.
+3. "type" focuses the element itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
+4. Choose only a number that appears in the list below. If what you need is not numbered, use "target_not_listed" and describe it. Do not pick the nearest number instead, and do not guess.
+5. The soft keyboard blocks taps on anything behind it. If your next target is in the lower region (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app.
+6. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
+7. The numbers are redrawn every step. Use the numbers from the CURRENT screenshot and list, never one you remember from an earlier step.
+"""
+
         return """
 CRITICAL CONSTRAINTS:
 1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
@@ -199,6 +253,8 @@ CRITICAL CONSTRAINTS:
         drift_warning: Optional[str],
         loop_nudge: Optional[str],
         keyboard_open: Optional[bool] = None,
+        marks: Optional[list] = None,
+        screen_height: int = 0,
     ) -> str:
         kb_line = ""
         if keyboard_open is True:
@@ -212,8 +268,8 @@ Your job is to execute the steps below by interacting with the app one action at
 ### Goal / Instructions
 {chr(10).join(f"- {step}" for step in goal_lines)}
 
-### Current UI Elements Detected (YOLO/OCR)
-{self._format_elements(gui_elements) if gui_elements else "None detected."}
+### Current UI Elements Detected {self._target_heading()}
+{self.format_targets(gui_elements, marks, screen_height)}
 {kb_line}
 ### Action History (with system-observed outcomes)
 {history or "No actions executed yet."}
@@ -307,7 +363,29 @@ Your job is to execute the steps below by interacting with the app one action at
         neighbours.sort()
         return ", ".join(f"'{text}'" for _, _, text in neighbours[: self.ROW_LABEL_LIMIT])
 
+    def step_response_model(self):
+        """The schema the model answers in, which differs by grounding mode."""
+        if self.grounding == GROUNDING_MARKS:
+            return MarksStepResponse
+        return DeviceStepResponse
+
+    def _target_heading(self) -> str:
+        """Says where the targets are, which differs by mode and must not lie."""
+        if self.grounding == GROUNDING_MARKS:
+            return "(numbered on the screenshot)"
+        return "(YOLO/OCR)"
+
+    def format_targets(self, elements, marks=None, screen_height: int = 0) -> str:
+        """The element list for the prompt, in whichever form the mode calls for."""
+        if self.grounding == GROUNDING_MARKS:
+            from ronin.agent.perception import marks as marks_module
+
+            return marks_module.describe(marks or [], screen_height)
+        return self._format_elements(elements)
+
     def _format_elements(self, elements) -> str:
+        if not elements:
+            return "None detected."
         elements = self._deduplicate(elements)
         elements = sorted(
             elements,

@@ -1,7 +1,7 @@
 from enum import Enum
-from typing import Any, Literal, Annotated
+from typing import Any, Literal, Annotated, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, create_model, model_validator
 
 
 # --- Basic Building Blocks ---
@@ -35,6 +35,7 @@ class ActionType(str, Enum):
     CAPABILITY = "capability"
     CLEAR = "clear"
     WAIT = "wait"
+    TARGET_NOT_LISTED = "target_not_listed"
 
 
 class CapabilityType(str, Enum):
@@ -150,6 +151,21 @@ class CapabilityAction(BaseModel):
     reason: str = Field(..., description="How the capability control helps achieve the test goal.")
 
 
+class TargetNotListedAction(BaseModel):
+    """Says the target is not among the numbered elements, rather than guessing.
+
+    For when the element a step needs is absent from the numbered targets.
+    Never executed: the step stops and the screen is recorded, so a detection
+    gap becomes a counted event instead of a tap into empty space.
+    """
+
+    type: Literal[ActionType.TARGET_NOT_LISTED] = ActionType.TARGET_NOT_LISTED
+    description: str = Field(
+        ..., description="What the target looks like and roughly where it is."
+    )
+    reason: str = Field(..., description="What you were trying to achieve.")
+
+
 class WaitAction(BaseModel):
     """Waits before the next observation so transient rendering can finish."""
 
@@ -158,6 +174,48 @@ class WaitAction(BaseModel):
         default=1.0, description="Seconds to wait before looking at the screen again."
     )
     reason: str = Field(..., description="What the screen is expected to finish doing.")
+
+
+def _marks_variant(model, name: str):
+    """The same action with coordinates removed and `mark` required.
+
+    Marks mode is enforced by the schema rather than by prose plus a check
+    afterwards. An optional field is one the model may omit — and it does,
+    intermittently, which turns every omission into a wasted step. A field it
+    cannot omit and a field that does not exist leave nothing to get wrong.
+    """
+    fields = {
+        field_name: (info.annotation, info)
+        for field_name, info in model.model_fields.items()
+        if field_name != "coordinates"
+    }
+    fields["mark"] = (
+        int,
+        Field(..., description="Number of the target element on the screenshot."),
+    )
+    variant = create_model(name, **fields)
+    # Resolution turns the number back into this, once we know where it points.
+    variant.coordinate_form = model
+    return variant
+
+
+TypeMarkAction = _marks_variant(TypeAction, "TypeMarkAction")
+TapMarkAction = _marks_variant(TapAction, "TapMarkAction")
+ClearMarkAction = _marks_variant(ClearAction, "ClearMarkAction")
+DoubleTapMarkAction = _marks_variant(DoubleTapAction, "DoubleTapMarkAction")
+LongPressMarkAction = _marks_variant(LongPressAction, "LongPressMarkAction")
+
+
+# Actions that touch a specific place, and so need a target resolved first.
+TARGETED_ACTIONS = frozenset(
+    {
+        ActionType.TAP,
+        ActionType.TYPE,
+        ActionType.CLEAR,
+        ActionType.DOUBLE_TAP,
+        ActionType.LONG_PRESS,
+    }
+)
 
 
 # --- The Union of All Actions ---
@@ -171,8 +229,26 @@ Action = Annotated[
     | SwipeAction
     | CapabilityAction
     | ClearAction
-    | WaitAction,
+    | WaitAction
+    | TargetNotListedAction,
     Field(discriminator="type")
+]
+
+
+# The same vocabulary, but targets are named by number only.
+MarksAction = Annotated[
+    TypeMarkAction
+    | TapMarkAction
+    | DoubleTapMarkAction
+    | LongPressMarkAction
+    | ClearMarkAction
+    | DragAndDropAction
+    | KeyEventAction
+    | SwipeAction
+    | CapabilityAction
+    | WaitAction
+    | TargetNotListedAction,
+    Field(discriminator="type"),
 ]
 
 

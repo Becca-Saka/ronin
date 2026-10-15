@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from ronin.agent.device.platform import Platform
+from ronin.agent.device_planner import GROUNDING_COORDINATES, GROUNDING_MARKS
 from ronin.app_discovery import find_journey_files, resolve_app_path
 from ronin.config import Config, load_config
 from .journey_env import resolve, substitute
@@ -46,6 +47,14 @@ class RoninCLI:
         parser.add_argument("--fast-model", help="Cheaper/faster LiteLLM model for ReAct step planning")
         parser.add_argument("--use-multimodal-vision", action="store_true", default=None, help="Toggle LLM coordinate overrides")
         parser.add_argument("--headless", action="store_true", default=None, help="Run android emulator headlessly")
+        parser.add_argument(
+            "--grounding",
+            choices=[GROUNDING_COORDINATES, GROUNDING_MARKS],
+            help="How the planner names a target: 'coordinates' (default) or "
+            "'marks', where every detected element is numbered on the screenshot "
+            "and the planner selects a number, which Ronin validates against the "
+            "detected set before anything is executed",
+        )
         parser.add_argument(
             "--replay",
             action="store_true",
@@ -233,6 +242,7 @@ class RoninCLI:
             fast_model=setting("fast_model", args.fast_model),
             record_session=record_val,
             replay=bool(args.replay),
+            grounding=setting("grounding", args.grounding) or GROUNDING_COORDINATES,
         )
         
         logger.info("==================================================")

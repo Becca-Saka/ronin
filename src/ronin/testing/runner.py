@@ -7,6 +7,7 @@ from ronin.agent.trail import SessionTrail
 from ronin.agent.device.device_session import DeviceSession
 from ronin.agent.device.platform import Platform
 from ronin.agent.perception.perception import ScreenPerception
+from ronin.agent.device_planner import GROUNDING_COORDINATES
 from ronin.agent.replay import ReplayLedger
 from .coverage import unevidenced_security_rules
 from .generator import ScenarioGenerator
@@ -68,7 +69,9 @@ class RoninTestRunner:
         headless: bool = True,
         fast_model: str = None,
         record_session: bool = True,
+        grounding: str = GROUNDING_COORDINATES,
     ):
+        self.grounding = grounding
         self.platform = platform
         self.device_name = device_name
         self.app_path = app_path
@@ -106,6 +109,7 @@ class RoninTestRunner:
             headless=self.headless,
             fast_model=self.fast_model,
             replay_ledger=ReplayLedger() if self.replay else None,
+            grounding=self.grounding,
         )
 
         usage_tracker = LLMUsageTracker(output_dir=session.telemetry_dir)

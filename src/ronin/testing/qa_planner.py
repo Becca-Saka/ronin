@@ -15,7 +15,13 @@ from typing import List, Optional
 
 from pydantic import Field, model_validator
 
-from ronin.agent.device_planner import DevicePlanner, DeviceStepResponse
+from ronin.agent.device_planner import (
+    GROUNDING_COORDINATES,
+    GROUNDING_MARKS,
+    DevicePlanner,
+    DeviceStepResponse,
+    MarksDeviceAction,
+)
 from ronin.llm.llm_client import LLMClient
 from ronin.llm.messages import MultiPartMessage
 from ronin.testing.models import QAIssue, RuleVerification
@@ -84,6 +90,14 @@ class QAStepResponse(DeviceStepResponse):
         return normalized
 
 
+class MarksQAStepResponse(QAStepResponse):
+    """The QA step response used in marks mode, where targets have no coordinates."""
+
+    action: MarksDeviceAction = Field(
+        ..., description="The single next action, naming its target by number."
+    )
+
+
 class QAPlanner(DevicePlanner):
     """
     Planning + QA audit in one LLM call.
@@ -97,14 +111,21 @@ class QAPlanner(DevicePlanner):
         test_case,
         security_rules: List[str] = None,
         scrubber=None,
+        grounding: str = GROUNDING_COORDINATES,
     ):
-        super().__init__(llm_client, use_multimodal_vision)
+        super().__init__(llm_client, use_multimodal_vision, grounding)
         self._test_case = test_case
         from ronin.utils.secrets import SecretScrubber
 
         # Shared with the device agent so a value declared once is masked everywhere.
         self._scrubber = scrubber or SecretScrubber()
         self._security_rules = security_rules or []
+
+    def step_response_model(self):
+        """The QA schema the model answers in, matched to the grounding mode."""
+        if self.grounding == GROUNDING_MARKS:
+            return MarksQAStepResponse
+        return QAStepResponse
 
     def plan_step(
         self,
@@ -117,6 +138,8 @@ class QAPlanner(DevicePlanner):
         current_image_bytes: bytes = b"",
         visual_history: List[bytes] = None,
         keyboard_open: Optional[bool] = None,
+        marks: Optional[list] = None,
+        screen_height: int = 0,
     ) -> QAStepResponse:
         from ronin.utils.redactor import redact_elements, redact_text
 
@@ -136,6 +159,8 @@ class QAPlanner(DevicePlanner):
             drift_warning=drift_warning,
             loop_nudge=loop_nudge,
             keyboard_open=keyboard_open,
+            marks=marks,
+            screen_height=screen_height,
         )
 
         message = MultiPartMessage()
@@ -149,7 +174,9 @@ class QAPlanner(DevicePlanner):
         message.add_text(prompt)
 
         logger.info("Querying QAPlanner for next step with QA auditing...")
-        response: QAStepResponse = self.llm.generate_response([message], QAStepResponse)
+        response: QAStepResponse = self.llm.generate_response(
+            [message], self.step_response_model()
+        )
 
         def clean(text):
             return self._scrubber.scrub(redact_text(text))
@@ -175,6 +202,8 @@ class QAPlanner(DevicePlanner):
         drift_warning: Optional[str],
         loop_nudge: Optional[str],
         keyboard_open: Optional[bool] = None,
+        marks: Optional[list] = None,
+        screen_height: int = 0,
     ) -> str:
         expected_outcomes = self._test_case.expected_outcomes or []
         security_rules = self._security_rules
@@ -193,8 +222,8 @@ Complete the full user journey from the beginning — do not assume any state or
 ### Custom Security Rules to Enforce
 {chr(10).join(f"- [security:{index}] {r}" for index, r in enumerate(security_rules)) if security_rules else "None specified."}
 
-### Current UI Elements Detected (YOLO/OCR)
-{self._format_elements(gui_elements) if gui_elements else "None detected."}
+### Current UI Elements Detected {self._target_heading()}
+{self.format_targets(gui_elements, marks, screen_height)}
 {"" if keyboard_open is None else chr(10) + "### Keyboard State" + chr(10) + ("VISIBLE — the soft keyboard is currently displayed. Elements in the lower ~40% of the screen may be keyboard keys, not app UI." if keyboard_open else "HIDDEN — the soft keyboard is not visible. All detected elements are app UI.")}
 
 ### Action History (with system-observed outcomes)

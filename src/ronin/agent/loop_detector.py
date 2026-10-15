@@ -91,15 +91,24 @@ class RollingLoopDetector:
 
         t = action.type.value if hasattr(action.type, "value") else str(action.type)
 
+        # A target named by number has no point until it is resolved, and an
+        # unresolvable one never gets there — repeats of it still have to be
+        # counted, so bucket by the number instead.
+        coordinates = getattr(action, "coordinates", None)
+        if coordinates is None:
+            spot = f"mark:{getattr(action, 'mark', None)}"
+        else:
+            spot = f"{coordinates.x // 40}:{coordinates.y // 40}"
+
         if t == ActionType.TYPE.value:
-            key = f"type:{action.coordinates.x // 40}:{action.coordinates.y // 40}"
+            key = f"type:{spot}"
         elif t in (
             ActionType.TAP.value,
             ActionType.DOUBLE_TAP.value,
             ActionType.LONG_PRESS.value,
             ActionType.CLEAR.value,
         ):
-            key = f"{t}:{action.coordinates.x // 40}:{action.coordinates.y // 40}"
+            key = f"{t}:{spot}"
         elif t == ActionType.KEY_EVENT.value:
             key = f"key:{action.key}"
         elif t == ActionType.SWIPE.value:

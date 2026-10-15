@@ -39,7 +39,9 @@ class KeyboardPlanningTests(unittest.TestCase):
         current_field = _element(60, 816, 1014, 966, "Email Address")
         snapshot = SimpleNamespace(
             gui_elements=[current_field],
+            marks=[],
             raw_img_bytes=b"image",
+            planner_img_bytes=b"image",
         )
         context = _RunContext(
             history=AgentHistory(),

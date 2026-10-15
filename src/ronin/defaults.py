@@ -34,3 +34,9 @@ LAUNCH_STABLE_READINGS = 2
 # How long a screen that never stops moving still counts as launched.
 LAUNCH_CONTENT_GRACE = 2.0
 BLANK_SCREEN_STDDEV = 2.0
+
+# A model call takes seconds, so the target is re-checked just before acting.
+# Deliberately above perception's dirty threshold: re-reading an element is
+# cheap, throwing away a plan is not, so only material change should count.
+STALE_TARGET_MAE = 12.0
+STALE_TARGET_PATCH = 120
