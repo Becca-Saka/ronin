@@ -8,9 +8,11 @@ real, only the deliberation is skipped.
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 from ronin.agent.actuation.actions import Action, ActionType, TypeAction
+from ronin.agent.actuation.orchestrator import ActionOrchestrator
+from ronin.agent.history import ActionEntry, ActionResult
 
 logger = logging.getLogger(__name__)
 
@@ -125,3 +127,72 @@ def is_replayable(step: ReplayStep, goal_text: str) -> bool:
 
     label = (step.target_label or "").strip().lower()
     return bool(label) and label in goal
+
+
+def target_label(action: Action, elements) -> str:
+    """The visible text of the element an action targets, if it has one."""
+    coordinates = getattr(action, "coordinates", None)
+    if coordinates is None or not elements:
+        return ""
+    for element in elements:
+        box = element.bounding_box
+        if (
+            box.x_min <= coordinates.x <= box.x_max
+            and box.y_min <= coordinates.y <= box.y_max
+            and (element.text or "").strip()
+        ):
+            return element.text.strip()
+    return ""
+
+
+def replay_known_path(
+    ledger: Optional[ReplayLedger],
+    device_control,
+    goal,
+    history,
+    quick_phash: Callable[[object], Optional[str]],
+    settle: Callable[[object], Optional[str]],
+    scrubber=None,
+) -> int:
+    """Re-executes transitions already worked out, without consulting the planner.
+
+    Each replayed action is verified against the screen it produced before; the
+    first disagreement hands control back to planning, so a changed app costs
+    one wasted tap rather than a wrong result.
+    """
+    if not ledger or not len(ledger):
+        return 0
+
+    goal_text = "\n".join(goal) if isinstance(goal, list) else str(goal)
+    replayed = 0
+
+    while replayed < MAX_REPLAY_ACTIONS:
+        step = ledger.lookup(quick_phash(device_control))
+        if step is None:
+            break
+        if not is_replayable(step, goal_text):
+            logger.info("Replay stops here: %s is this scenario's own input.", step.description)
+            break
+
+        try:
+            ActionOrchestrator(device_control, scrubber).execute(step.action)
+        except Exception as exc:
+            logger.info("Replay stopped — %s failed: %s", step.description, exc)
+            break
+
+        if not ledger.leads_to(step, settle(device_control)):
+            logger.info("Replay stopped — %s did not lead where it used to.", step.description)
+            break
+
+        replayed += 1
+        history.append(
+            ActionEntry(
+                step_num=0,
+                action_desc=f"{step.description} (replayed)",
+                result=ActionResult(success=True, observation="Replayed a known transition"),
+            )
+        )
+
+    if replayed:
+        logger.info("Replayed %d known step(s) before planning.", replayed)
+    return replayed

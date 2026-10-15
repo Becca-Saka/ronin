@@ -24,3 +24,13 @@ SETTLE_POLL_INTERVAL = 0.35
 SETTLE_STABLE_READINGS = 2
 FOCUS_POLL_INTERVAL = 0.1
 FOCUS_POLL_TIMEOUT = 1.5
+
+# Launching is over once the screen has something on it and has stopped
+# changing — an empty body means nothing is drawn yet, an unstable one means a
+# splash is still giving way to the first real screen.
+LAUNCH_PAINT_TIMEOUT = 15.0
+LAUNCH_POLL_INTERVAL = 0.3
+LAUNCH_STABLE_READINGS = 2
+# How long a screen that never stops moving still counts as launched.
+LAUNCH_CONTENT_GRACE = 2.0
+BLANK_SCREEN_STDDEV = 2.0

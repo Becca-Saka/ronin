@@ -16,7 +16,6 @@ from PIL import Image
 
 from ronin.agent.actuation.actions import ActionType
 from ronin.agent.actuation.orchestrator import ActionOrchestrator
-from ronin.agent.device.adb_control import AdbControl
 from ronin.agent.device.device_session import DeviceSession
 from ronin.agent.device.platform import Platform
 from ronin.agent.device_planner import (
@@ -25,9 +24,10 @@ from ronin.agent.device_planner import (
     DoneAction,
 )
 from ronin.agent.history import ActionEntry, ActionResult, AgentHistory
+from ronin.agent.launch import restart_app
 from ronin.defaults import SETTLE_POLL_INTERVAL, SETTLE_STABLE_READINGS
 from ronin.agent.loop_detector import RollingLoopDetector
-from ronin.agent.replay import MAX_REPLAY_ACTIONS, ReplayLedger, is_replayable
+from ronin.agent.replay import ReplayLedger, replay_known_path, target_label
 from ronin.utils.secrets import SecretScrubber
 from ronin.agent.perception.media_manager import MediaManager
 from ronin.agent.perception.perception import ScreenPerception
@@ -38,7 +38,7 @@ from ronin.agent.perception.scan_dump import (
 )
 from ronin.agent.trail import SessionTrail
 from ronin.llm.llm_client import LLMClient
-from ronin.utils.redactor import redact_elements, redact_text
+from ronin.utils.redactor import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +149,7 @@ class DeviceAgent:
                 self.fast_llm, use_multimodal_vision
             )
 
-        self.media_manager = MediaManager()
+        self.media_manager = MediaManager(self.scrubber)
 
     def run(
         self,
@@ -171,17 +171,23 @@ class DeviceAgent:
         """
         planner = planner_override or self._default_fast_planner
         session_dir.mkdir(parents=True, exist_ok=True)
-        self.scrubber.learn_from_instructions(goal)
         ctx = _RunContext(
             history=AgentHistory(),
             loop_detector=RollingLoopDetector(),
             screen_height=getattr(device_control, "screen_height", None),
         )
 
-        self._restart_app(device_control)
-        self._replay_known_path(device_control, goal, ctx)
-
         try:
+            self._restart_app(device_control)
+            replay_known_path(
+                ledger=self.replay_ledger,
+                device_control=device_control,
+                goal=goal,
+                history=ctx.history,
+                quick_phash=self._quick_phash,
+                settle=self._settle,
+                scrubber=self.scrubber,
+            )
             self._step_limit = max_steps or self.max_steps
             for step in range(self._step_limit):
                 result = self._run_step(
@@ -201,11 +207,14 @@ class DeviceAgent:
             return self._step_limit_result(ctx, session_trail)
 
         except Exception as exc:
-            logger.exception("Exception during device agent run: %s", exc)
+            safe_error = self.scrubber.scrub(redact_text(str(exc)))
+            logger.error(
+                "Device agent run failed (%s): %s", type(exc).__name__, safe_error
+            )
             return DeviceRunResult(
                 status="exception",
                 steps_executed=ctx.steps_executed,
-                failure_reason=redact_text(f"Execution exception: {str(exc)}"),
+                failure_reason=f"Execution exception: {safe_error}",
                 history=ctx.history,
             )
 
@@ -316,7 +325,6 @@ class DeviceAgent:
         prev_phash: Optional[str],
     ) -> _PerceptionSnapshot:
         gui_elements, raw_img, annotated_img = perception.perceive()
-        gui_elements = redact_elements(gui_elements)
         current_phash = (
             str(perception.current_hash) if perception.current_hash else None
         )
@@ -354,8 +362,10 @@ class DeviceAgent:
         raw_path = session_dir / f"{base}_raw.png"
         scan_path = session_dir / f"{base}_scan.json"
 
-        snapshot.annotated_img.save(annotated_path)
-        raw_path.write_bytes(snapshot.raw_img_bytes)
+        self.media_manager.save_redacted_pair(
+            snapshot.annotated_img, snapshot.raw_img_bytes,
+            snapshot.gui_elements, annotated_path, raw_path,
+        )
 
         if snapshot.scan_info is None:
             return
@@ -371,6 +381,7 @@ class DeviceAgent:
                 "scan": scan_path.name,
             },
             prev_phash=snapshot.prev_phash,
+            scrubber=self.scrubber,
         )
         write_screen_scan_dump(scan_path, record)
         logger.debug("Perception scan dump saved to %s", scan_path)
@@ -515,10 +526,8 @@ class DeviceAgent:
         action,
     ) -> None:
         click_path = session_dir / f"action_step{step + 1}_{snapshot.timestamp}.png"
-        self.media_manager.save_action_annotation(
-            annotated_img=snapshot.annotated_img,
-            action_plan=action,
-            filepath=click_path,
+        self.media_manager.save_redacted_action_annotation(
+            snapshot.annotated_img, snapshot.gui_elements, action, click_path
         )
 
     def _execute_and_record(
@@ -552,7 +561,7 @@ class DeviceAgent:
                 action,
                 post_phash,
                 action_desc,
-                self._target_label(action, snapshot.gui_elements),
+                target_label(action, snapshot.gui_elements),
             )
         ctx.history.append(
             ActionEntry(
@@ -660,114 +669,7 @@ class DeviceAgent:
         return None
 
     def _restart_app(self, device_control) -> None:
-        try:
-            if not hasattr(device_control, "package_id"):
-                return
-            package_id = device_control.package_id
-            logger.info("Restarting application: %s", package_id)
-
-            if device_control.platform == Platform.ANDROID:
-                adb_runner = getattr(device_control, "adb_control", None) or AdbControl
-                activity = None
-                try:
-                    _, activity = adb_runner.get_apk_info(device_control.app_path)
-                except Exception as apk_err:
-                    logger.warning("Failed to get APK activity: %s", apk_err)
-
-                if activity:
-                    serial = getattr(
-                        device_control, "serial", None
-                    ) or adb_runner.resolve_emulator_serial(device_control.device_name)
-                    cmd = ["adb"]
-                    if serial:
-                        cmd.extend(["-s", serial])
-                    cmd.extend(
-                        [
-                            "shell",
-                            "am",
-                            "start",
-                            "-n",
-                            f"{package_id}/{activity}",
-                            "--activity-clear-task",
-                        ]
-                    )
-                    try:
-                        adb_runner.run_adb_command(cmd)
-                        time.sleep(2.5)
-                        return
-                    except Exception as launch_err:
-                        logger.warning(
-                            "ADB clear-task failed: %s. Falling back.", launch_err
-                        )
-
-            device_control.driver.terminate_app(package_id)
-            time.sleep(1.5)
-            device_control.driver.activate_app(package_id)
-            time.sleep(2.5)
-        except Exception as exc:
-            logger.warning("Failed to restart app: %s", exc)
-
-    @staticmethod
-    def _target_label(action, elements) -> str:
-        """The visible text of the element an action targets, if it has one."""
-        coordinates = getattr(action, "coordinates", None)
-        if coordinates is None or not elements:
-            return ""
-        for element in elements:
-            box = element.bounding_box
-            if (
-                box.x_min <= coordinates.x <= box.x_max
-                and box.y_min <= coordinates.y <= box.y_max
-                and (element.text or "").strip()
-            ):
-                return element.text.strip()
-        return ""
-
-    def _replay_known_path(self, device_control, goal, ctx: _RunContext) -> None:
-        """Re-executes transitions already worked out, without consulting the planner.
-
-        Each replayed action is verified against the screen it produced before;
-        the first disagreement hands control back to planning, so a changed app
-        costs one wasted tap rather than a wrong result.
-        """
-        ledger = self.replay_ledger
-        if not ledger or not len(ledger):
-            return
-
-        goal_text = "\n".join(goal) if isinstance(goal, list) else str(goal)
-        replayed = 0
-
-        while replayed < MAX_REPLAY_ACTIONS:
-            phash = self._quick_phash(device_control)
-            step = ledger.lookup(phash)
-            if step is None:
-                break
-            if not is_replayable(step, goal_text):
-                logger.info("Replay stops here: %s is this scenario's own input.", step.description)
-                break
-
-            try:
-                ActionOrchestrator(device_control, self.scrubber).execute(step.action)
-            except Exception as exc:
-                logger.info("Replay stopped — %s failed: %s", step.description, exc)
-                break
-
-            reached = self._settle(device_control)
-            if not ledger.leads_to(step, reached):
-                logger.info("Replay stopped — %s did not lead where it used to.", step.description)
-                break
-
-            replayed += 1
-            ctx.history.append(
-                ActionEntry(
-                    step_num=0,
-                    action_desc=f"{step.description} (replayed)",
-                    result=ActionResult(success=True, observation="Replayed a known transition"),
-                )
-            )
-
-        if replayed:
-            logger.info("Replayed %d known step(s) before planning.", replayed)
+        restart_app(device_control)
 
     def _settle(self, device_control) -> Optional[str]:
         """Waits for the screen to stop changing, up to settle_time.

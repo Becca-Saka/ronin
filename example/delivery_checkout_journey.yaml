@@ -1,0 +1,43 @@
+id: delivery_checkout_01
+name: Food Delivery Card Checkout Journey
+device:
+  platform: android
+  headless: false
+env:
+  email: qa.tester@example.com
+  address: 47 Shinjuku Street, Testing City
+  password:
+    value: secret-password123
+    secret: true
+  card_number:
+    value: "4111222233334444"
+    secret: true
+  cvv:
+    value: "321"
+    secret: true
+journey: >
+  A user opens the app and lands on the sign-in screen.
+  They type {{email}} in the Email Address field,
+  type {{password}} in the Password field,
+  then tap the Login button.
+  The app shows the location access screen, where they tap the
+  Grant Location Permission button.
+  They land on the home screen, which lists restaurants sorted nearest first.
+  They tap the Menu button on the Burger Palace card.
+  On the Burger Palace menu they tap the Add button for Classic Burger,
+  then tap the Cart floating action button at the bottom right.
+  On the My Cart screen they check the subtotal, then tap the
+  Proceed to Checkout button.
+  On the Select Payment screen they choose the Credit / Debit Card option
+  and tap the Continue button.
+  On the Checkout Details screen they type
+  {{address}} in the delivery address field,
+  type {{card_number}} in the Card Number field,
+  type {{cvv}} in the CVV field,
+  then tap the Place Order button.
+  The app opens the order status screen, which confirms the order was placed
+  and shows the current status as CONFIRMING.
+security_rules:
+  - The password must stay masked on the sign-in screen and must never appear in plain text on any later screen.
+  - The full card number must never be displayed in plain text; only the last four digits may be visible.
+  - The CVV must never be displayed in plain text on any screen.

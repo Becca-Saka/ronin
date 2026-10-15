@@ -1,5 +1,5 @@
 import logging
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List
 from ronin.llm.llm_client import LLMClient
 from ronin.llm.messages import TextMessage
@@ -7,8 +7,15 @@ from .models import UserJourney, GeneratedTestCase
 
 logger = logging.getLogger(__name__)
 
+GENERATION_ATTEMPTS = 3
+MAX_GENERATED_SCENARIOS = 10
+
 class GeneratedTestCasesList(BaseModel):
-    scenarios: List[GeneratedTestCase]
+    # min_length reaches the model as minItems, so an empty suite is rejected
+    # by the schema it was given rather than only after it has been paid for.
+    scenarios: List[GeneratedTestCase] = Field(
+        ..., min_length=1, max_length=MAX_GENERATED_SCENARIOS
+    )
 
 class ScenarioGenerator:
     """Uses LLM to decompose a UserJourney description into diverse testing scenarios."""
@@ -34,9 +41,18 @@ Generate a list of scenarios covering:
 2. **edge_case**: Alternative execution flows, error handling, or empty states.
 3. **boundary_test**: Inputting extreme, invalid, or very long text values to test limits.
 4. **destructive_monkey**: Clicking elements out of order, double taps, or rapid actions.
-5. **security_compliance**: Masked inputs, API token check instructions, and validating custom security rules.
-6. **accessibility_audit**: Scans for clear visual indicators, contrast, or unlabeled widgets.
-7. **performance_bottleneck**: Spotting hangs, spinner durations, or unresponsive screens.
+5. **security_compliance**: Visible masked inputs and custom rules that can be verified from screenshots and detected UI text.
+6. **accessibility_audit**: Visible clipping, touch-target clarity, and text alternatives present in detected UI text.
+7. **performance_bottleneck**: Visible hangs, long-lived spinners, or unresponsive screens.
+
+Ronin can observe screenshots, detected UI text, action outcomes, and elapsed
+scenario time. It cannot inspect network traffic, HTTP headers, logs from the
+app, semantic accessibility trees, screen readers, focus order, or measured
+contrast ratios. Never generate an instruction or expected outcome that needs
+one of those unavailable evidence sources.
+
+Generate at most {MAX_GENERATED_SCENARIOS} scenarios. Prefer a small suite with
+distinct evidence over several near-duplicates that repeat the full journey.
 
 ### How Scenarios Are Executed:
 Each scenario runs on its own, starting from a **freshly launched app** — the
@@ -67,7 +83,7 @@ For each scenario, define:
         message = TextMessage(content=prompt)
 
         last_error = None
-        for attempt in range(2):
+        for attempt in range(GENERATION_ATTEMPTS):
             try:
                 result: GeneratedTestCasesList = self.llm.generate_response(
                     messages=[message],
@@ -77,7 +93,14 @@ For each scenario, define:
                 return result.scenarios
             except Exception as e:
                 last_error = e
-                logger.warning("Scenario generation attempt %d/2 failed: %s", attempt + 1, e)
+                logger.warning(
+                    "Scenario generation attempt %d/%d failed: %s",
+                    attempt + 1,
+                    GENERATION_ATTEMPTS,
+                    e,
+                )
 
-        logger.error("Scenario generation failed after 2 attempts: %s", last_error)
+        logger.error(
+            "Scenario generation failed after %d attempts: %s", GENERATION_ATTEMPTS, last_error
+        )
         raise RuntimeError(f"Scenario generation failed — aborting session: {last_error}") from last_error

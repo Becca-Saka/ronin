@@ -37,15 +37,22 @@ class ScanInfo:
     thresholds: dict[str, float | int] = field(default_factory=dict)
 
 
-def element_to_dict(el: GUIElement, index: int) -> dict[str, Any]:
+def element_to_dict(el: GUIElement, index: int, scrubber=None) -> dict[str, Any]:
+    """Serializes one element, masking declared secrets in its detected text.
+
+    A scan dump is a file, so a password the app happens to be displaying would
+    otherwise be written out verbatim. The planner reads the element itself,
+    never this.
+    """
     cx = (el.bounding_box.x_min + el.bounding_box.x_max) // 2
     cy = (el.bounding_box.y_min + el.bounding_box.y_max) // 2
+    text = el.text or ""
     return {
         "index": index,
         "element": el.element,
         "type": el.type,
         "confidence": round(el.confidence, 4),
-        "text": el.text or "",
+        "text": scrubber.scrub(text) if scrubber else text,
         "bounding_box": el.bounding_box.model_dump(),
         "center": {"x": cx, "y": cy},
     }
@@ -59,6 +66,7 @@ def build_screen_scan_record(
     gui_elements: list[GUIElement],
     screenshot_paths: dict[str, str],
     prev_phash: Optional[str] = None,
+    scrubber=None,
 ) -> dict[str, Any]:
     return {
         "step": step,
@@ -84,7 +92,7 @@ def build_screen_scan_record(
             "thresholds": scan_info.thresholds,
         },
         "gui_elements": [
-            element_to_dict(el, idx) for idx, el in enumerate(gui_elements)
+            element_to_dict(el, idx, scrubber) for idx, el in enumerate(gui_elements)
         ],
     }
 

@@ -7,6 +7,12 @@ from ronin.agent.device.capability_controller import CapabilityController
 
 logger = logging.getLogger(__name__)
 
+MIN_WAIT_SECONDS = 0.1
+MAX_WAIT_SECONDS = 10.0
+MIN_LONG_PRESS_SECONDS = 0.1
+MAX_LONG_PRESS_SECONDS = 10.0
+ALLOWED_KEYCODES = {3, 4, 66, 67}
+
 
 class ActionOrchestrator:
     def __init__(self, device_control: DeviceControl, scrubber=None):
@@ -27,8 +33,45 @@ class ActionOrchestrator:
         reason = getattr(action, "reason", "")
         return self._scrubber.scrub(reason) if self._scrubber else reason
 
+    def _validate_point(self, x: int, y: int, label: str) -> None:
+        width = getattr(self.device_control, "screen_width", None)
+        height = getattr(self.device_control, "screen_height", None)
+        if x < 0 or y < 0:
+            raise ValueError(f"{label} coordinates must be non-negative: ({x}, {y})")
+        if width is not None and x >= width:
+            raise ValueError(f"{label} x coordinate {x} is outside screen width {width}")
+        if height is not None and y >= height:
+            raise ValueError(f"{label} y coordinate {y} is outside screen height {height}")
+
+    def _validate(self, action: Action) -> None:
+        coordinates = getattr(action, "coordinates", None)
+        if coordinates is not None:
+            self._validate_point(coordinates.x, coordinates.y, action.type.value)
+        if action.type == ActionType.DRAG_AND_DROP:
+            self._validate_point(action.source_x, action.source_y, "drag source")
+            self._validate_point(
+                action.destination_x, action.destination_y, "drag destination"
+            )
+        elif action.type == ActionType.SWIPE:
+            self._validate_point(action.start_x, action.start_y, "swipe start")
+            self._validate_point(action.end_x, action.end_y, "swipe end")
+        elif action.type == ActionType.LONG_PRESS and not (
+            MIN_LONG_PRESS_SECONDS <= action.duration <= MAX_LONG_PRESS_SECONDS
+        ):
+            raise ValueError(
+                f"long_press duration must be between {MIN_LONG_PRESS_SECONDS} "
+                f"and {MAX_LONG_PRESS_SECONDS} seconds"
+            )
+        elif action.type == ActionType.KEY_EVENT and action.key not in ALLOWED_KEYCODES:
+            raise ValueError(f"Unsupported key code: {action.key}")
+
     def _run_action(self, action: Action) -> None:
+        self._validate(action)
         match action.type:
+            case ActionType.WAIT:
+                seconds = min(max(action.duration, MIN_WAIT_SECONDS), MAX_WAIT_SECONDS)
+                logger.info("Waiting %.1fs — %s", seconds, self._reason(action))
+                time.sleep(seconds)
             case ActionType.TYPE:
                 coordinates = action.coordinates
                 logger.info(
@@ -103,4 +146,6 @@ class ActionOrchestrator:
                     action.type, action.capability, self._reason(action),
                 )
                 self.capability_controller.execute(action.capability, action.parameters)
+            case _:
+                raise ValueError(f"Unsupported action type: {action.type}")
         time.sleep(1.5)

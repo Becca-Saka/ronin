@@ -1,0 +1,215 @@
+"""Human-readable and CI report serialization for journey runs."""
+
+import logging
+import re
+import time
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+from ronin.testing.models import JourneyReport, ScenarioReport
+from ronin.utils.secrets import SecretScrubber
+
+logger = logging.getLogger(__name__)
+
+
+def safe_artifact_stem(value: str) -> str:
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._")
+    return stem or "journey"
+
+
+def _scrub(scrubber: SecretScrubber | None, value: str | None) -> str:
+    return scrubber.scrub(value) if scrubber else value or ""
+
+
+def _write_atomic(path: Path, content: str | bytes) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    if isinstance(content, bytes):
+        temporary.write_bytes(content)
+    else:
+        temporary.write_text(content, encoding="utf-8")
+    temporary.replace(path)
+
+
+def save_markdown_report(
+    report: JourneyReport,
+    output_dir: Path,
+    session=None,
+    scrubber: SecretScrubber | None = None,
+    label: str | None = None,
+) -> Path:
+    stamp = label or time.strftime("%Y%m%d_%H%M%S")
+    filepath = output_dir / (
+        f"report_{safe_artifact_stem(report.journey_id)}_{stamp}.md"
+    )
+    report_status = {
+        "PASSED": "🟢 PASSED",
+        "FAILED": "🔴 FAILED",
+        "RUNNING": "🟠 RUNNING (checkpoint)",
+    }[report.status]
+    lines = [
+        f"# Ronin QA Test Report: {_scrub(scrubber, report.journey_name)}",
+        "",
+        f"* **Journey ID**: `{_scrub(scrubber, report.journey_id)}`",
+        f"* **Status**: {report_status}",
+        f"* **Scenarios Run**: {len(report.scenarios)} "
+        f"({report.passed_count} passed, {report.failed_count} unsuccessful, "
+        f"{report.skipped_count} skipped)",
+        f"* **Duration**: {report.total_duration}s",
+    ]
+    if session:
+        lines.extend(
+            [
+                f"* **Execution Log**: `{session.root_log_file.name}`",
+                f"* **Appium Server Log**: `{session.appium_log_path.name}`",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Journey Description",
+            _scrub(scrubber, report.description),
+            "",
+            "---",
+            "",
+        ]
+    )
+    for index, scenario in enumerate(report.scenarios, start=1):
+        _append_scenario(lines, index, scenario, scrubber)
+
+    if report.unevidenced_security_rules:
+        lines.append("")
+        lines.append("## Security Rules Not Evidenced")
+        lines.append("")
+        lines.append("No scenario reached a screen where these could be checked:")
+        for rule in report.unevidenced_security_rules:
+            lines.append(f"* ⚠️ {_scrub(scrubber, rule)}")
+
+    _write_atomic(filepath, "\n".join(lines))
+    logger.info("Markdown test report successfully written to %s", filepath)
+    return filepath
+
+
+def _append_scenario(
+    lines: list[str],
+    index: int,
+    scenario: ScenarioReport,
+    scrubber: SecretScrubber | None,
+) -> None:
+    icon = "🟢" if scenario.status == "PASSED" else "🟡" if scenario.status == "SKIPPED" else "🔴"
+    lines.extend(
+        [
+            f"## Scenario {index}: {_scrub(scrubber, scenario.scenario_name)} "
+            f"({scenario.test_id})",
+            f"* **Classification**: `{scenario.classification}`",
+            f"* **Status**: {icon} {scenario.status}",
+            f"* **Steps Executed**: {scenario.steps_executed}",
+            f"* **Duration**: {scenario.duration}s",
+            "",
+        ]
+    )
+    if scenario.failure_reason:
+        lines.append(
+            f"* ❌ **Failure Reason**: `{_scrub(scrubber, scenario.failure_reason)}`"
+        )
+    actionable = [v for v in scenario.rule_verifications if v.status != "untested"]
+    if actionable:
+        lines.append("### Verifications:")
+        for rule in actionable:
+            status = "[x] Passed" if rule.status == "passed" else "[ ] Failed"
+            screen = f" on `{_scrub(scrubber, rule.screen_name)}`" if rule.screen_name else ""
+            lines.append(
+                f"  * {status}: {_scrub(scrubber, rule.rule)}{screen} "
+                f"(Reasoning: {_scrub(scrubber, rule.reasoning)})"
+            )
+        lines.append("")
+    if scenario.detected_issues:
+        lines.append("### Detected Issues:")
+        for issue in scenario.detected_issues:
+            lines.append(
+                f"  * ⚠️ **{issue.severity.upper()} ({issue.issue_type})**: "
+                f"{_scrub(scrubber, issue.description)} on screen "
+                f"`{_scrub(scrubber, issue.current_screen)}`"
+            )
+        lines.append("")
+    lines.append("---")
+
+
+def save_junit_report(
+    report: JourneyReport,
+    output_dir: Path,
+    scrubber: SecretScrubber | None = None,
+    label: str | None = None,
+) -> Path:
+    stamp = label or time.strftime("%Y%m%d_%H%M%S")
+    filepath = output_dir / (
+        f"junit_{safe_artifact_stem(report.journey_id)}_{stamp}.xml"
+    )
+    errors = sum(s.status in ("ERROR", "ABORTED") for s in report.scenarios)
+    failures = sum(
+        s.status in ("FAILED", "UNVERIFIED", "UNSUPPORTED")
+        for s in report.scenarios
+    )
+    attributes = {
+        "tests": str(len(report.scenarios)),
+        "failures": str(failures),
+        "errors": str(errors),
+        "skipped": str(report.skipped_count),
+        "time": str(report.total_duration),
+    }
+    root = ET.Element("testsuites", {"name": "Ronin User Journeys", **attributes})
+    suite = ET.SubElement(
+        root,
+        "testsuite",
+        {
+            "name": _scrub(scrubber, report.journey_name),
+            "id": _scrub(scrubber, report.journey_id),
+            **attributes,
+        },
+    )
+    for scenario in report.scenarios:
+        _append_junit_case(suite, report, scenario, scrubber)
+
+    content = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    _write_atomic(filepath, content)
+    logger.info("JUnit XML test report successfully written to %s", filepath)
+    return filepath
+
+
+def _append_junit_case(
+    suite,
+    report: JourneyReport,
+    scenario: ScenarioReport,
+    scrubber: SecretScrubber | None,
+) -> None:
+    testcase = ET.SubElement(
+        suite,
+        "testcase",
+        {
+            "name": _scrub(scrubber, scenario.scenario_name),
+            "classname": f"{safe_artifact_stem(report.journey_id)}.{scenario.test_id}",
+            "time": str(scenario.duration),
+        },
+    )
+    message = _scrub(scrubber, scenario.failure_reason) or "Verification failed"
+    if scenario.status in ("FAILED", "UNVERIFIED", "UNSUPPORTED"):
+        element = ET.SubElement(
+            testcase,
+            "failure",
+            {"message": message, "type": f"Ronin{scenario.status.title()}"},
+        )
+        details = [
+            f"[{issue.severity.upper()}] {issue.issue_type}: "
+            f"{_scrub(scrubber, issue.description)} on "
+            f"{_scrub(scrubber, issue.current_screen)}"
+            for issue in scenario.detected_issues
+        ]
+        element.text = "\n".join(details) or message
+    elif scenario.status in ("ERROR", "ABORTED"):
+        element = ET.SubElement(
+            testcase,
+            "error",
+            {"message": message, "type": f"Ronin{scenario.status.title()}"},
+        )
+        element.text = message
+    elif scenario.status == "SKIPPED":
+        ET.SubElement(testcase, "skipped", {"message": message})

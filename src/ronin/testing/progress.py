@@ -7,11 +7,13 @@ can be read — or tailed — while the run is still going.
 
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import List
 
 from ronin.testing.models import GeneratedTestCase, ScenarioReport, UserJourney
+from ronin.utils.secrets import SecretScrubber
 
 logger = logging.getLogger(__name__)
 
@@ -20,23 +22,29 @@ class ScenarioProgress:
     """Writes the scenario plan and keeps its statuses current."""
 
     def __init__(
-        self, output_dir: Path, journey: UserJourney, scenarios: List[GeneratedTestCase]
+        self,
+        output_dir: Path,
+        journey: UserJourney,
+        scenarios: List[GeneratedTestCase],
+        scrubber: SecretScrubber | None = None,
     ):
         output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.path = output_dir / f"scenarios_{journey.id}_{timestamp}.json"
+        safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", journey.id).strip("._") or "journey"
+        self.path = output_dir / f"scenarios_{safe_id}_{timestamp}.json"
         self.journey = journey
+        self._scrubber = scrubber
         self.started_at = datetime.now()
         self.entries = {
             scenario.test_id: {
                 "position": index + 1,
                 "test_id": scenario.test_id,
-                "name": scenario.scenario_name,
+                "name": self._scrub(scenario.scenario_name),
                 "classification": scenario.classification,
                 "status": "pending",
                 "steps_planned": len(scenario.steps_instructions),
-                "steps_instructions": scenario.steps_instructions,
-                "expected_outcomes": scenario.expected_outcomes,
+                "steps_instructions": [self._scrub(value) for value in scenario.steps_instructions],
+                "expected_outcomes": [self._scrub(value) for value in scenario.expected_outcomes],
             }
             for index, scenario in enumerate(scenarios)
         }
@@ -48,13 +56,16 @@ class ScenarioProgress:
             entry["started_at"] = datetime.now().isoformat(timespec="seconds")
         self.write()
 
+    def _scrub(self, value: str | None) -> str:
+        return self._scrubber.scrub(value) if self._scrubber else value or ""
+
     def record(self, test_id: str, report: ScenarioReport) -> None:
         entry = self.entries.get(test_id)
         if entry is not None:
             entry["status"] = report.status
             entry["steps_executed"] = report.steps_executed
             entry["duration_seconds"] = round(report.duration, 1)
-            entry["failure_reason"] = report.failure_reason
+            entry["failure_reason"] = self._scrub(report.failure_reason)
             entry["issues_found"] = len(report.detected_issues or [])
             entry["finished_at"] = datetime.now().isoformat(timespec="seconds")
         self.write()
@@ -64,7 +75,7 @@ class ScenarioProgress:
         for entry in self.entries.values():
             if entry["status"] in ("pending", "running"):
                 entry["status"] = "ABORTED"
-                entry["failure_reason"] = reason
+                entry["failure_reason"] = self._scrub(reason)
                 entry["finished_at"] = datetime.now().isoformat(timespec="seconds")
         self.write()
 
@@ -75,7 +86,10 @@ class ScenarioProgress:
             counts[entry["status"]] = counts.get(entry["status"], 0) + 1
 
         payload = {
-            "journey": {"id": self.journey.id, "name": self.journey.name},
+            "journey": {
+                "id": self.journey.id,
+                "name": self._scrub(self.journey.name),
+            },
             "started_at": self.started_at.isoformat(timespec="seconds"),
             "updated_at": datetime.now().isoformat(timespec="seconds"),
             "total": len(entries),
@@ -83,6 +97,8 @@ class ScenarioProgress:
             "scenarios": entries,
         }
         try:
-            self.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+            temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            temporary.replace(self.path)
         except OSError as exc:
             logger.warning("Could not update the scenario plan at %s: %s", self.path, exc)

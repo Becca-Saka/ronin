@@ -13,7 +13,7 @@ by splitting QAPlanner into DevicePlanner + QAAuditor when needed.
 import logging
 from typing import List, Optional
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from ronin.agent.device_planner import DevicePlanner, DeviceStepResponse
 from ronin.llm.llm_client import LLMClient
@@ -53,6 +53,36 @@ class QAStepResponse(DeviceStepResponse):
         description="Detailed reason why the scenario is infeasible. None if feasible.",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_common_provider_shapes(cls, value):
+        """Normalize equivalent shapes produced despite advisory JSON schemas."""
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        verifications = normalized.get("rule_verifications")
+        if isinstance(verifications, dict):
+            normalized["rule_verifications"] = [
+                {
+                    "rule": rule,
+                    "status": status,
+                    "reasoning": "Provider returned a compact rule-status mapping.",
+                }
+                for rule, status in verifications.items()
+            ]
+        for verification in normalized.get("rule_verifications") or []:
+            if isinstance(verification, dict) and "reasoning" not in verification:
+                verification["reasoning"] = verification.pop(
+                    "details", "No reasoning supplied by the provider."
+                )
+        for issue in normalized.get("detected_issues") or []:
+            if not isinstance(issue, dict):
+                continue
+            if "description" not in issue and "issue" in issue:
+                issue["description"] = issue.pop("issue")
+            issue.setdefault("issue_type", "qa_issue")
+        return normalized
+
 
 class QAPlanner(DevicePlanner):
     """
@@ -66,15 +96,14 @@ class QAPlanner(DevicePlanner):
         use_multimodal_vision: bool,
         test_case,
         security_rules: List[str] = None,
+        scrubber=None,
     ):
         super().__init__(llm_client, use_multimodal_vision)
         self._test_case = test_case
         from ronin.utils.secrets import SecretScrubber
 
-        self._scrubber = SecretScrubber()
-        self._scrubber.learn_from_instructions(getattr(test_case, "steps_instructions", None))
-        self._scrubber.learn_from_instructions(getattr(test_case, "expected_outcomes", None))
-        self._scrubber.learn_from_instructions(security_rules)
+        # Shared with the device agent so a value declared once is masked everywhere.
+        self._scrubber = scrubber or SecretScrubber()
         self._security_rules = security_rules or []
 
     def plan_step(
@@ -147,15 +176,8 @@ class QAPlanner(DevicePlanner):
         loop_nudge: Optional[str],
         keyboard_open: Optional[bool] = None,
     ) -> str:
-        from ronin.agent.actuation.actions import CAPABILITY_SCHEMAS, CapabilityType
-
         expected_outcomes = self._test_case.expected_outcomes or []
         security_rules = self._security_rules
-
-        caps_desc = "\n".join(
-            f"   - {cap.value}: {CAPABILITY_SCHEMAS.get(cap, '{}')}"
-            for cap in CapabilityType
-        )
 
         prompt = f"""You are a closed-loop mobile E2E testing agent performing QA validation on a mobile app.
 Your task is to execute the following test scenario and verify all expected outcomes and security rules.
@@ -166,10 +188,10 @@ Complete the full user journey from the beginning — do not assume any state or
 {chr(10).join(f"- {step}" for step in goal_lines)}
 
 ### Expected Outcomes / Assertions
-{chr(10).join(f"- {o}" for o in expected_outcomes) if expected_outcomes else "None specified."}
+{chr(10).join(f"- [expected:{index}] {o}" for index, o in enumerate(expected_outcomes)) if expected_outcomes else "None specified."}
 
 ### Custom Security Rules to Enforce
-{chr(10).join(f"- {r}" for r in security_rules) if security_rules else "None specified."}
+{chr(10).join(f"- [security:{index}] {r}" for index, r in enumerate(security_rules)) if security_rules else "None specified."}
 
 ### Current UI Elements Detected (YOLO/OCR)
 {self._format_elements(gui_elements) if gui_elements else "None detected."}
@@ -193,92 +215,19 @@ Complete the full user journey from the beginning — do not assume any state or
 ### LOOP DETECTION ADVISORY
 {loop_nudge}
 """
-        prompt += f"""
+        prompt += """
 ### QA Auditing Instructions
 Inspect the visual screenshots and audit the current screen for defects:
 1. **Visual/Layout Bugs**: Scan for diagonal black-and-yellow overflow stripes, clipped text, overlapping buttons, misaligned headers, or empty image containers.
 2. **Security Vulnerabilities**: Scan for plain-text passwords, unmasked PINs, exposed auth tokens, credit card digits, or accessible admin/debug routes.
 3. **Dynamic Screen Assertions**: Generate context-specific assertions for the current layout (e.g. "Login button is visible and enabled", "Password field masks input"). Verify each as passed, failed, or untested.
-4. **Rule Verifications**: For each expected outcome, custom security rule, and dynamic assertion, determine its status on the current screen: "passed", "failed", or "untested".
+4. **Rule Verifications**: For each expected outcome and custom security rule, copy its bracketed ID into `rule_id` and determine its status: "passed", "failed", or "untested".
+   - Report what THIS screen shows. "failed" means you can see the rule broken here. A rule you have not reached yet is "untested", never "failed" — you will be asked again on every screen, and the last answer is the one that counts.
+   - Set `applicable` to false when this screen has nothing the rule could apply to, and use "untested": a card-masking rule on a screen with no card field is not evidence of anything. Never mark a rule "passed" because its subject is absent.
+   - Dynamic assertions may omit `rule_id`.
 5. **Scenario Feasibility**: A scenario starts from a freshly launched app, so the screen it targets usually needs navigating to first. If its elements are not here yet, work towards them — sign in, open the relevant section — and keep going. Mark `is_scenario_feasible = False` only when the scenario is genuinely impossible: it contradicts how the app works, or its target cannot be reached from here at all.
-
-### Allowed Action Types
-Each action must have a `type` field set to one of:
-- "tap": Tap at coordinates. Fields: `type`, `coordinates` (x, y), `reason`.
-- "type": Type text into a field. Fields: `type`, `text`, `coordinates` (x, y), `reason`.
-- "clear": Clear a text field. Fields: `type`, `coordinates` (x, y), `reason`.
-- "double_tap": Double-tap. Fields: `type`, `coordinates` (x, y), `reason`.
-- "long_press": Long press. Fields: `type`, `duration` (float seconds), `coordinates` (x, y), `reason`.
-- "drag_and_drop": Drag. Fields: `type`, `source_x`, `source_y`, `destination_x`, `destination_y`, `reason`.
-- "key_event": Trigger a key event. Fields: `type`, `key` (4=back, 3=home, 66=enter, 67=backspace), `reason`.
-- "swipe": Swipe. Fields: `type`, `start_x`, `start_y`, `end_x`, `end_y`, `reason`.
-- "capability": System-level control. Fields: `type`, `capability`, `parameters` (dict), `reason`.
-  Available capabilities:
-{caps_desc}
-- "done": Goal complete or must stop. Fields: `type`, `reason`.
-
-CRITICAL CONSTRAINTS:
-1. Action vocabulary is STRICT:
-   - Use "tap" for all touch interactions
-   - Use "type" only for text input
-   - Never use "click", "send_keys", or any alternative synonyms
-
-2. TYPE action requirements:
-   - Must include BOTH `text` and `coordinates`
-   - Coordinates MUST refer to the input field (not keyboard keys or overlays)
-
-3. REQUIRED SEQUENCE FOR TEXT INPUT:
-   Step A: tap(input_field_coordinates)
-   Step B: wait for keyboard to appear
-   Step C: type(text, same input_field_coordinates)
-
-4. KEYBOARD STATE RULE:
-   Assume keyboard is VISIBLE if:
-   - A previous "tap" targeted a text field, OR
-   - history shows a recent "type", OR
-   - UI bottom region is partially occluded in detection
-
-5. KEYBOARD BLOCKING RULE:
-   If keyboard is visible:
-   - Any element in the lower 45% of the screen is NOT interactable
-   - Taps in this region will hit keyboard keys instead of UI elements
-   - Before tapping such elements, dismiss keyboard using key_event 4
-
-6. KEYBOARD DISMISSAL RULE:
-   Use key_event 4 ONLY when:
-   - Target element is in lower screen region, OR
-   - Current action requires full-screen interaction (submit, login, continue buttons near bottom)
-
-   After key_event 4:
-   - Treat next UI element list as a NEW layout (coordinates fully refreshed)
-
-7. NO ACTION REPEATS:
-   Do not repeat any action in history unless:
-   - previous attempt explicitly failed, OR
-   - system outcome confirms no state change occurred
-
-   Lack of visual confirmation is NOT failure evidence.
-
-8. COORDINATE AUTHORITY RULE:
-   - Always use coordinates from CURRENT UI ELEMENTS ONLY
-   - Do NOT reuse coordinates from previous screens after any UI change event (keyboard open/close, navigation, modal, scroll)
 """
-        # CRITICAL CONSTRAINTS:
-        # 1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
-        # 2. For "type", provide both `text` AND `coordinates` of the target field.
-        # 3. Before typing, first send a "tap" to focus the field.
-        # 4. The soft keyboard blocks taps on anything behind it. If your next target is a button or control in the lower half of the screen (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app. After dismissal, use the fresh element list for coordinates.
-        # 5. Do NOT repeat an action already in history unless outcome or self-assessment shows it failed or was undone. Inability to see a result visually is NOT evidence of failure.
-        # 6. When the keyboard is visible and you need to TYPE into a field, use text_field/input elements from the CURRENT scan in the upper portion of the screen (above the keyboard). Ignore bottom-portion detections — those are keyboard keys.
-        # """
-        #         if self.use_multimodal_vision:
-        #             prompt += """
-        # 7. Prefer element center coordinates from the Current UI Elements list. If a target is missing because the keyboard obscures it, dismiss the keyboard (rule 4) first. You may also derive coordinates from older screenshots when YOLO missed a visible element.
-        # """
-        #         else:
-        #             prompt += """
-        # 7. MUST use center coordinates from the Current UI Elements list. If a target is missing because the keyboard obscures it, do not guess coordinates from older screenshots — dismiss the keyboard (rule 4) and plan from the next scan. Older screenshots are context only.
-        # """
+        prompt += self._action_vocabulary() + self._action_constraints()
         prompt += """
 ### Response Instructions
 1. Set `current_screen` to the descriptive name of the current screen.
@@ -288,7 +237,7 @@ CRITICAL CONSTRAINTS:
 5. Audit QA issues and populate `detected_issues` (each must include `severity`: low, medium, high, or critical).
 6. Evaluate all expected outcomes, security rules, and dynamic assertions; populate `rule_verifications`.
 7. If the scenario's target screen has not been reached yet, navigate towards it. Set `is_scenario_feasible = False` with an `infeasibility_reason` and action `done` only when it is genuinely unreachable or contradicts the app.
-8. If all objectives are met or a critical crash terminates execution, set action to `done`.
+8. If all objectives are observably met, set `goal_satisfied = true`, describe the visible proof in `goal_evidence`, and set action to `done`. Never infer completion from the session trail or prior scenarios.
 9. Otherwise, set `action` to the single next action to execute.
 10. Set `external_navigation = True` if the action will temporarily leave the app.
 """

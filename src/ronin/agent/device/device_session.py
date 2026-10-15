@@ -6,6 +6,7 @@ Supports starting Appium programmatically, checking platforms, and screen record
 import logging
 import os
 import time
+import urllib.request
 from pathlib import Path
 from uuid import uuid4
 
@@ -85,12 +86,23 @@ class DeviceSession:
         
         host = os.environ.get("APPIUM_HOST", "127.0.0.1")
         port = int(os.environ.get("APPIUM_PORT", "4723"))
+        self._appium_url = f"http://{host}:{port}"
+        self._owns_appium = False
  
         self._appium_service = AppiumService()
         self._appium_args = {
             "host": host,
             "port": port,
-            "args": ["--log", str(self.appium_log_path)],
+            # Appium's default HTTP logging includes base64 screenshot response
+            # bodies. Warning-level logs retain lifecycle failures without
+            # copying screen contents into a second artifact.
+            "args": [
+                "--log",
+                str(self.appium_log_path),
+                "--log-level",
+                "warn",
+                "--log-no-colors",
+            ],
         }
  
     def _ensure_directories(self) -> None:
@@ -103,6 +115,15 @@ class DeviceSession:
             directory.mkdir(parents=True, exist_ok=True)
 
     def _start_appium(self):
+        try:
+            with urllib.request.urlopen(
+                f"{self._appium_url}/status", timeout=0.75
+            ) as response:
+                if response.status == 200:
+                    logger.info("Using the Appium service already running at %s", self._appium_url)
+                    return
+        except Exception:
+            pass
         if self._appium_service.is_running:
             logger.info("Appium already running")
             return
@@ -111,6 +132,7 @@ class DeviceSession:
         if not self._appium_service.is_running:
             raise RuntimeError(f"Appium failed to start. See {self.appium_log_path}")
         logger.info("Appium started")
+        self._owns_appium = True
  
     def start(self, is_headless: bool = False) -> DeviceControl:
         self._ensure_directories()
@@ -123,6 +145,7 @@ class DeviceSession:
             is_headless=is_headless,
             keep_device=self.keep_device,
             reuse_app=self.reuse_app,
+            server_url=self._appium_url,
         )
         if self.platform == Platform.ANDROID:
             serial = self.device_control.serial or self.device_name
@@ -149,12 +172,14 @@ class DeviceSession:
                 self.device_control.quit()
             except Exception as e:
                 logger.warning("Failed to quit device control: %s", e)
-        if self._appium_service.is_running:
+        if self._owns_appium and self._appium_service.is_running:
             try:
                 self._appium_service.stop()
                 logger.info("Appium service stopped")
             except Exception as e:
                 logger.warning("Failed to stop Appium service: %s", e)
+            finally:
+                self._owns_appium = False
         if hasattr(self, "_file_handler"):
             try:
                 logging.getLogger().removeHandler(self._file_handler)

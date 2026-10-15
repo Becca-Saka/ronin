@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 # Trail models live in agent/trail.py — re-exported here for backward compatibility.
 from ronin.agent.trail import SessionTrail, TrailElement, ScreenEntry  # noqa: F401
@@ -11,6 +11,13 @@ class UserJourney(BaseModel):
     name: str
     description: str
     security_rules: List[str] = Field(default_factory=list)
+    secrets: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Name-to-value pairs the journey declared sensitive. Masked by name "
+            "in written artifacts, never withheld from the planner."
+        ),
+    )
 
 
 class GeneratedTestCase(BaseModel):
@@ -57,7 +64,22 @@ class QAIssue(BaseModel):
 class RuleVerification(BaseModel):
     """Represents the status of verifying a specific journey expectation or custom rule."""
     rule: str
+    rule_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "Stable ID supplied in the prompt, such as expected:0 or security:1. "
+            "Dynamic assertions may omit it."
+        ),
+    )
     status: Literal["passed", "failed", "untested"]
+    applicable: bool = Field(
+        default=True,
+        description=(
+            "False when this screen has nothing the rule could apply to, so a "
+            "'passed' here would mean nothing. A card-masking rule is not "
+            "applicable on a screen with no card field."
+        ),
+    )
     reasoning: str
     screen_name: Optional[str] = None
 
@@ -67,7 +89,15 @@ class ScenarioReport(BaseModel):
     test_id: str
     scenario_name: str
     classification: str
-    status: Literal["PASSED", "FAILED", "SKIPPED"]
+    status: Literal[
+        "PASSED",
+        "FAILED",
+        "SKIPPED",
+        "ERROR",
+        "ABORTED",
+        "UNVERIFIED",
+        "UNSUPPORTED",
+    ]
     duration: float = 0.0
     steps_executed: int = 0
     rule_verifications: List[RuleVerification] = Field(default_factory=list)
@@ -81,9 +111,16 @@ class JourneyReport(BaseModel):
     journey_id: str
     journey_name: str
     description: str
-    status: Literal["PASSED", "FAILED"]
+    status: Literal["PASSED", "FAILED", "RUNNING"]
     total_duration: float = 0.0
     scenarios: List[ScenarioReport] = Field(default_factory=list)
+    unevidenced_security_rules: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Security rules no scenario was able to evidence. A rule nothing "
+            "checked is not a rule that held."
+        ),
+    )
     passed_count: int = 0
     failed_count: int = 0
     skipped_count: int = 0

@@ -1,6 +1,5 @@
 import logging
 import time
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List
 
@@ -9,13 +8,17 @@ from ronin.agent.device.device_session import DeviceSession
 from ronin.agent.device.platform import Platform
 from ronin.agent.perception.perception import ScreenPerception
 from ronin.agent.replay import ReplayLedger
+from .coverage import unevidenced_security_rules
 from .generator import ScenarioGenerator
 from .progress import ScenarioProgress
-from .models import UserJourney, JourneyReport, ScenarioReport
+from .models import GeneratedTestCase, JourneyReport, ScenarioReport, UserJourney
 from .qa_agent import QAAgent
 from .usage_tracker import LLMUsageTracker
+from ronin.utils.secrets import SecretScrubber
+from .reports import save_junit_report, save_markdown_report
 
 logger = logging.getLogger(__name__)
+
 
 CLASSIFICATION_ORDER = {
     "happy_path": 0,
@@ -41,6 +44,11 @@ def is_session_responsive(device_control) -> bool:
     except Exception as e:
         logger.warning("Session responsiveness check failed: %s", e)
         return False
+
+
+def aggregate_journey_status(passed_count: int, failed_count: int) -> str:
+    """A suite passes only when at least one scenario has verified evidence."""
+    return "PASSED" if passed_count > 0 and failed_count == 0 else "FAILED"
 
 
 class RoninTestRunner:
@@ -117,10 +125,12 @@ class RoninTestRunner:
         passed_count = 0
         failed_count = 0
         skipped_count = 0
+        artifact_scrubber = SecretScrubber()
+        artifact_scrubber.learn_secrets(journey.secrets)
+        device_agent.scrubber.learn_secrets(journey.secrets)
 
         try:
             scenarios = ScenarioGenerator(device_agent.llm).generate_scenarios(journey)
-
             scenarios.sort(key=lambda s: CLASSIFICATION_ORDER.get(s.classification, 99))
 
             logger.info(
@@ -137,7 +147,9 @@ class RoninTestRunner:
                     s.test_id,
                 )
 
-            progress = ScenarioProgress(session.telemetry_dir, journey, scenarios)
+            progress = ScenarioProgress(
+                session.telemetry_dir, journey, scenarios, scrubber=artifact_scrubber
+            )
             progress.write()
             logger.info("Scenario plan: %s", progress.path)
 
@@ -148,12 +160,15 @@ class RoninTestRunner:
             )
             device_control = session.start(is_headless=self.headless)
             perception = ScreenPerception(session)
-            trail = SessionTrail()
-
             total_scenarios = len(scenarios)
             for idx, scenario in enumerate(scenarios):
+                # Scenario evidence must not inherit screen names, actions, or
+                # navigation claims from a previous scenario.
+                trail = SessionTrail()
                 progress.start(scenario.test_id)
                 logger.info("========================================")
+
+                current_component = f"scenario:{scenario.test_id}"
                 logger.info(
                     "Executing Scenario %d/%d: %s (%s) - Category: %s",
                     idx + 1,
@@ -210,25 +225,25 @@ class RoninTestRunner:
                     skipped_count += 1
                 else:
                     failed_count += 1
+                self._save_checkpoint(
+                    journey,
+                    scenario_reports,
+                    passed_count,
+                    failed_count,
+                    skipped_count,
+                    start_time,
+                    session,
+                    artifact_scrubber,
+                )
 
         except BaseException as e:
-            logger.exception(
-                "Fatal exception or interrupt encountered during run: %s", e
+            safe_error = artifact_scrubber.scrub(str(e)) or type(e).__name__
+            logger.error(
+                "Fatal run interruption (%s): %s", type(e).__name__, safe_error
             )
             if progress is not None:
-                progress.abort(f"Aborted due to run failure/interrupt: {e}")
-            for scenario in scenarios:
-                if not any(r.test_id == scenario.test_id for r in scenario_reports):
-                    scenario_reports.append(
-                        ScenarioReport(
-                            test_id=scenario.test_id,
-                            scenario_name=scenario.scenario_name,
-                            classification=scenario.classification,
-                            status="FAILED",
-                            failure_reason=f"Aborted due to run failure/interrupt: {str(e)}",
-                        )
-                    )
-                    failed_count += 1
+                progress.abort(f"Aborted due to run failure/interrupt: {safe_error}")
+            failed_count += self._record_aborted(scenarios, scenario_reports, e)
             if isinstance(e, KeyboardInterrupt):
                 raise e
         finally:
@@ -242,187 +257,158 @@ class RoninTestRunner:
                 usage_tracker.save_report()
             except Exception as usage_err:
                 logger.error("Failed to serialize LLM usage: %s", usage_err)
+                scenario_reports.append(
+                    ScenarioReport(
+                        test_id="usage_report",
+                        scenario_name="LLM usage report",
+                        classification="infrastructure",
+                        status="ERROR",
+                        failure_reason=f"Failed to serialize LLM usage: {usage_err}",
+                    )
+                )
+                failed_count += 1
 
             # persist reports even on Ctrl+C or mid-run crash
             duration = time.time() - start_time
-            nothing_ran = passed_count == 0 and failed_count == 0
-            journey_status = "FAILED" if (failed_count > 0 or nothing_ran) else "PASSED"
+            unevidenced = unevidenced_security_rules(
+                journey.security_rules, scenario_reports
+            )
+            for rule in unevidenced:
+                logger.warning("No scenario evidenced security rule: %s", rule)
+            journey_status = aggregate_journey_status(passed_count, failed_count)
             report = JourneyReport(
                 journey_id=journey.id,
                 journey_name=journey.name,
-                description=journey.description,
+                description=artifact_scrubber.scrub(journey.description),
                 status=journey_status,
                 total_duration=round(duration, 2),
                 scenarios=scenario_reports,
                 passed_count=passed_count,
                 failed_count=failed_count,
                 skipped_count=skipped_count,
+                unevidenced_security_rules=unevidenced,
             )
             try:
-                self._save_markdown_report(report, session=session)
+                self._save_markdown_report(
+                    report, session=session, scrubber=artifact_scrubber
+                )
             except Exception as report_err:
                 logger.error("Failed to save markdown report: %s", report_err)
+                self._mark_report_write_failure(report, "markdown_report", report_err)
             try:
-                self._save_junit_report(report, session=session)
+                self._save_junit_report(
+                    report, session=session, scrubber=artifact_scrubber
+                )
             except Exception as junit_err:
                 logger.error("Failed to save JUnit report: %s", junit_err)
+                self._mark_report_write_failure(report, "junit_report", junit_err)
 
         return report
 
-    def _save_markdown_report(
-        self, report: JourneyReport, session: DeviceSession = None
-    ):
-        """Saves a structured human-readable markdown report of the journey run."""
-        output_dir = session.telemetry_dir if session is not None else self.assets_dir
-        filepath = (
-            output_dir
-            / f"report_{report.journey_id}_{time.strftime('%Y%m%d_%H%M%S')}.md"
-        )
-        lines = [
-            f"# Ronin QA Test Report: {report.journey_name}",
-            f"",
-            f"* **Journey ID**: `{report.journey_id}`",
-            f"* **Status**: {'🟢 PASSED' if report.status == 'PASSED' else '🔴 FAILED'}",
-            f"* **Scenarios Run**: {len(report.scenarios)} ({report.passed_count} passed, {report.failed_count} failed, {report.skipped_count} skipped)",
-            f"* **Duration**: {report.total_duration}s",
-        ]
-        if session:
-            lines.extend(
-                [
-                    f"* **Execution Log**: [ronin_session_{session.session_id}.log](file://{session.logs_dir.absolute()}/ronin_session_{session.session_id}.log)",
-                    f"* **Appium Server Log**: [appium_session_{session.session_id}.log](file://{session.logs_dir.absolute()}/appium_session_{session.session_id}.log)",
-                ]
+    @staticmethod
+    def _mark_report_write_failure(
+        report: JourneyReport, artifact_name: str, error: Exception
+    ) -> None:
+        report.status = "FAILED"
+        report.failed_count += 1
+        report.scenarios.append(
+            ScenarioReport(
+                test_id=artifact_name,
+                scenario_name=artifact_name.replace("_", " ").title(),
+                classification="infrastructure",
+                status="ERROR",
+                failure_reason=f"Failed to write {artifact_name}: {error}",
             )
-        lines.extend(
-            [
-                f"",
-                f"## Journey Description",
-                f"{report.description}",
-                f"",
-                f"---",
-                f"",
-            ]
         )
 
-        for idx, scen in enumerate(report.scenarios):
-            if scen.status == "PASSED":
-                status_icon = "🟢"
-            elif scen.status == "SKIPPED":
-                status_icon = "🟡"
-            else:
-                status_icon = "🔴"
-            lines.extend(
-                [
-                    f"## Scenario {idx + 1}: {scen.scenario_name} ({scen.test_id})",
-                    f"* **Classification**: `{scen.classification}`",
-                    f"* **Status**: {status_icon} {scen.status}",
-                    f"* **Steps Executed**: {scen.steps_executed}",
-                    f"* **Duration**: {scen.duration}s",
-                    f"",
-                ]
-            )
+    @staticmethod
+    def _record_aborted(
+        scenarios: List[GeneratedTestCase],
+        scenario_reports: List[ScenarioReport],
+        error: BaseException,
+    ) -> int:
+        """Records a failure for everything that never produced a result.
 
-            if scen.failure_reason:
-                lines.append(f"* ❌ **Failure Reason**: `{scen.failure_reason}`")
-
-            actionable_verifications = [
-                v for v in scen.rule_verifications if v.status != "untested"
-            ]
-            if actionable_verifications:
-                lines.append("### Verifications:")
-                for rule in actionable_verifications:
-                    rule_status_icon = (
-                        "[x] Passed" if rule.status == "passed" else "[ ] Failed"
-                    )
-                    screen_suffix = (
-                        f" on `{rule.screen_name}`"
-                        if getattr(rule, "screen_name", None)
-                        else ""
-                    )
-                    lines.append(
-                        f"  * {rule_status_icon}: {rule.rule}{screen_suffix} (Reasoning: {rule.reasoning})"
-                    )
-                lines.append("")
-
-            if scen.detected_issues:
-                lines.append("### Detected Issues:")
-                for iss in scen.detected_issues:
-                    lines.append(
-                        f"  * ⚠️ **{iss.severity.upper()} ({iss.issue_type})**: {iss.description} on screen `{iss.current_screen}`"
-                    )
-                lines.append("")
-
-            lines.append("---")
-
-        try:
-            filepath.write_text("\n".join(lines))
-            logger.info("Markdown test report successfully written to %s", filepath)
-        except Exception as e:
-            logger.error("Failed to write Markdown test report: %s", e)
-
-    def _save_junit_report(self, report: JourneyReport, session: DeviceSession = None):
-        """Generates standard JUnit XML report for CI systems integration."""
-        output_dir = session.telemetry_dir if session is not None else self.assets_dir
-        filepath = (
-            output_dir
-            / f"junit_{report.journey_id}_{time.strftime('%Y%m%d_%H%M%S')}.xml"
-        )
-
-        testsuites_el = ET.Element(
-            "testsuites",
-            {
-                "name": "Ronin User Journeys",
-                "tests": str(len(report.scenarios)),
-                "failures": str(report.failed_count),
-                "skipped": str(report.skipped_count),
-                "time": str(report.total_duration),
-            },
-        )
-
-        testsuite_el = ET.SubElement(
-            testsuites_el,
-            "testsuite",
-            {
-                "name": report.journey_name,
-                "tests": str(len(report.scenarios)),
-                "failures": str(report.failed_count),
-                "skipped": str(report.skipped_count),
-                "time": str(report.total_duration),
-                "id": report.journey_id,
-            },
-        )
-
-        for scen in report.scenarios:
-            testcase_el = ET.SubElement(
-                testsuite_el,
-                "testcase",
-                {
-                    "name": scen.scenario_name,
-                    "classname": f"{report.journey_id}.{scen.test_id}",
-                    "time": str(scen.duration),
-                },
-            )
-
-            if scen.status == "FAILED":
-                msg = scen.failure_reason or "Verification failed"
-                detail_lines = []
-                for iss in scen.detected_issues:
-                    detail_lines.append(
-                        f"[{iss.severity.upper()}] {iss.issue_type}: {iss.description} on {iss.current_screen}"
-                    )
-
-                failure_el = ET.SubElement(
-                    testcase_el, "failure", {"message": msg, "type": "QAAssertionError"}
+        A run that dies before any scenario exists — generation returning
+        nothing, for instance — would otherwise report zero tests and zero
+        failures, which CI reads as a pass.
+        """
+        error_text = str(error) or type(error).__name__
+        reason = f"Aborted due to run failure/interrupt: {error_text}"
+        if not scenarios:
+            scenario_reports.append(
+                ScenarioReport(
+                    test_id="scenario_generation",
+                    scenario_name="Scenario generation",
+                    classification="happy_path",
+                    status="ERROR",
+                    failure_reason=reason,
                 )
-                failure_el.text = "\n".join(detail_lines) or msg
-            elif scen.status == "SKIPPED":
-                msg = scen.failure_reason or "Scenario skipped"
-                ET.SubElement(testcase_el, "skipped", {"message": msg})
+            )
+            return 1
 
+        recorded = 0
+        for scenario in scenarios:
+            if any(r.test_id == scenario.test_id for r in scenario_reports):
+                continue
+            scenario_reports.append(
+                ScenarioReport(
+                    test_id=scenario.test_id,
+                    scenario_name=scenario.scenario_name,
+                    classification=scenario.classification,
+                    status="ABORTED",
+                    failure_reason=reason,
+                )
+            )
+            recorded += 1
+        return recorded
+
+    def _save_checkpoint(
+        self,
+        journey: UserJourney,
+        reports: List[ScenarioReport],
+        passed: int,
+        failed: int,
+        skipped: int,
+        started_at: float,
+        session: DeviceSession,
+        scrubber: SecretScrubber,
+    ) -> None:
+        checkpoint = JourneyReport(
+            journey_id=journey.id,
+            journey_name=journey.name,
+            description=scrubber.scrub(journey.description),
+            status="RUNNING",
+            total_duration=round(time.time() - started_at, 2),
+            scenarios=list(reports),
+            passed_count=passed,
+            failed_count=failed,
+            skipped_count=skipped,
+        )
         try:
-            tree = ET.ElementTree(testsuites_el)
-            with open(filepath, "wb") as f:
-                tree.write(f, encoding="utf-8", xml_declaration=True)
-            logger.info("JUnit XML test report successfully written to %s", filepath)
-        except Exception as e:
-            logger.error("Failed to write JUnit XML test report: %s", e)
+            save_markdown_report(
+                checkpoint, session.telemetry_dir, session, scrubber, label="partial"
+            )
+            save_junit_report(
+                checkpoint, session.telemetry_dir, scrubber, label="partial"
+            )
+        except Exception as exc:
+            logger.error("Failed to checkpoint partial reports: %s", exc)
+
+    def _save_markdown_report(
+        self,
+        report: JourneyReport,
+        session: DeviceSession = None,
+        scrubber: SecretScrubber | None = None,
+    ):
+        output_dir = session.telemetry_dir if session is not None else self.assets_dir
+        return save_markdown_report(report, output_dir, session, scrubber)
+
+    def _save_junit_report(
+        self,
+        report: JourneyReport,
+        session: DeviceSession = None,
+        scrubber: SecretScrubber | None = None,
+    ):
+        output_dir = session.telemetry_dir if session is not None else self.assets_dir
+        return save_junit_report(report, output_dir, scrubber)

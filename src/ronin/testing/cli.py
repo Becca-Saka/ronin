@@ -9,6 +9,7 @@ from typing import Any, List, Optional
 from ronin.agent.device.platform import Platform
 from ronin.app_discovery import find_journey_files, resolve_app_path
 from ronin.config import Config, load_config
+from .journey_env import resolve, substitute
 from .models import UserJourney
 from .runner import RoninTestRunner
 
@@ -114,11 +115,16 @@ class RoninCLI:
         return journeys
 
     def _build_journey_object(self, data: dict) -> UserJourney:
+        values, secrets = resolve(data)
+        description = data.get("journey", data.get("description", ""))
         return UserJourney(
             id=data.get("id", "journey_01"),
             name=data.get("name", "User Journey"),
-            description=data.get("journey", data.get("description", "")),
-            security_rules=data.get("security_rules", [])
+            description=substitute(description, values),
+            security_rules=[
+                substitute(rule, values) for rule in data.get("security_rules", [])
+            ],
+            secrets=secrets,
         )
 
     def _parse_simple_yaml(self, content: str) -> dict:

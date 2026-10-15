@@ -370,17 +370,30 @@ class StepBudgetTests(unittest.TestCase):
 
 
 class ReplayTests(unittest.TestCase):
+    def _replay(self, agent, goal, context):
+        from ronin.agent.replay import replay_known_path
+
+        return replay_known_path(
+            ledger=agent.replay_ledger,
+            device_control=object(),
+            goal=goal,
+            history=context.history,
+            quick_phash=agent._quick_phash,
+            settle=agent._settle,
+            scrubber=agent.scrubber,
+        )
+
     def _agent(self, ledger, phashes):
         from ronin.agent.device_agent import DeviceAgent
 
         from ronin.utils.secrets import SecretScrubber
 
-        agent = DeviceAgent.__new__(DeviceAgent)
-        agent.scrubber = SecretScrubber()
-        agent.replay_ledger = ledger
-        agent._quick_phash = Mock(side_effect=phashes)
-        agent._settle = Mock(side_effect=phashes[1::2])
-        return agent
+        return SimpleNamespace(
+            scrubber=SecretScrubber(),
+            replay_ledger=ledger,
+            _quick_phash=Mock(side_effect=phashes),
+            _settle=Mock(side_effect=phashes[1::2]),
+        )
 
     def _tap(self):
         from ronin.agent.actuation.actions import ActionType, Coordinates, TapAction
@@ -404,29 +417,29 @@ class ReplayTests(unittest.TestCase):
     def _context(self):
         return _RunContext(history=AgentHistory(), loop_detector=RollingLoopDetector())
 
-    @patch("ronin.agent.device_agent.ActionOrchestrator")
+    @patch("ronin.agent.replay.ActionOrchestrator")
     def test_replays_a_known_transition(self, orchestrator):
         ledger = self._ledger()
         agent = self._agent(ledger, ["0" * 64, "1" * 64, "1" * 64])
         context = self._context()
 
-        agent._replay_known_path(object(), ["tap the Login button"], context)
+        self._replay(agent, ["tap the Login button"], context)
 
         orchestrator.return_value.execute.assert_called_once()
         self.assertEqual(len(context.history._entries), 1)
 
-    @patch("ronin.agent.device_agent.ActionOrchestrator")
+    @patch("ronin.agent.replay.ActionOrchestrator")
     def test_stops_when_the_screen_is_not_where_it_used_to_lead(self, orchestrator):
         ledger = self._ledger()
         agent = self._agent(ledger, ["0" * 64, "f" * 64])
         context = self._context()
 
-        agent._replay_known_path(object(), ["tap the Login button"], context)
+        self._replay(agent, ["tap the Login button"], context)
 
         orchestrator.return_value.execute.assert_called_once()
         self.assertEqual(len(context.history._entries), 0)
 
-    @patch("ronin.agent.device_agent.ActionOrchestrator")
+    @patch("ronin.agent.replay.ActionOrchestrator")
     def test_does_not_replay_text_the_scenario_never_mentions(self, orchestrator):
         from ronin.agent.replay import ReplayLedger
 
@@ -434,11 +447,11 @@ class ReplayTests(unittest.TestCase):
         ledger.record("0" * 64, self._typing("password123"), "1" * 64, "type password", "Password")
         agent = self._agent(ledger, ["0" * 64])
 
-        agent._replay_known_path(object(), ["sign in with 'wrongpass'"], self._context())
+        self._replay(agent, ["sign in with 'wrongpass'"], self._context())
 
         orchestrator.return_value.execute.assert_not_called()
 
-    @patch("ronin.agent.device_agent.ActionOrchestrator")
+    @patch("ronin.agent.replay.ActionOrchestrator")
     def test_gestures_are_never_replayed(self, orchestrator):
         """Destructive scenarios are built from gestures; they must not be inherited."""
         from ronin.agent.actuation.actions import ActionType, Coordinates, LongPressAction
@@ -459,15 +472,15 @@ class ReplayTests(unittest.TestCase):
 
         self.assertEqual(len(ledger), 0)
 
-    @patch("ronin.agent.device_agent.ActionOrchestrator")
+    @patch("ronin.agent.replay.ActionOrchestrator")
     def test_unknown_screen_plans_as_usual(self, orchestrator):
         agent = self._agent(self._ledger(), ["e" * 64])
 
-        agent._replay_known_path(object(), ["tap the Login button"], self._context())
+        self._replay(agent, ["tap the Login button"], self._context())
 
         orchestrator.return_value.execute.assert_not_called()
 
-    @patch("ronin.agent.device_agent.ActionOrchestrator")
+    @patch("ronin.agent.replay.ActionOrchestrator")
     def test_does_not_replay_a_tap_this_scenario_never_asked_for(self, orchestrator):
         """A 'Place Order' tap learned elsewhere must not fire in another scenario."""
         from ronin.agent.replay import ReplayLedger
@@ -476,11 +489,11 @@ class ReplayTests(unittest.TestCase):
         ledger.record("0" * 64, self._tap(), "1" * 64, "tap Place Order", "Place Order")
         agent = self._agent(ledger, ["0" * 64])
 
-        agent._replay_known_path(object(), ["verify the cart subtotal"], self._context())
+        self._replay(agent, ["verify the cart subtotal"], self._context())
 
         orchestrator.return_value.execute.assert_not_called()
 
-    @patch("ronin.agent.device_agent.ActionOrchestrator")
+    @patch("ronin.agent.replay.ActionOrchestrator")
     def test_only_back_is_replayable_among_key_events(self, orchestrator):
         from ronin.agent.actuation.actions import ActionType, KeyEventAction
         from ronin.agent.replay import ReplayLedger
@@ -494,7 +507,7 @@ class ReplayTests(unittest.TestCase):
         )
         agent = self._agent(ledger, ["0" * 64])
 
-        agent._replay_known_path(object(), ["anything"], self._context())
+        self._replay(agent, ["anything"], self._context())
 
         orchestrator.return_value.execute.assert_not_called()
 
@@ -534,16 +547,23 @@ class SecretScrubbingTests(unittest.TestCase):
         from ronin.utils.secrets import SecretScrubber
 
         scrubber = SecretScrubber()
-        scrubber.learn_from_instructions(
-            ["Sign in with 'test@example.com' and 'password123'"]
-        )
+        scrubber.learn_secrets({"email": "test@example.com", "password": "password123"})
         return scrubber
 
-    def test_values_are_removed_from_free_form_reasoning(self):
+    def test_values_are_replaced_by_the_name_that_declared_them(self):
         scrubbed = self._scrubber().scrub("Type 'password123' into the Password field")
 
         self.assertNotIn("password123", scrubbed)
+        self.assertIn("{{password}}", scrubbed)
         self.assertIn("Password field", scrubbed)
+
+    def test_undeclared_quoted_text_is_not_treated_as_a_secret(self):
+        from ronin.utils.secrets import SecretScrubber
+
+        scrubber = SecretScrubber()
+        scrubber.learn_from_instructions(["Tap the 'Continue' button"])
+
+        self.assertEqual(scrubber.scrub("Tap Continue"), "Tap Continue")
 
     def test_values_typed_at_runtime_are_learned(self):
         from ronin.utils.secrets import SecretScrubber
@@ -557,3 +577,189 @@ class SecretScrubbingTests(unittest.TestCase):
         self.assertEqual(
             self._scrubber().scrub("Tap the Login button"), "Tap the Login button"
         )
+
+
+class ScenarioGenerationTests(unittest.TestCase):
+    def _generator(self, responses):
+        from ronin.testing.generator import ScenarioGenerator
+
+        client = SimpleNamespace(generate_response=Mock(side_effect=responses))
+        return ScenarioGenerator(client), client
+
+    def _journey(self):
+        from ronin.testing.models import UserJourney
+
+        return UserJourney(id="j", name="J", description="sign in", security_rules=[])
+
+    def _suite(self, count):
+        from ronin.testing.generator import GeneratedTestCasesList
+        from ronin.testing.models import GeneratedTestCase
+
+        return GeneratedTestCasesList(
+            scenarios=[
+                GeneratedTestCase(
+                    test_id=f"TS_{n}",
+                    scenario_name="S",
+                    classification="happy_path",
+                    steps_instructions=["open app"],
+                    expected_outcomes=[],
+                )
+                for n in range(count)
+            ]
+        )
+
+    def test_the_schema_itself_forbids_an_empty_suite(self):
+        """minItems reaches the model, so it is told an empty list is invalid."""
+        from pydantic import ValidationError
+
+        from ronin.testing.generator import GeneratedTestCasesList
+
+        with self.assertRaises(ValidationError):
+            GeneratedTestCasesList(scenarios=[])
+
+        schema = GeneratedTestCasesList.model_json_schema()
+        self.assertEqual(schema["properties"]["scenarios"]["minItems"], 1)
+        self.assertEqual(schema["properties"]["scenarios"]["maxItems"], 10)
+
+    def test_an_empty_response_is_retried(self):
+        from pydantic import ValidationError
+
+        rejected = ValidationError.from_exception_data("GeneratedTestCasesList", [])
+        generator, client = self._generator([rejected, self._suite(2)])
+
+        scenarios = generator.generate_scenarios(self._journey())
+
+        self.assertEqual(len(scenarios), 2)
+        self.assertEqual(client.generate_response.call_count, 2)
+
+    def test_repeated_empty_responses_abort_the_run(self):
+        from pydantic import ValidationError
+
+        rejected = ValidationError.from_exception_data("GeneratedTestCasesList", [])
+        generator, client = self._generator([rejected] * 3)
+
+        with self.assertRaisesRegex(RuntimeError, "Scenario generation failed"):
+            generator.generate_scenarios(self._journey())
+
+        self.assertEqual(client.generate_response.call_count, 3)
+
+
+class AbortReportingTests(unittest.TestCase):
+    """A run that dies before any scenario exists must not look like a pass."""
+
+    def _runner(self):
+        from ronin.testing.runner import RoninTestRunner
+
+        return RoninTestRunner.__new__(RoninTestRunner)
+
+    def test_generation_failure_is_reported_as_a_failed_test(self):
+        reports = []
+
+        failed = self._runner()._record_aborted([], reports, RuntimeError("no scenarios"))
+
+        self.assertEqual(failed, 1)
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0].status, "ERROR")
+        self.assertEqual(reports[0].test_id, "scenario_generation")
+        self.assertIn("no scenarios", reports[0].failure_reason)
+
+    def test_unfinished_scenarios_are_each_recorded(self):
+        from ronin.testing.models import GeneratedTestCase, ScenarioReport
+
+        planned = [
+            GeneratedTestCase(
+                test_id=f"TS_{n}",
+                scenario_name=f"S{n}",
+                classification="happy_path",
+                steps_instructions=["x"],
+                expected_outcomes=[],
+            )
+            for n in (1, 2)
+        ]
+        reports = [
+            ScenarioReport(
+                test_id="TS_1", scenario_name="S1", classification="happy_path", status="PASSED"
+            )
+        ]
+
+        failed = self._runner()._record_aborted(planned, reports, KeyboardInterrupt())
+
+        self.assertEqual(failed, 1)
+        self.assertEqual([r.test_id for r in reports], ["TS_1", "TS_2"])
+
+
+class CoordinateShapeTests(unittest.TestCase):
+    """The model answered with [x, y] and killed every scenario at step one."""
+
+    def test_a_pair_is_read_as_coordinates(self):
+        from ronin.agent.actuation.actions import Coordinates
+
+        self.assertEqual(Coordinates.model_validate([537, 1260]).x, 537)
+        self.assertEqual(Coordinates.model_validate((537, 1260)).y, 1260)
+
+    def test_an_object_still_works(self):
+        from ronin.agent.actuation.actions import Coordinates
+
+        coordinates = Coordinates.model_validate({"x": 1, "y": 2})
+        self.assertEqual((coordinates.x, coordinates.y), (1, 2))
+
+    def test_a_whole_action_survives_the_pair_form(self):
+        from pydantic import TypeAdapter
+
+        from ronin.agent.actuation.actions import Action
+
+        action = TypeAdapter(Action).validate_python(
+            {"type": "tap", "coordinates": [537, 1260], "reason": "tap Login"}
+        )
+
+        self.assertEqual((action.coordinates.x, action.coordinates.y), (537, 1260))
+
+
+class StructuredRetryTests(unittest.TestCase):
+    def _client(self):
+        from ronin.llm.llm_client import LLMClient
+
+        return LLMClient(model="test/model")
+
+    def _model(self):
+        from pydantic import BaseModel
+
+        class Answer(BaseModel):
+            value: int
+
+        return Answer
+
+    def test_a_schema_mismatch_is_corrected_once(self):
+        from ronin.llm.messages import TextMessage
+
+        client = self._client()
+        answer = self._model()
+        client._complete = Mock(
+            side_effect=[
+                __import__("pydantic").ValidationError.from_exception_data("Answer", []),
+                answer(value=7),
+            ]
+        )
+
+        result = client.generate_response([TextMessage(content="hi")], answer)
+
+        self.assertEqual(result.value, 7)
+        self.assertEqual(client._complete.call_count, 2)
+        corrected = client._complete.call_args[0][0]
+        self.assertIn("did not match the required JSON schema", corrected[-1].content)
+
+    def test_a_second_mismatch_is_raised(self):
+        from pydantic import ValidationError
+
+        from ronin.llm.messages import TextMessage
+
+        client = self._client()
+        answer = self._model()
+        client._complete = Mock(
+            side_effect=ValidationError.from_exception_data("Answer", [])
+        )
+
+        with self.assertRaises(ValidationError):
+            client.generate_response([TextMessage(content="hi")], answer)
+
+        self.assertEqual(client._complete.call_count, 2)

@@ -3,10 +3,17 @@ LiteLLM wrapper client for communicating with LLMs (e.g. Gemini via OpenRouter).
 Supports standard messaging and structured output via Pydantic schemas.
 """
 
-import litellm
-from pydantic import BaseModel
+import json
+import logging
 
-from .messages import Message
+import litellm
+from pydantic import BaseModel, ValidationError
+
+from .messages import Message, TextMessage
+
+logger = logging.getLogger(__name__)
+
+STRUCTURED_ATTEMPTS = 2
 
 
 class LLMClient:
@@ -37,6 +44,42 @@ class LLMClient:
             The raw text response from the LLM, or a validated instance of response_model
             if specified.
         """
+        attempts: list[Message] = list(messages)
+        last_error: ValidationError | None = None
+
+        # Schema enforcement is advisory on most providers, so a model may
+        # answer in a shape the schema forbids. One correction is far cheaper
+        # than losing the scenario the call belongs to.
+        for attempt in range(STRUCTURED_ATTEMPTS if response_model else 1):
+            try:
+                return self._complete(attempts, response_model)
+            except ValidationError as exc:
+                last_error = exc
+                logger.warning(
+                    "Model response did not match %s (attempt %d/%d; %d validation errors)",
+                    response_model.__name__ if response_model else "schema",
+                    attempt + 1,
+                    STRUCTURED_ATTEMPTS,
+                    len(exc.errors()),
+                )
+                safe_errors = exc.errors(include_url=False, include_input=False)
+                attempts = list(messages) + [
+                    TextMessage(
+                        content=(
+                            "Your previous reply did not match the required JSON schema:\n"
+                            f"{json.dumps(safe_errors)}\n"
+                            "Answer again as JSON matching the schema exactly."
+                        )
+                    )
+                ]
+
+        raise last_error
+
+    def _complete(
+        self,
+        messages: list[Message],
+        response_model: type[BaseModel] | None = None,
+    ) -> str | BaseModel:
         kwargs: dict = {
             "model": self._model,
             "messages": [m.to_dict() for m in messages],
@@ -57,21 +100,24 @@ class LLMClient:
         if self.usage_callback:
             usage = getattr(response, "usage", None)
             if usage:
-                cost = 0.0
+                cost = None
                 try:
-                    cost = litellm.completion_cost(completion_response=response) or 0.0
+                    cost = litellm.completion_cost(completion_response=response)
                 except Exception:
                     pass
                 self.usage_callback(self._model, cost, usage)
 
         content = response.choices[0].message.content
 
-        if response_model:
-            stripped = content.strip()
-            if stripped.startswith("```"):
-                lines = stripped.splitlines()
-                stripped = "\n".join(
-                    lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
-                )
-            return response_model.model_validate_json(stripped)
-        return content
+        if not response_model:
+            return content
+        return self._parse(content, response_model)
+
+    def _parse(self, content: str, response_model: type[BaseModel]) -> BaseModel:
+        stripped = (content or "").strip()
+        if stripped.startswith("```"):
+            lines = stripped.splitlines()
+            stripped = "\n".join(
+                lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
+            )
+        return response_model.model_validate_json(stripped)

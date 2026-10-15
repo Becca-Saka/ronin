@@ -17,8 +17,54 @@ CLASS_COLORS = {
 
 
 class MediaManager:
-    def __init__(self):
-        pass
+    def __init__(self, scrubber=None):
+        """`scrubber` holds the journey's declared secrets; without one, nothing is masked."""
+        self.scrubber = scrubber
+
+    def redact_artifact_image(self, image: Image.Image, elements: list) -> Image.Image:
+        """Covers declared secret values before a screenshot is persisted.
+
+        Detection text is never masked on the way in — the planner needs it,
+        and a security audit cannot find an exposed card number it was not
+        allowed to see — so the mask is applied here, on the way out.
+        """
+        if self.scrubber is None:
+            return image
+        safe = image.copy()
+        draw = ImageDraw.Draw(safe)
+        for element in elements:
+            if not self.scrubber.contains_secret(element.text):
+                continue
+            box = element.bounding_box
+            draw.rectangle(
+                (box.x_min, box.y_min, box.x_max, box.y_max), fill="black"
+            )
+        return safe
+
+    def save_redacted_image(self, image: Image.Image, elements: list, path: Path) -> None:
+        self.redact_artifact_image(image, elements).save(path)
+
+    def save_redacted_bytes(self, data: bytes, elements: list, path: Path) -> None:
+        image = Image.open(io.BytesIO(data))
+        self.save_redacted_image(image, elements, path)
+
+    def save_redacted_pair(
+        self,
+        annotated: Image.Image,
+        raw: bytes,
+        elements: list,
+        annotated_path: Path,
+        raw_path: Path,
+    ) -> None:
+        self.save_redacted_image(annotated, elements, annotated_path)
+        self.save_redacted_bytes(raw, elements, raw_path)
+
+    def save_redacted_action_annotation(
+        self, annotated: Image.Image, elements: list, action, path: Path
+    ) -> bool:
+        return self.save_action_annotation(
+            self.redact_artifact_image(annotated, elements), action, path
+        )
 
     def annotate(self, png_bytes, x, y, label, color="red"):
         image = Image.open(io.BytesIO(png_bytes))

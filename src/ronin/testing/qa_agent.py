@@ -31,9 +31,165 @@ from ronin.testing.models import (
     RuleVerification,
     ScenarioReport,
 )
+from ronin.testing.capabilities import unsupported_reason
 from ronin.testing.qa_planner import QAPlanner, QAStepResponse
 
+from ronin.agent.actuation.actions import WaitAction
+
 logger = logging.getLogger(__name__)
+
+LAUNCH_RECHECK_WAIT = 1.5
+
+
+def _terminal_outcome(
+    run_result: DeviceRunResult,
+    stop_reason: Optional[str],
+    verifications: List[RuleVerification],
+    issues: List[QAIssue],
+    outputs: List[QAStepResponse],
+):
+    """Classify outcomes that cannot become a successful verification."""
+    from ronin.utils.redactor import redact_text
+
+    if run_result.status == "hook_stop" and stop_reason and "infeasible" in stop_reason.lower():
+        return "SKIPPED", stop_reason
+    if run_result.status == "exception":
+        return "ERROR", redact_text(run_result.failure_reason or "Execution exception")
+    if run_result.status in ("loop_detected", "step_limit"):
+        return "UNVERIFIED", run_result.failure_reason
+    if any(issue.issue_type == "crash_screen" for issue in issues):
+        return "FAILED", "App crashed: crash screen detected."
+    critical = next((issue for issue in issues if issue.severity == "critical"), None)
+    if critical:
+        return "FAILED", f"Critical QA issue: {critical.description}"
+    violated = _violated_security_rule(verifications)
+    if violated:
+        return "FAILED", f"Security rule violated: {violated.rule}"
+    failed = next(
+        (
+            verification
+            for verification in _latest_by_id(verifications).values()
+            if verification.status == "failed"
+        ),
+        None,
+    )
+    if failed:
+        return "FAILED", f"Rule validation failed: {failed.rule}"
+    if outputs and not outputs[-1].is_scenario_feasible:
+        return "SKIPPED", outputs[-1].infeasibility_reason or "Scenario infeasible"
+    return None
+
+
+def _defer_first_look(step_response, first_look: bool) -> bool:
+    """Withdraws a terminal verdict taken before the app may have finished drawing.
+
+    A launching app shows an empty screen for a moment, which reads as both
+    crashed and infeasible. One more step costs little; a false crash report
+    costs a red build. The response's own action has to be withdrawn too — it
+    is almost always `done`, and the run loop acts on it the moment this
+    returns, so clearing the verdict alone would change the label and nothing
+    else. Returns whether a verdict was withdrawn.
+    """
+    if not first_look:
+        return False
+
+    deferred = False
+    if any(i.issue_type == "crash_screen" for i in step_response.detected_issues):
+        logger.warning("Crash screen on the first look — re-checking next step.")
+        step_response.detected_issues = [
+            i for i in step_response.detected_issues if i.issue_type != "crash_screen"
+        ]
+        deferred = True
+    if not step_response.is_scenario_feasible:
+        logger.warning("Infeasible on the first look — re-checking next step.")
+        step_response.is_scenario_feasible = True
+        deferred = True
+
+    if deferred:
+        # Whatever the action was, it was chosen from the same screen the
+        # verdict came from. Acting on it would trust a reading we just said
+        # not to trust — and `done` would end the run before the second look.
+        step_response.action = WaitAction(
+            duration=LAUNCH_RECHECK_WAIT,
+            reason="Looking again before judging a screen the app may still be drawing.",
+        )
+    return deferred
+
+
+def _latest_by_id(verifications: List[RuleVerification]) -> dict:
+    """The last answer recorded for each identified rule.
+
+    Every rule is evaluated on every screen, so a scenario accumulates many
+    answers per rule — including "not yet" from screens reached before the rule
+    could possibly hold. The final answer is the one that describes the run.
+    """
+    latest = {}
+    for verification in verifications:
+        if verification.rule_id:
+            latest[verification.rule_id] = verification
+    return latest
+
+
+def _violated_security_rule(verifications: List[RuleVerification]):
+    """A security rule failing anywhere is a violation, however the run ended.
+
+    Unlike an expected outcome, these describe what must never happen: a
+    password exposed at step 4 stays exposed, whatever step 9 shows.
+    """
+    return next(
+        (
+            verification
+            for verification in verifications
+            if verification.status == "failed"
+            and (verification.rule_id or "").startswith("security:")
+        ),
+        None,
+    )
+
+
+def _missing_required_ids(
+    verifications: List[RuleVerification],
+    required_outcomes: List[str],
+    security_rules: List[str],
+) -> list[str]:
+    """Lists the required assertions a scenario ended without evidencing.
+
+    The two kinds are judged differently because they mean different things.
+
+    An expected outcome describes where the scenario ends up, so the latest
+    answer decides it — earlier "not yet" answers are honest reports from
+    screens reached before it could hold.
+
+    A security rule describes what must never happen. The planner reports on
+    every rule on every screen, so merely being mentioned proves nothing; it
+    counts as required only once some screen could actually have broken it,
+    and once evidenced there it stays evidenced regardless of later screens
+    that have nothing to do with it.
+    """
+    expected_ids = {f"expected:{index}" for index, _ in enumerate(required_outcomes)}
+    security_ids = {f"security:{index}" for index, _ in enumerate(security_rules)}
+    applicable = {
+        verification.rule_id
+        for verification in verifications
+        if verification.rule_id and verification.applicable
+    }
+    evidenced = {
+        verification.rule_id
+        for verification in verifications
+        if verification.rule_id
+        and verification.applicable
+        and verification.status == "passed"
+    }
+    latest = _latest_by_id(verifications)
+    settled = {
+        rule_id
+        for rule_id in expected_ids
+        if (verification := latest.get(rule_id))
+        and verification.applicable
+        and verification.status == "passed"
+    }
+    required_ids = expected_ids | (security_ids & applicable)
+    return sorted(required_ids - settled - (evidenced & security_ids))
 
 
 class QAAgent:
@@ -108,6 +264,9 @@ class QAAgent:
 
             qa_outputs.append(step_response)
 
+            if _defer_first_look(step_response, len(qa_outputs) == 1):
+                return None
+
             if any(i.issue_type == "crash_screen" for i in step_response.detected_issues):
                 logger.error("App crash screen detected — stopping scenario.")
                 stop_reason["value"] = "App crashed: crash screen detected."
@@ -128,11 +287,27 @@ class QAAgent:
 
             return None
 
+        unsupported = unsupported_reason(test_case)
+        if unsupported:
+            return ScenarioReport(
+                test_id=test_case.test_id,
+                scenario_name=test_case.scenario_name,
+                classification=test_case.classification,
+                status="UNSUPPORTED",
+                duration=round(time.time() - start_time, 2),
+                failure_reason=unsupported,
+            )
+
+        # OCR caches are useful within a scenario but are evidence from the
+        # wrong run once the app has been restarted.
+        perception.reset()
+
         qa_planner = QAPlanner(
             llm_client=self._fast_llm,
             use_multimodal_vision=self._use_multimodal_vision,
             test_case=test_case,
             security_rules=security_rules,
+            scrubber=self._device_agent.scrubber,
         )
 
         replay = self._device_agent.replay_ledger
@@ -142,10 +317,6 @@ class QAAgent:
             # whole point of these scenarios.
             self._device_agent.replay_ledger = None
 
-        self._device_agent.scrubber.learn_from_instructions(test_case.steps_instructions)
-        self._device_agent.scrubber.learn_from_instructions(test_case.expected_outcomes)
-        self._device_agent.scrubber.learn_from_instructions(security_rules)
-
         step_budget = self._step_budget(test_case)
         logger.info(
             "Scenario %s: %d instruction(s), %d step budget",
@@ -154,18 +325,19 @@ class QAAgent:
             step_budget,
         )
 
-        run_result: DeviceRunResult = self._device_agent.run(
-            goal=test_case.steps_instructions,
-            device_control=device_control,
-            perception=perception,
-            session_dir=session_dir,
-            session_trail=session_trail,
-            step_hook=step_hook,
-            planner_override=qa_planner,
-            max_steps=step_budget,
-        )
-
-        self._device_agent.replay_ledger = replay
+        try:
+            run_result: DeviceRunResult = self._device_agent.run(
+                goal=test_case.steps_instructions,
+                device_control=device_control,
+                perception=perception,
+                session_dir=session_dir,
+                session_trail=session_trail,
+                step_hook=step_hook,
+                planner_override=qa_planner,
+                max_steps=step_budget,
+            )
+        finally:
+            self._device_agent.replay_ledger = replay
 
         return self._build_report(
             test_case=test_case,
@@ -173,6 +345,7 @@ class QAAgent:
             qa_outputs=qa_outputs,
             stop_reason=stop_reason["value"],
             duration=time.time() - start_time,
+            security_rules=security_rules,
         )
 
     def _build_report(
@@ -182,6 +355,7 @@ class QAAgent:
         qa_outputs: List[QAStepResponse],
         stop_reason: Optional[str],
         duration: float,
+        security_rules: List[str],
     ) -> ScenarioReport:
         all_verifications: List[RuleVerification] = []
         all_issues: List[QAIssue] = []
@@ -214,6 +388,8 @@ class QAAgent:
             all_verifications=all_verifications,
             all_issues=all_issues,
             qa_outputs=qa_outputs,
+            required_outcomes=test_case.expected_outcomes,
+            security_rules=security_rules,
         )
 
         return ScenarioReport(
@@ -235,34 +411,32 @@ class QAAgent:
         all_verifications: List[RuleVerification],
         all_issues: List[QAIssue],
         qa_outputs: List[QAStepResponse],
+        required_outcomes: List[str],
+        security_rules: List[str],
     ):
-        from ronin.utils.redactor import redact_text
-
-        if run_result.status == "hook_stop" and stop_reason and "infeasible" in stop_reason.lower():
-            return "SKIPPED", stop_reason
-
-        if run_result.status == "exception":
-            return "FAILED", redact_text(run_result.failure_reason or "Execution exception")
-
-        if run_result.status in ("loop_detected", "step_limit"):
-            return "FAILED", run_result.failure_reason
-
-        if any(i.issue_type == "crash_screen" for i in all_issues):
-            return "FAILED", "App crashed: crash screen detected."
-
-        critical_issue = next(
-            (i for i in all_issues if i.severity == "critical"), None
+        terminal = _terminal_outcome(
+            run_result, stop_reason, all_verifications, all_issues, qa_outputs
         )
-        if critical_issue:
-            return "FAILED", f"Critical QA issue: {critical_issue.description}"
+        if terminal:
+            return terminal
 
-        failed_rule = next(
-            (v for v in all_verifications if v.status == "failed"), None
+        if run_result.status != "goal_reached" or not qa_outputs:
+            return "UNVERIFIED", "The scenario did not produce verified completion evidence."
+
+        final = qa_outputs[-1]
+        if not final.goal_satisfied or not final.goal_evidence.strip():
+            return (
+                "UNVERIFIED",
+                "The planner stopped without observable goal evidence on the final screen.",
+            )
+
+        missing = _missing_required_ids(
+            all_verifications, required_outcomes, security_rules
         )
-        if failed_rule:
-            return "FAILED", f"Rule validation failed: {failed_rule.rule}"
-
-        if qa_outputs and not qa_outputs[-1].is_scenario_feasible:
-            return "SKIPPED", qa_outputs[-1].infeasibility_reason or "Scenario infeasible"
+        if missing:
+            return (
+                "UNVERIFIED",
+                "Required verification evidence is missing or untested: " + ", ".join(missing),
+            )
 
         return "PASSED", None

@@ -46,11 +46,32 @@ A journey file describes the flow to test and any security rules Ronin should en
 ```yaml
 id: sign_in
 name: Sign in and open settings
+env:
+  email: test@example.com
+  password:
+    value: ${RONIN_TEST_PASSWORD}
+    secret: true
 journey: >
-  Sign in with test@example.com and open the settings screen.
+  Sign in with {{email}} and {{password}}, then open the settings screen.
 security_rules:
   - The user's password must never be shown in plain text.
 ```
+
+`env` declares the values a journey uses and `{{name}}` inserts them into its
+text. `${VAR}` reads from the environment, so a real credential never has to be
+committed. Write a plain value for ordinary data, or give it a `value` and
+`secret: true` to mark it sensitive — a top-level `secrets:` list of names works
+too. A `${VAR}` that is not set fails the journey rather than running as a
+blank value.
+
+Values declared as secret are masked by name in the Markdown and JUnit reports,
+the progress file, the logs and the perception scan dumps — all of which show
+`{{password}}` — and the screen regions holding them are blacked out in saved
+screenshots. Screen recordings are **not** redacted; turn recording off for a
+flow whose secrets must not be captured. The agent itself always receives the real values:
+it cannot type a password it was not given, and it cannot audit a rule like "the
+card number must never be shown in plain text" if the card number is hidden from
+it. Both blocks are optional.
 
 Run it with:
 
@@ -61,6 +82,21 @@ uv run ronin test path/to/journey.yaml --app-path path/to/app.apk
 See [`example/checkout_journey.yaml`](example/checkout_journey.yaml) for a complete example. Journey files may be YAML or JSON and may contain one journey or a suite of journeys.
 
 Ronin writes Markdown and JUnit reports, LLM usage data, and annotated screenshots to `assets/` by default.
+
+Generated suites are capped at 10 scenarios. Ronin only generates assertions it
+can currently evidence from screenshots, detected UI text, action outcomes, and
+elapsed execution. Network traffic, HTTP headers, semantic accessibility trees,
+screen readers, focus order, and measured contrast ratios require separate
+specialist tooling and are reported as unsupported if supplied manually.
+
+Scenario results distinguish app failures from harness and evidence failures:
+`FAILED` means an observed app assertion failed; `ERROR` and `ABORTED` identify
+infrastructure or interruption; `UNVERIFIED` means required proof was missing;
+and `UNSUPPORTED` means the runtime lacks the requested evidence source. Only
+`PASSED` counts as verified success. Progress, Markdown, JUnit, and usage files
+are written atomically, with partial Markdown/JUnit checkpoints maintained
+during a run. Values a journey declares as secret are masked by name in
+persisted text and covered in saved screenshots, except screen recordings.
 
 ## Run a single goal
 

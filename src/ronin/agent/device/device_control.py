@@ -46,6 +46,7 @@ class DeviceControl:
         platform: Platform = Platform.ANDROID,
         keep_device: bool = False,
         reuse_app: bool = False,
+        server_url: str = "http://localhost:4723",
     ):
         self.platform = platform
         self.device_name = device_name
@@ -53,6 +54,7 @@ class DeviceControl:
         self.bundle_id = None
         self.keep_device = keep_device
         self.reuse_app = reuse_app
+        self.server_url = server_url
         if platform == Platform.IOS:
             options = XCUITestOptions()
             options.platform_name = "iOS"
@@ -63,6 +65,9 @@ class DeviceControl:
             options.set_capability("appium:enforceAppInstall", not reuse_app)
             self.adb_control = None
         else:
+            self._device_was_running = bool(
+                AdbControl.resolve_emulator_serial(device_name)
+            )
             options = UiAutomator2Options()
             options.app = app_path
             options.platform_name = "Android"
@@ -109,7 +114,7 @@ class DeviceControl:
         whatever the emulator actually complained about.
         """
         try:
-            return webdriver.Remote("http://localhost:4723", options=options)
+            return webdriver.Remote(self.server_url, options=options)
         except WebDriverException as exc:
             message = str(exc)
             if "getting AVD" not in message and "Condition unmet" not in message:
@@ -164,18 +169,13 @@ class DeviceControl:
         return self.driver.get_screenshot_as_png()
 
     def __tap_screen(self, x, y):
-        try:
-            touch = PointerInput("touch", "finger")
-            builder = ActionBuilder(self.driver, mouse=touch)
-            builder.pointer_action.move_to_location(x, y)
-            builder.pointer_action.pointer_down()
-            builder.pointer_action.pause(0.1)
-            builder.pointer_action.release()
-            builder.perform()
-        except Exception as e:
-            logger.error("Failed to tap at (%s, %s): %s", x, y, e)
-            return False
-        return True
+        touch = PointerInput("touch", "finger")
+        builder = ActionBuilder(self.driver, mouse=touch)
+        builder.pointer_action.move_to_location(x, y)
+        builder.pointer_action.pointer_down()
+        builder.pointer_action.pause(0.1)
+        builder.pointer_action.release()
+        builder.perform()
 
     def tap(self, x, y, with_feedback: bool = True):
         if with_feedback:
@@ -361,24 +361,14 @@ class DeviceControl:
             end_y: Ending y coordinate.
             duration_ms: Duration of the swipe gesture in milliseconds.
         """
-        try:
-            touch = PointerInput("touch", "finger")
-            builder = ActionBuilder(self.driver, mouse=touch)
-            builder.pointer_action.move_to_location(start_x, start_y)
-            builder.pointer_action.pointer_down()
-            builder.pointer_action.pause(duration_ms / 1000)
-            builder.pointer_action.move_to_location(end_x, end_y)
-            builder.pointer_action.release()
-            builder.perform()
-        except Exception as e:
-            logger.error(
-                "Failed to swipe from (%s, %s) to (%s, %s): %s",
-                start_x,
-                start_y,
-                end_x,
-                end_y,
-                e,
-            )
+        touch = PointerInput("touch", "finger")
+        builder = ActionBuilder(self.driver, mouse=touch)
+        builder.pointer_action.move_to_location(start_x, start_y)
+        builder.pointer_action.pointer_down()
+        builder.pointer_action.pause(duration_ms / 1000)
+        builder.pointer_action.move_to_location(end_x, end_y)
+        builder.pointer_action.release()
+        builder.perform()
         time.sleep(0.5)
 
     def remove_app(self, package_id):
@@ -398,7 +388,7 @@ class DeviceControl:
                 AdbControl.disable_feedback(serial)
             except Exception as e:
                 logger.warning("Failed to disable feedback: %s", e)
-            if self.keep_device:
+            if self.keep_device or getattr(self, "_device_was_running", False):
                 logger.info("Leaving '%s' running for the next run.", self.device_name)
                 return
             try:

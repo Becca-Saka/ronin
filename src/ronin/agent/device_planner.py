@@ -144,6 +144,52 @@ class DevicePlanner:
         )
         return response
 
+    def _action_vocabulary(self) -> str:
+        """The action schema both planners offer the model.
+
+        Defined once: QAPlanner subclasses this planner, and when the two kept
+        their own copies they drifted into contradicting each other.
+        """
+        caps_desc = "\n".join(
+            f"   - {cap.value}: {CAPABILITY_SCHEMAS.get(cap, '{}')}"
+            for cap in CapabilityType
+        )
+        return (
+            """
+### Allowed Action Types
+Each action must have a `type` field set to one of:
+- "tap": Tap at coordinates. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
+- "type": Type text into a field. Fields: `type`, `text`, `coordinates` as {"x": int, "y": int}, `reason`.
+- "clear": Clear a text field. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
+- "double_tap": Double-tap. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
+- "long_press": Long press. Fields: `type`, `duration` (float seconds), `coordinates` as {"x": int, "y": int}, `reason`.
+- "drag_and_drop": Drag from source to destination. Fields: `type`, `source_x`, `source_y`, `destination_x`, `destination_y`, `reason`.
+- "key_event": Trigger a key event. Fields: `type`, `key` (int keycode: 4=back, 3=home, 66=enter, 67=backspace), `reason`.
+- "swipe": Swipe from start to end. Fields: `type`, `start_x`, `start_y`, `end_x`, `end_y`, `reason`.
+- "wait": Let the screen finish loading or animating. Fields: `type`, `duration` (float seconds), `reason`. Use this instead of giving up when the screen looks empty or half-drawn.
+- "capability": System-level control. Fields: `type`, `capability`, `parameters` (dict), `reason`.
+  Available capabilities:
+"""
+            + caps_desc
+            + """
+- "done": Goal complete or execution must stop. Fields: `type`, `reason`.
+"""
+        )
+
+    def _action_constraints(self) -> str:
+        """The rules for choosing an action. Shared with QAPlanner — see above."""
+        return """
+CRITICAL CONSTRAINTS:
+1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
+2. For "type", you MUST provide both `text` AND `coordinates` of the target field.
+3. "type" focuses the field at those coordinates itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
+4. The soft keyboard blocks taps on anything behind it. If your next target is a button or control in the lower half of the screen (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app. After dismissal, use the fresh element list for coordinates.
+5. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
+6. When the keyboard is visible and you need to TYPE into a field, use text_field/input elements from the CURRENT scan in the upper portion of the screen (above the keyboard). Ignore bottom-portion detections — those are keyboard keys.
+7. You MUST use center coordinates from the Current UI Elements list. If a target you need is missing because the keyboard obscures it, do not guess coordinates from older screenshots — dismiss the keyboard (rule 4) and plan from the next scan. Older screenshots in the message are context only; they are not a coordinate source unless multimodal override is enabled.
+8. After any event that changes the layout — keyboard opening or closing, navigation, a modal, a scroll — treat the next element list as a new layout and re-read every coordinate from it.
+"""
+
     def _build_prompt(
         self,
         goal_lines: List[str],
@@ -154,11 +200,6 @@ class DevicePlanner:
         loop_nudge: Optional[str],
         keyboard_open: Optional[bool] = None,
     ) -> str:
-        caps_desc = "\n".join(
-            f"   - {cap.value}: {CAPABILITY_SCHEMAS.get(cap, '{}')}"
-            for cap in CapabilityType
-        )
-
         kb_line = ""
         if keyboard_open is True:
             kb_line = "\n### Keyboard State\nVISIBLE — the soft keyboard is currently displayed. Elements in the lower ~40% of the screen may be keyboard keys, not app UI.\n"
@@ -192,31 +233,7 @@ Your job is to execute the steps below by interacting with the app one action at
 ### LOOP DETECTION ADVISORY
 {loop_nudge}
 """
-        prompt += f"""
-### Allowed Action Types
-Each action must have a `type` field set to one of:
-- "tap": Tap at coordinates. Fields: `type`, `coordinates` (x, y), `reason`.
-- "type": Type text into a field. Fields: `type`, `text`, `coordinates` (x, y), `reason`.
-- "clear": Clear a text field. Fields: `type`, `coordinates` (x, y), `reason`.
-- "double_tap": Double-tap. Fields: `type`, `coordinates` (x, y), `reason`.
-- "long_press": Long press. Fields: `type`, `duration` (float seconds), `coordinates` (x, y), `reason`.
-- "drag_and_drop": Drag from source to destination. Fields: `type`, `source_x`, `source_y`, `destination_x`, `destination_y`, `reason`.
-- "key_event": Trigger a key event. Fields: `type`, `key` (int keycode: 4=back, 3=home, 66=enter, 67=backspace), `reason`.
-- "swipe": Swipe from start to end. Fields: `type`, `start_x`, `start_y`, `end_x`, `end_y`, `reason`.
-- "capability": System-level control. Fields: `type`, `capability`, `parameters` (dict), `reason`.
-  Available capabilities:
-{caps_desc}
-- "done": Goal complete or execution must stop. Fields: `type`, `reason`.
-
-CRITICAL CONSTRAINTS:
-1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
-2. For "type", you MUST provide both `text` AND `coordinates` of the target field.
-3. "type" focuses the field at those coordinates itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
-4. The soft keyboard blocks taps on anything behind it. If your next target is a button or control in the lower half of the screen (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app. After dismissal, use the fresh element list for coordinates.
-5. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
-6. When the keyboard is visible and you need to TYPE into a field, use text_field/input elements from the CURRENT scan in the upper portion of the screen (above the keyboard). Ignore bottom-portion detections — those are keyboard keys.
-7. You MUST use center coordinates from the Current UI Elements list. If a target you need is missing because the keyboard obscures it, do not guess coordinates from older screenshots — dismiss the keyboard (rule 4) and plan from the next scan. Older screenshots in the message are context only; they are not a coordinate source unless multimodal override is enabled.
-"""
+        prompt += self._action_vocabulary() + self._action_constraints()
         prompt += """
 ### Response Instructions
 1. Set `current_screen` to the descriptive name of the screen you currently see.

@@ -1,13 +1,27 @@
 from enum import Enum
-from typing import Literal, Annotated
+from typing import Any, Literal, Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # --- Basic Building Blocks ---
 class Coordinates(BaseModel):
     x: int = Field(..., description="The x coordinate in pixels.")
     y: int = Field(..., description="The y coordinate in pixels.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_pairs(cls, value: Any) -> Any:
+        """Accepts [x, y] as well as {"x": .., "y": ..}.
+
+        Models routinely answer with a pair even when the schema asks for an
+        object, and the request cannot insist: provider-side schema enforcement
+        is off. Rejecting the pair fails the whole step response and kills the
+        scenario, so the pair is read for what it plainly is.
+        """
+        if isinstance(value, (list, tuple)) and len(value) == 2:
+            return {"x": value[0], "y": value[1]}
+        return value
 
 
 class ActionType(str, Enum):
@@ -20,6 +34,7 @@ class ActionType(str, Enum):
     SWIPE = "swipe"
     CAPABILITY = "capability"
     CLEAR = "clear"
+    WAIT = "wait"
 
 
 class CapabilityType(str, Enum):
@@ -135,6 +150,16 @@ class CapabilityAction(BaseModel):
     reason: str = Field(..., description="How the capability control helps achieve the test goal.")
 
 
+class WaitAction(BaseModel):
+    """Waits before the next observation so transient rendering can finish."""
+
+    type: Literal[ActionType.WAIT] = ActionType.WAIT
+    duration: float = Field(
+        default=1.0, description="Seconds to wait before looking at the screen again."
+    )
+    reason: str = Field(..., description="What the screen is expected to finish doing.")
+
+
 # --- The Union of All Actions ---
 Action = Annotated[
     TypeAction
@@ -145,7 +170,8 @@ Action = Annotated[
     | KeyEventAction
     | SwipeAction
     | CapabilityAction
-    | ClearAction,
+    | ClearAction
+    | WaitAction,
     Field(discriminator="type")
 ]
 

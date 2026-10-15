@@ -1,8 +1,10 @@
-"""Keeping secret values out of prompts and logs.
+"""Pattern-based masking for text Ronin is about to persist.
 
-Labels are not secrets. A field captioned "Password" has to stay readable or
-the planner cannot tell which field to type into — only the value entered
-into such a field is worth hiding.
+Nothing here runs on what the planner reads. It sees the screen as it is — it
+has to recognise the field captioned "Password" to type into it, and it cannot
+audit a rule about an exposed card number while card numbers are hidden from
+it. These patterns are a backstop behind a journey's declared secrets, for a
+value an author forgot to declare.
 """
 
 import re
@@ -21,7 +23,12 @@ SENSITIVE_PATTERNS = [
 
 
 def redact_text(text: str) -> str:
-    """Redacts card numbers, CVVs and labelled credential values from free text."""
+    """Redacts card numbers, CVVs and labelled credential values from free text.
+
+    A backstop for persisted text only, behind a journey's declared `secrets`:
+    it catches a value the author forgot to declare. Never call it on what the
+    planner reads — see the module docstring.
+    """
     if not isinstance(text, str):
         return text if text is not None else ""
     for pattern, repl in SENSITIVE_PATTERNS:
@@ -49,4 +56,16 @@ def redact_elements(elements):
     for el in elements:
         if el.text:
             el.text = redact_text(el.text)
+    return elements
+
+
+def scrub_elements(elements, scrubber):
+    """Masks declared secrets in detected element text, for persisted copies only.
+
+    Never call this on elements headed for the planner. It reads the screen to
+    navigate it and to audit it; both break if the text is altered first.
+    """
+    for element in elements or []:
+        if element.text:
+            element.text = scrubber.scrub(element.text)
     return elements
