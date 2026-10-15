@@ -15,6 +15,7 @@ from typing import List, Optional
 
 from pydantic import Field, model_validator
 
+from ronin.agent.perception.marks import DETAIL_NUMBERS
 from ronin.agent.device_planner import (
     GROUNDING_COORDINATES,
     GROUNDING_MARKS,
@@ -112,8 +113,9 @@ class QAPlanner(DevicePlanner):
         security_rules: List[str] = None,
         scrubber=None,
         grounding: str = GROUNDING_COORDINATES,
+        mark_detail: str = DETAIL_NUMBERS,
     ):
-        super().__init__(llm_client, use_multimodal_vision, grounding)
+        super().__init__(llm_client, use_multimodal_vision, grounding, mark_detail)
         self._test_case = test_case
         from ronin.utils.secrets import SecretScrubber
 

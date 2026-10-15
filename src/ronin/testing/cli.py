@@ -8,6 +8,7 @@ from typing import Any, List, Optional
 
 from ronin.agent.device.platform import Platform
 from ronin.agent.device_planner import GROUNDING_COORDINATES, GROUNDING_MARKS
+from ronin.agent.perception.marks import DETAIL_NONE, DETAIL_NUMBERS, DETAIL_TEXT
 from ronin.app_discovery import find_journey_files, resolve_app_path
 from ronin.config import Config, load_config
 from .journey_env import resolve, substitute
@@ -54,6 +55,13 @@ class RoninCLI:
             "'marks', where every detected element is numbered on the screenshot "
             "and the planner selects a number, which Ronin validates against the "
             "detected set before anything is executed",
+        )
+        parser.add_argument(
+            "--mark-detail",
+            choices=[DETAIL_NUMBERS, DETAIL_TEXT, DETAIL_NONE],
+            help="What accompanies the numbered screenshot in marks mode: "
+            "'numbers' (default) lists the valid numbers only, 'text' adds the "
+            "detected text, 'none' sends the picture alone",
         )
         parser.add_argument(
             "--replay",
@@ -243,6 +251,7 @@ class RoninCLI:
             record_session=record_val,
             replay=bool(args.replay),
             grounding=setting("grounding", args.grounding) or GROUNDING_COORDINATES,
+            mark_detail=setting("mark_detail", args.mark_detail) or DETAIL_NUMBERS,
         )
         
         logger.info("==================================================")
