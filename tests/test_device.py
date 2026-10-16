@@ -249,7 +249,7 @@ class CapabilityTests(unittest.TestCase):
 
 
 class CapabilityMatchingTests(unittest.TestCase):
-    """Seeing a contrasting element is observable; measuring a ratio is not."""
+    """Seeing a contrasting element is observable. Measuring a ratio is not."""
 
     def _reason(self, *instructions):
         from ronin.testing.capabilities import unsupported_reason

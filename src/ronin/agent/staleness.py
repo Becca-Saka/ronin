@@ -1,13 +1,13 @@
 """Checking that the screen still looks like the one the plan was made from.
 
-Several seconds pass between reading the screen and acting on it — a model call
-is not instant. In that gap a keyboard opens, a list populates, a banner lands,
-and the coordinates the planner chose now point at something else. The tap is
-accurate and lands on the wrong thing.
+Several seconds pass between reading the screen and acting on it, because a
+model call is not instant. In that gap a keyboard opens, a list populates or a
+banner lands, and the coordinates the planner chose now point at something
+else. The tap is accurate and lands on the wrong thing.
 
 So we look once more immediately before acting, at the target only. Comparing
 the whole screen would trip on every animation elsewhere and throw away good
-plans; what matters is whether the thing we are about to touch has moved.
+plans. What matters is whether the thing we are about to touch has moved.
 """
 
 import io
@@ -44,7 +44,7 @@ def has_target(action) -> bool:
 def target_region(action, gui_elements, screen: Tuple[int, int]) -> Optional[Box]:
     """The area to re-check: the element being targeted, or a patch around the point.
 
-    A point inside no detected element still gets checked — that is exactly the
+    A point inside no detected element still gets checked. That is exactly the
     invented-coordinate case, and a patch is the only thing left to compare.
     """
     point = _point(action)
@@ -80,9 +80,9 @@ def _mean_absolute_error(before: Image.Image, after: Image.Image, box: Box) -> f
 def target_moved(before_png: bytes, after_png: bytes, action, gui_elements) -> bool:
     """Whether the action's target changed between planning and now.
 
-    Returns False whenever the question cannot be answered — an unreadable
-    screenshot or an action with no single target is not evidence of movement,
-    and refusing to act on no evidence would strand the run.
+    Returns False whenever the question cannot be answered. An unreadable
+    screenshot, or an action with no single target, is not evidence of
+    movement. Refusing to act on no evidence would strand the run.
     """
     try:
         before = Image.open(io.BytesIO(before_png)).convert("RGB")

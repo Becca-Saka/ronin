@@ -58,7 +58,7 @@ def _walk(root: Path, depth: int):
         return
     for child in children:
         if child.is_dir() and child.name not in IGNORED_DIRS:
-            # An .app bundle is a directory; do not descend into it.
+            # An .app bundle is a directory, so do not descend into it.
             if child.suffix in IOS_SUFFIXES:
                 continue
             yield from _walk(child, depth - 1)
@@ -149,9 +149,9 @@ def _file_digest(path: Path) -> str:
 def distinct_binaries(paths: list[Path]) -> list[list[Path]]:
     """Groups paths holding the same bytes together, keeping the ranked order.
 
-    Build tools routinely copy the same artifact to two places — Gradle's
-    output and the copy a wrapper makes beside it — and that is not a choice
-    worth bothering anyone about.
+    Build tools routinely copy the same artifact to two places, such as a
+    build output and a copy made beside it. That is not a choice worth
+    bothering anyone about.
     """
     groups: list[list[Path]] = []
     signatures: dict[tuple[int, str], int] = {}
@@ -220,8 +220,8 @@ def resolve_app_path(
     """Resolves the app binary, searching nearby when none was given.
 
     A relative path is tried against the working directory first, then against
-    the other search directories, so a journey file can name a binary beside
-    itself however Ronin was invoked.
+    the other search directories. A journey file can then name a binary beside
+    itself, however Ronin was invoked.
     """
     if explicit:
         candidate = Path(explicit).expanduser()

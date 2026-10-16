@@ -1,8 +1,8 @@
 """One way to run a command, and one failure to catch when it does not work.
 
 Callers care about two things: the output, or the reason there is none. A
-missing binary and a non-zero exit are the same event to them, so both arrive
-as SubprocessRunError and nothing has to catch OSError alongside it.
+missing binary and a non-zero exit are the same event to them, and both arrive
+as SubprocessRunError. Nothing has to catch OSError alongside it.
 """
 
 import logging

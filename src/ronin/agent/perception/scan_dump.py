@@ -40,7 +40,7 @@ class ScanInfo:
 def element_to_dict(el: GUIElement, index: int, scrubber=None) -> dict[str, Any]:
     """Serializes one element, masking declared secrets in its detected text.
 
-    A scan dump is a file, so a password the app happens to be displaying would
+    A scan dump is a file, so a password the app happens to be showing would
     otherwise be written out verbatim. The planner reads the element itself,
     never this.
     """

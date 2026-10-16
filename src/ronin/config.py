@@ -1,9 +1,14 @@
 """Resolved settings for every Ronin command.
 
-Precedence, strongest first: an explicit CLI flag, a RONIN_* environment
-variable, ./ronin.yaml in the working directory or any parent, the global
-~/.ronin/config.yaml, then the built-in defaults. Each value remembers where
-it came from so `ronin config` can explain itself.
+Precedence, strongest first:
+
+1. an explicit CLI flag
+2. a RONIN_* environment variable
+3. ./ronin.yaml in the working directory or any parent
+4. the global ~/.ronin/config.yaml
+5. the built-in defaults
+
+Each value remembers where it came from, so `ronin config` can explain itself.
 """
 
 import logging
@@ -88,14 +93,14 @@ class Config:
         """Which platforms a command covers.
 
         Without an explicit choice, follow the configured target rather than
-        assuming both: an Android-only user should not be told that a missing
+        assuming both. An Android-only user should not be told that a missing
         iOS driver blocks them.
         """
         choice = requested or self.values["platform"]
         return ("android", "ios") if choice == "all" else (choice,)
 
     def resolve(self, name: str, override: Any = None) -> Any:
-        """An explicit CLI value wins; otherwise the resolved setting applies."""
+        """An explicit CLI value wins. Otherwise the resolved setting applies."""
         if override is None or override is False:
             return self.values[name]
         return override

@@ -86,11 +86,14 @@ def _defer_first_look(step_response, first_look: bool) -> bool:
     """Withdraws a terminal verdict taken before the app may have finished drawing.
 
     A launching app shows an empty screen for a moment, which reads as both
-    crashed and infeasible. One more step costs little; a false crash report
-    costs a red build. The response's own action has to be withdrawn too — it
-    is almost always `done`, and the run loop acts on it the moment this
-    returns, so clearing the verdict alone would change the label and nothing
-    else. Returns whether a verdict was withdrawn.
+    crashed and infeasible. One more step costs little. A false crash report
+    costs a red build.
+
+    The response's own action has to be withdrawn too. It is almost always
+    `done`, and the run loop acts on it the moment this returns. Clearing the
+    verdict alone would change the label and nothing else.
+
+    Returns whether a verdict was withdrawn.
     """
     if not first_look:
         return False
@@ -122,8 +125,8 @@ def _latest_by_id(verifications: List[RuleVerification]) -> dict:
     """The last answer recorded for each identified rule.
 
     Every rule is evaluated on every screen, so a scenario accumulates many
-    answers per rule — including "not yet" from screens reached before the rule
-    could possibly hold. The final answer is the one that describes the run.
+    answers per rule. Some are "not yet", from screens reached before the rule
+    could hold. The final answer is the one that describes the run.
     """
     latest = {}
     for verification in verifications:
@@ -159,14 +162,13 @@ def _missing_required_ids(
     The two kinds are judged differently because they mean different things.
 
     An expected outcome describes where the scenario ends up, so the latest
-    answer decides it — earlier "not yet" answers are honest reports from
-    screens reached before it could hold.
+    answer decides it. An earlier "not yet" is an honest report from a screen
+    reached before the outcome could hold.
 
     A security rule describes what must never happen. The planner reports on
-    every rule on every screen, so merely being mentioned proves nothing; it
-    counts as required only once some screen could actually have broken it,
-    and once evidenced there it stays evidenced regardless of later screens
-    that have nothing to do with it.
+    every rule on every screen, so a mention alone proves nothing. A rule
+    counts as required only once some screen could have broken it. Once
+    evidenced there, it stays evidenced, whatever later screens show.
     """
     expected_ids = {f"expected:{index}" for index, _ in enumerate(required_outcomes)}
     security_ids = {f"security:{index}" for index, _ in enumerate(security_rules)}
@@ -247,9 +249,9 @@ class QAAgent:
     def _step_budget(self, test_case: GeneratedTestCase) -> int:
         """How many agent steps a scenario may use.
 
-        Scenarios differ wildly in size — a five-line security check and a
-        nineteen-line end-to-end order cannot share one number — so each gets
-        a budget from its own instructions, under the configured ceiling.
+        Scenarios differ widely in size, and a short check cannot share one
+        number with a long end-to-end order. So each gets a budget from its own
+        instructions, under the configured ceiling.
         """
         wanted = len(test_case.steps_instructions) * STEP_BUDGET_PER_INSTRUCTION
         ceiling = self._device_agent.max_steps

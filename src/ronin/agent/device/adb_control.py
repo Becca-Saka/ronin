@@ -58,7 +58,7 @@ class AdbControl:
 
     @staticmethod
     def get_apk_info(apk_path):
-        """Inspects badging info inside a built APK file to fetch its Package ID and launchable activity.
+        """Inspects badging info inside a built APK file to get its Package ID and launchable activity.
 
         Args:
             apk_path: The filesystem path to the target APK.
@@ -87,7 +87,7 @@ class AdbControl:
 
         Args:
             serial: The target device serial number.
-            enabled: True to display touch highlights, False to turn them off.
+            enabled: True to show touch highlights, False to turn them off.
         """
         val = "1" if enabled else "0"
         command = ["adb", "-s", serial, "shell", "settings", "put", "system", "show_touches", val]
@@ -99,7 +99,7 @@ class AdbControl:
 
         Args:
             serial: The target device serial number.
-            enabled: True to display trace details, False to turn them off.
+            enabled: True to show trace details, False to turn them off.
         """
         val = "1" if enabled else "0"
         command = ["adb", "-s", serial, "shell", "settings", "put", "system", "pointer_location", val]
@@ -112,7 +112,7 @@ class AdbControl:
 
         Args:
             serial: The target device serial number.
-            pointer_location: True to display pointer coordinates, False otherwise.
+            pointer_location: True to show pointer coordinates, False otherwise.
             tap_highlights: True to show circle touches, False otherwise.
         """
         AdbControl.toggle_pointer_location(serial, pointer_location)
@@ -185,7 +185,7 @@ class AdbControl:
 
     @staticmethod
     def kill_emulator(device_name: str, serial: str = None):
-        """Terminates a running emulator matching the specified device name (AVD profile name or serial)."""
+        """Stops a running emulator matching the device name (AVD profile name or serial)."""
         target_serial = serial or AdbControl.resolve_emulator_serial(device_name)
         if target_serial:
             logger.info("Found matching emulator serial '%s' for '%s'. Terminating.", target_serial, device_name)
@@ -234,7 +234,7 @@ class AdbControl:
 
     @staticmethod
     def get_app_pid(serial: str, package_id: str) -> str:
-        """Retrieves the active process ID (PID) of the target package."""
+        """Gets the active process ID (PID) of the target package."""
         try:
             res = run_command(["adb", "-s", serial, "shell", "pidof", package_id], capture_output=True, text=True)
             return res.stdout.strip()
@@ -256,7 +256,7 @@ class AdbControl:
 
     @staticmethod
     def open_deeplink(serial: str, url: str, package_id: str = None):
-        """Launches a deep link URL intent via Activity Manager."""
+        """Opens a deep link URL intent via Activity Manager."""
         cmd = ["adb", "-s", serial, "shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url]
         if package_id:
             cmd.append(package_id)

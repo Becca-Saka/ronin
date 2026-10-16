@@ -1,10 +1,10 @@
 """Numbering the detected elements so a target can be named rather than guessed.
 
-The planner used to answer with coordinates, which meant an answer we could not
-check: any pair of numbers is structurally valid, so an element the planner
-could not find became a tap into empty space. Numbering the detections turns the
-answer into a choice from a known set — an index that does not exist is caught
-before the device is touched.
+The planner used to answer with coordinates, which we could not check. Any pair
+of numbers is structurally valid, so an element the planner could not find
+became a tap into empty space. Numbering the detections turns the answer into a
+choice from a known set. An index that does not exist is caught before anything
+touches the device.
 
 The screenshot labels and the prompt labels are generated here, from one pass,
 so the two cannot drift apart.
@@ -39,8 +39,8 @@ class Mark:
     """One numbered element: what the model picks and what we tap.
 
     `point` can differ from the box centre. A collapsed control is drawn around
-    its container but touched where its label is, which is the part that
-    reliably responds — the centre of a wide list row often lands on padding.
+    its container, but touched where its label is. The label is the part that
+    reliably responds: the centre of a wide list row often lands on padding.
     """
 
     index: int
@@ -77,10 +77,9 @@ def split_keyboard(
 ) -> tuple[List[GUIElement], List[GUIElement]]:
     """Separates the soft keyboard's own keys from the app's controls.
 
-    An open keyboard is most of what is on screen — 83 of 110 detections on a
-    real sign-in screen — and numbering every letter would bury the handful of
-    app controls under a wall of badges. The agent never needs them: text goes
-    in through `type`, and Enter and Back are key events.
+    An open keyboard is most of what is on screen. Numbering every letter would
+    bury the handful of app controls under a wall of badges, and the agent never
+    needs them. Text arrives through `type`, and Enter and Back are key events.
 
     YOLO has no class for a keyboard, so this is geometry: low on the screen
     with a label too short to be a sentence.
@@ -124,10 +123,9 @@ def without_keyboard_keys(
 def keyboard_band(keys: List[GUIElement], screen_width: int) -> Optional[tuple]:
     """The region the keyboard occupies, as one rectangle.
 
-    Drawn so the bare strip where no numbers appear is explained rather than
-    left as an unexplained hole: nothing is numbered here because the keyboard
-    is covering it, and anything you are looking for behind it needs the
-    keyboard dismissed first.
+    Drawn so that the bare strip carrying no numbers is explained. Nothing here
+    carries a number because the keyboard covers it. Anything behind it needs
+    the keyboard dismissed first.
     """
     if not keys:
         return None
@@ -177,9 +175,9 @@ def _is_one_control(parent: GUIElement, children: List[GUIElement]) -> bool:
     """Whether a box and its contents are one thing, or several things in a container.
 
     A field is a wrapper around a single value: no label of its own, one child
-    that carries text. A list row is not — a restaurant card holds a name, a
-    category, a distance and a Menu button, and folding those together loses
-    the button, which is the only part that responds.
+    that carries text. A list row is not. It holds several labels and a
+    control, and folding them together loses the control, which is the only
+    part that responds.
     """
     if (parent.text or "").strip():
         return False
@@ -189,14 +187,14 @@ def _is_one_control(parent: GUIElement, children: List[GUIElement]) -> bool:
 def _collapse_nests(elements: List[GUIElement], screen_area: int) -> List[tuple]:
     """Folds a control's parts into the control, as one numbered thing.
 
-    A text field is not one box on screen: it is a container holding an icon,
-    the typed value, sometimes a label. All of them are boxes, so all of them
-    are detected, and numbering each would offer four choices for one field —
-    three of which land somewhere that may not respond.
+    A text field is not one box on screen. It is a container holding an icon,
+    the typed value, and sometimes a label. The detector finds all of them, so
+    numbering each would offer four choices for one field. Three of them land
+    somewhere that may not respond.
 
     The container keeps the outline, since that is the thing being pointed at.
-    The parts give it its name and the spot to touch, since an empty container
-    is unnameable and its centre is often padding.
+    The parts give it its name and the spot to touch. An empty container has no
+    name, and its centre is often padding.
     """
     # Without a screen size the guard has to come from the elements themselves,
     # or a full-screen container would swallow every control on the page.
@@ -259,8 +257,8 @@ def _touch_point(parent: GUIElement, children: List[GUIElement]) -> Optional[tup
 def build(elements: List[GUIElement], screen_area: int = 0) -> List[Mark]:
     """Numbers the elements in reading order, one number per control.
 
-    Reading order rather than detection order so the numbers run down the screen
-    the way a person would scan it, which makes a misread number land on a
+    Reading order rather than detection order, so the numbers run down the
+    screen the way a person scans it. A misread number then lands on a
     neighbour rather than somewhere unrelated.
     """
     kept: List[GUIElement] = []
@@ -313,16 +311,15 @@ DETAIL_NONE = "none"
 def describe(marks: List[Mark], height: int, detail: str = DETAIL_NUMBERS) -> str:
     """The list offered to the planner alongside the numbered screenshot.
 
-    Never coordinates — that is the point. A coordinate in the prompt is one the
-    model can echo back, and an echoed coordinate cannot be told from a guessed
-    one. Vertical position survives as a coarse region, which is all the
-    keyboard rules need.
+    Never coordinates, which is the point. A coordinate in the prompt is one
+    the model can echo back, and an echoed coordinate cannot be told from a
+    guessed one. Vertical position survives as a coarse region, which is all
+    the keyboard rules need.
 
-    The detected text is off by default because the model is already looking at
-    the screen the words are printed on, and our OCR reads English only: on a
-    Chinese app it reported 推荐 as "m#" and 京东超市 as "55187", which is worse
-    than saying nothing, since a confident wrong label gets reasoned about. The
-    numbers still have to be listed — they bound what the model may answer.
+    The detected text is off by default. The model already sees the screen the
+    words are printed on, and our OCR reads English only. A confident wrong
+    label is worse than no label, because it gets reasoned about. The numbers
+    are still listed, because they bound what the model may answer.
     """
     if detail == DETAIL_NONE:
         return ""
@@ -423,9 +420,9 @@ def render(
 ) -> Image.Image:
     """Draws each number near its element, avoiding other badges.
 
-    Small and outside the box where there is room: the number has to be
-    readable without hiding the thing it names, since a badge covering a label
-    costs the planner the word it navigates by.
+    Small, and outside the box where there is room. The number has to be
+    readable without hiding the thing it names. A badge covering a label costs
+    the planner the word it navigates by.
     """
     marked = image.copy()
     draw = ImageDraw.Draw(marked, "RGBA")

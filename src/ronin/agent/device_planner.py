@@ -348,10 +348,9 @@ Your job is to execute the steps below by interacting with the app one action at
     def _row_label(self, el, elements) -> Optional[str]:
         """The texts sharing a row with an element, naming which row it is in.
 
-        List screens repeat the same label on every row — eight 'Menu' buttons
-        for eight restaurants — and coordinates alone have proven easy to
-        mismatch by one row. All the row's text is offered rather than the
-        nearest one, since the closest line is often a subtitle while the
+        List screens repeat the same label on every row, and coordinates alone
+        are easy to mismatch by one row. All the row's text is offered rather
+        than the nearest line. The closest line is often a subtitle, while the
         identifying name sits a few pixels further away.
         """
         _, cy = self._center(el)

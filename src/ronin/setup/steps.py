@@ -1,8 +1,8 @@
 """The individual things `ronin setup` installs or creates.
 
-Steps mutate the machine, so each one asks before acting, reports what it did
-as a StepResult, and never raises — a failed step leaves a message behind and
-the remaining steps still run.
+Steps mutate the machine, so each one asks before acting and reports what it
+did as a StepResult. None of them raises. A failed step leaves a message
+behind, and the remaining steps still run.
 """
 
 import subprocess
@@ -81,7 +81,7 @@ def _run_visible(cmd: list[str], cwd: Optional[Path] = None) -> int:
         )
         return result.returncode
     except TypeError:
-        # run_command does not forward cwd; fall back to subprocess directly.
+        # run_command does not forward cwd, so use subprocess directly here.
         return subprocess.run(cmd, cwd=str(cwd) if cwd else None).returncode
     except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
         print(f"  {exc}", file=sys.stderr)

@@ -33,10 +33,11 @@ ANIMATION_SUPPRESS_AFTER = 3
 class ScreenPerception:
     """Manages screen perception using YOLO, OCR, and per-element pixel diff.
 
-    Replaces the old pHash-only cache gate with a three-tier strategy:
-      E — 256-bit pHash as a coarse navigation detector only
-      C — per-element bounding-box MAE to detect subtle element-level changes
-      D — raw MAE on YOLO-uncovered regions to flag canvas/WebView changes
+    Three tiers decide whether the screen changed:
+
+      - a 256-bit pHash, as a coarse navigation detector only
+      - per-element bounding-box MAE, for subtle element-level changes
+      - raw MAE on regions YOLO did not cover, for canvas and WebView changes
     """
 
     def __init__(self, device_session: DeviceSession):
@@ -272,9 +273,9 @@ class ScreenPerception:
         """Greedy IoU-based matching of elements across frames by class + position.
 
         Returns:
-            matched_pairs: (prev_el, curr_el) for elements present in both frames
-            new_elements:  curr elements with no match in prev (appeared)
-            removed:       prev elements with no match in curr (disappeared)
+            matched_pairs: (prev_el, curr_el) for elements in both frames
+            new_elements:  current elements with no match before
+            removed:       previous elements with no match now
         """
         matched_pairs = []
         unmatched_curr = list(curr)

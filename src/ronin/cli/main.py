@@ -1,8 +1,7 @@
 """Ronin command-line entrypoint.
 
-Each command owns its own parser and handler; this module only assembles them
-and sets up the process-wide concerns every command needs — logging, .env
-loading and configuration.
+Each command owns its own parser and handler. This module only assembles them,
+and sets up what every command needs: logging, .env loading and configuration.
 """
 
 import argparse

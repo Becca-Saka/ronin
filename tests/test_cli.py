@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 
 class ExitCodeTests(unittest.TestCase):
-    """Only the entry point ends the process; everything below answers with a code."""
+    """Only the entry point ends the process. Everything below answers with a code."""
 
     def test_a_usage_problem_is_reported_once_and_exits_two(self):
         from ronin.cli.main import main

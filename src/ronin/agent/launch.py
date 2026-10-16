@@ -1,15 +1,14 @@
 """Waiting for a freshly launched app to settle on its first real screen.
 
-Launching is not instant on any toolkit: the window exists before anything is
+Launching is not instant on any toolkit. The window exists before anything is
 drawn into it, and many apps then show a splash before the first real screen.
-Screenshotting into either hands the planner a screen the app is not actually
-on — an empty one, which is indistinguishable from a crash, or a splash, which
-it will try to interact with.
+A screenshot of either hands the planner a screen the app is not on. An empty
+one cannot be told from a crash, and a splash gets interacted with.
 
 Nothing here inspects the UI toolkit. A launch is over when the screen has
-something on it and is no longer changing wholesale, which holds however it
-was drawn. Screens that animate forever — spinners, carousels, video — never
-go completely still, so content that has simply been up a while also counts.
+something on it and is no longer changing wholesale, however it was drawn.
+Some screens animate forever, such as spinners, carousels and video, and never
+go completely still. So content that has held for a while also counts.
 """
 
 import io
@@ -39,8 +38,8 @@ logger = logging.getLogger(__name__)
 def _sample(device_control) -> Tuple[Optional[bool], Optional[object]]:
     """Takes one screenshot and reads it twice: is it empty, and what is on it.
 
-    Only the body between the status and navigation bars counts — those are
-    drawn by the OS and are there whether or not the app has painted.
+    Only the body between the status and navigation bars counts. The OS draws
+    those, and they are there whether or not the app has painted.
     """
     try:
         img = Image.open(io.BytesIO(device_control.get_screenshot())).convert("L")
@@ -62,12 +61,12 @@ def await_first_paint(device_control) -> None:
 
     Two ways out, because two things look like an unfinished launch. A screen
     that stops changing is done. A screen that keeps changing but has held
-    content for LAUNCH_CONTENT_GRACE is also done — otherwise any app whose
-    first screen animates would cost the full timeout on every scenario.
+    content for LAUNCH_CONTENT_GRACE is also done. Without the second, any app
+    whose first screen animates would cost the full timeout every scenario.
 
-    Only wholesale change counts as unfinished: a spinner or a carousel moves
-    part of the screen, a splash giving way to the first screen replaces all
-    of it, which is the same distinction perception draws for navigation.
+    Only wholesale change counts as unfinished. A spinner or a carousel moves
+    part of the screen. A splash giving way to the first screen replaces all of
+    it. Perception draws the same distinction for navigation.
     """
     deadline = time.monotonic() + LAUNCH_PAINT_TIMEOUT
     previous = None

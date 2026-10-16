@@ -1,9 +1,9 @@
 """Checking that a model's provider credentials are present.
 
-LiteLLM knows what each provider needs — one key for most, several for
-Bedrock, a base URL for Ollama — so every caller defers to it rather than
-mapping model prefixes to environment variables. It reports nothing missing
-for models it cannot route, which keeps custom endpoints working.
+LiteLLM knows what each provider needs: one key for most, several for Bedrock,
+a base URL for Ollama. So every caller defers to it rather than mapping model
+prefixes to environment variables. It reports nothing missing for models it
+cannot route, which keeps custom endpoints working.
 """
 
 import io

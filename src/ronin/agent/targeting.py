@@ -1,12 +1,12 @@
 """Turning a chosen target into something safe to touch, or refusing to.
 
-In marks mode the planner answers with a number rather than a point. That makes
-the answer checkable: a number naming nothing is caught here, before the device
-is touched, instead of surfacing three steps later as a tap on empty space.
+In marks mode the planner answers with a number rather than a point, which
+makes the answer checkable. A number naming nothing is caught here, before
+anything touches the device. It no longer surfaces three steps later, as a tap
+on empty space.
 
-Nothing in this module guesses. A target that cannot be resolved stops the step
-and is recorded, because a detection gap we count is worth more than one we
-paper over.
+Nothing in this module guesses. A target that cannot be resolved stops the step,
+and is recorded. A detection gap we count is worth more than one we hide.
 """
 
 import logging
@@ -39,14 +39,14 @@ def resolve_mark(action, element_marks, grounding: str = "") -> tuple:
     """Turns a chosen number into the point to touch.
 
     Returns (reason the step cannot proceed, action to run instead). A marks
-    action becomes its coordinate form here, because every mode ends in a point;
+    action becomes its coordinate form here, because every mode ends in a point.
     the number only decides who worked that point out.
 
     In marks mode the number is the only accepted way to name a target. A
-    response carrying coordinates instead is refused rather than obeyed —
-    accepting it would reinstate the invented coordinate the numbering exists
-    to prevent, and the model has no way for us to tell a read-off coordinate
-    from a guessed one.
+    response carrying coordinates instead is refused rather than obeyed.
+    Accepting it would reinstate the invented coordinate that the numbering
+    exists to prevent, and we cannot tell a read-off coordinate from a guessed
+    one.
     """
     if action.type not in TARGETED_ACTIONS:
         return None, None

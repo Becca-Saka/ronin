@@ -39,7 +39,7 @@ class ProviderNormalizationTests(unittest.TestCase):
 
 
 class PlannerAgreementTests(unittest.TestCase):
-    """QAPlanner subclasses DevicePlanner; their action rules drifted apart once."""
+    """QAPlanner subclasses DevicePlanner. Their action rules drifted apart once."""
 
     def _qa_prompt(self):
         from ronin.testing.qa_planner import QAPlanner

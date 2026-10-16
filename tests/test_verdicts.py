@@ -186,7 +186,7 @@ class FirstLookTests(unittest.TestCase):
         self.assertEqual(response.action.type, "done")
 
     def test_withdrawing_a_verdict_replaces_the_done_that_came_with_it(self):
-        """Clearing the verdict alone changes the label; the loop still acts on `done`."""
+        """Clearing the verdict alone changes the label. The loop still acts on `done`."""
         from ronin.agent.actuation.actions import ActionType
         from ronin.testing.qa_agent import _defer_first_look
 
@@ -290,7 +290,7 @@ class VerificationAggregationTests(unittest.TestCase):
 
 
 class SecurityScopingTests(VerificationAggregationTests):
-    """The planner reports every rule on every screen; being mentioned proves nothing."""
+    """The planner reports every rule on every screen, so a mention proves nothing."""
 
     def test_a_rule_only_ever_reported_non_applicable_is_not_required(self):
         status, reason = self._verdict(
@@ -327,7 +327,7 @@ class SecurityScopingTests(VerificationAggregationTests):
 
 
 class SecurityCoverageTests(unittest.TestCase):
-    """Scoping rules per scenario leaves a hole; the suite has to close it."""
+    """Scoping rules per scenario leaves a hole, and the suite has to close it."""
 
     def _scenario(self, verifications):
         from ronin.testing.models import RuleVerification, ScenarioReport
