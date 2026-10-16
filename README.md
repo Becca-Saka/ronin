@@ -170,9 +170,9 @@ uv run python tools/type_gate.py
 uv run coverage run -m pytest && uv run coverage report
 ```
 
-`tools/quality_gate.py` enforces the complexity and file-size limits, and needs
-no dependencies. `tools/type_gate.py` runs Pyright and compares the per-file
-error counts against its baseline.
+`tools/quality_gate.py` enforces the file-size limit and needs no dependencies.
+Complexity is ruff's `C901`. `tools/type_gate.py` runs Pyright and compares the
+per-file error counts against its baseline.
 
 Three places record the existing debt: `tools/quality-baseline.toml`,
 `tools/type-baseline.toml`, and `[tool.ruff.lint.per-file-ignores]`. All three
