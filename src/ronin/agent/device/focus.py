@@ -3,11 +3,13 @@
 Text goes to whatever holds focus. A tap can miss, because the keyboard
 reflowed the layout or the coordinates are a step old. It would then write into
 the previously focused field, with nothing to show that it had. So Focus reads
-focus back and checks it against the point asked for.
+focus back and checks it against the point asked for, and refuses the action
+when it cannot.
 
-Focus holds the screen area as well as the driver. A focused element can cover
-the whole screen (Flutter, WebView). It then contains every point, and cannot
-answer the question.
+Focus holds the screen area as well as the driver, because some apps render as
+one surface and focus it whole. An element that covers the screen contains
+every point, so it cannot answer the question. It passes unchecked rather than
+blocking every type in such an app.
 """
 
 import logging
@@ -66,8 +68,8 @@ class Focus:
     def contains(self, x, y) -> bool:
         """Whether the active element contains the requested coordinates.
 
-        A focused element covering the screen (Flutter, WebView) answers for
-        every point, so it cannot stand in for a real field.
+        An element covering the screen answers for every point, so it cannot
+        stand in for a real field.
         """
         rect = self._rect()
         if rect is None or self._covers_screen(rect):
@@ -84,23 +86,20 @@ class Focus:
     def assert_at(self, x, y, action: str) -> None:
         """Raises unless focus is on the element at (x, y).
 
-        Text goes to whatever holds focus. A tap can miss, because the keyboard
-        shifted the layout or the coordinates are stale. It would then write
-        into the previously focused field without any sign.
-
         A change of focus is not evidence that the right field was hit. Any
         text field opens the keyboard, so a tap on the wrong one looks
-        identical to the layout reflowing. The planner reads the screen again
-        and tries again. That costs a step and cannot type into the wrong
-        field.
+        identical to the layout reflowing.
         """
         rect = self._rect()
         if rect is None:
-            return
+            raise ActionRejected(
+                f"{action} at ({x}, {y}) could not be checked, because nothing "
+                "reported focus. Nothing was entered. Read the screen again and "
+                "choose the field to use."
+            )
 
         logger.debug("Focused element after tap: %s", rect)
         if self._covers_screen(rect):
-            # A single full-screen surface (Flutter, WebView) tells us nothing.
             logger.debug("Focused element covers the screen, so the check is skipped.")
             return
 

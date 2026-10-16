@@ -37,7 +37,7 @@ class ScreenPerception:
 
       - a 256-bit pHash, as a coarse navigation detector only
       - per-element bounding-box MAE, for subtle element-level changes
-      - raw MAE on regions YOLO did not cover, for canvas and WebView changes
+      - raw MAE on regions YOLO did not cover, for surfaces it cannot see into
     """
 
     def __init__(self, device_session: DeviceSession):

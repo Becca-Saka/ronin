@@ -5,7 +5,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, PropertyMock, patch
 
 
 from ronin.errors import ObservationUnavailable
@@ -139,7 +139,7 @@ class LifecycleOwnershipTests(unittest.TestCase):
 
 
 class LaunchPaintTests(unittest.TestCase):
-    """A Flutter debug build draws nothing for a second or two after am start."""
+    """A debug build can draw nothing for a second or two after am start."""
 
     def _device(self, png):
         return SimpleNamespace(get_screenshot=Mock(return_value=png))
@@ -340,6 +340,52 @@ class DeviceTypingTests(unittest.TestCase):
         element.send_keys.assert_called_once_with("test@email.com")
 
     @patch("ronin.agent.device.device_control.time.sleep")
+    def test_type_is_refused_when_nothing_reports_focus(self, _sleep):
+        """Text sent with no focus goes wherever focus happens to be."""
+        control, element = self._control({"x": 63, "y": 820, "width": 954, "height": 147})
+        control.driver.switch_to.active_element = None
+
+        with self.assertRaisesRegex(ActionRejected, "nothing reported focus"):
+            control.type("test@email.com", 537, 1260)
+
+        element.send_keys.assert_not_called()
+
+    @patch("ronin.agent.device.device_control.time.sleep")
+    def test_type_is_refused_when_the_focused_element_has_no_bounds(self, _sleep):
+        """An element that cannot report a rect cannot be checked against a point."""
+        control, element = self._control({"x": 63, "y": 820, "width": 954, "height": 147})
+        unreadable = Mock(spec=["id", "rect", "send_keys"])
+        unreadable.id = "field"
+        type(unreadable).rect = PropertyMock(side_effect=RuntimeError("stale element"))
+        control.driver.switch_to.active_element = unreadable
+
+        with self.assertRaisesRegex(ActionRejected, "nothing reported focus"):
+            control.type("test@email.com", 537, 1260)
+
+        unreadable.send_keys.assert_not_called()
+
+    @patch("ronin.agent.device.device_control.time.sleep")
+    def test_a_full_screen_surface_still_accepts_typing(self, _sleep):
+        """Some apps focus one element for the whole screen.
+
+        Refusing that would mean never typing in them, so the tap on the point
+        stands in as the weaker evidence.
+        """
+        control, element = self._control({"x": 0, "y": 0, "width": 1080, "height": 2400})
+
+        control.type("test@email.com", 537, 1260)
+
+        element.send_keys.assert_called_once_with("test@email.com")
+
+    @patch("ronin.agent.device.device_control.time.sleep")
+    def test_clear_is_refused_when_nothing_reports_focus(self, _sleep):
+        control, _element = self._control({"x": 63, "y": 820, "width": 954, "height": 147})
+        control.driver.switch_to.active_element = None
+
+        with self.assertRaisesRegex(ActionRejected, "nothing reported focus"):
+            control.clear(537, 1260)
+
+    @patch("ronin.agent.device.device_control.time.sleep")
     def test_type_rejects_stale_coordinates(self, _sleep):
         control, element = self._control(
             {"x": 63, "y": 820, "width": 954, "height": 147}
@@ -426,5 +472,3 @@ class WarmSessionTests(unittest.TestCase):
         self._control()._skip_redundant_setup(options)
 
         self.assertEqual(captured, {})
-
-
