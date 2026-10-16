@@ -1,19 +1,17 @@
-"""
-QAPlanner — extends DevicePlanner with QA testing concerns.
-Adds scenario instructions, expected outcomes, security rules, and the
-full QA audit prompt to each planning call. Returns a QAStepResponse
-that carries both the device action and QA audit results.
+"""QAPlanner — DevicePlanner, told what the scenario is trying to do.
 
-This is the only LLM call for QA scenarios (single combined call).
-The architecture is already split: DevicePlanner has no knowledge of QA.
-The two-call optimization (separate cheap-model audit) can be wired in
-by splitting QAPlanner into DevicePlanner + QAAuditor when needed.
+It decides the next action and nothing else. QAAuditor judges the screen, and
+reads neither the plan nor this prompt.
+
+The scenario's own context stays here: instructions, expected outcomes and
+security rules. Deciding what to do next needs all three. Judging does not, and
+that is why the auditor does not receive them.
 """
 
 import logging
 from typing import List, Optional
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
 from ronin.agent.perception.marks import DETAIL_NUMBERS
 from ronin.agent.device_planner import (
@@ -25,28 +23,18 @@ from ronin.agent.device_planner import (
 )
 from ronin.llm.llm_client import LLMClient
 from ronin.llm.messages import MultiPartMessage
-from ronin.testing.models import QAIssue, RuleVerification
+from ronin.testing import rules
 
 logger = logging.getLogger(__name__)
 
 
 class QAStepResponse(DeviceStepResponse):
-    """DeviceStepResponse extended with QA audit outputs."""
+    """What the planner answers with: an action, and whether it can proceed.
 
-    rule_verifications: List[RuleVerification] = Field(
-        default_factory=list,
-        description=(
-            "Evaluations of expected outcomes, custom security rules, and dynamic screen assertions "
-            "against the current screen."
-        ),
-    )
-    detected_issues: List[QAIssue] = Field(
-        default_factory=list,
-        description=(
-            "Visual bugs, layout overflows, crashed screens, or security data exposures "
-            "found on the current screen."
-        ),
-    )
+    The verdicts belong to ronin.testing.qa_auditor, which judges the screen
+    without reading the plan.
+    """
+
     is_scenario_feasible: bool = Field(
         default=True,
         description=(
@@ -60,35 +48,6 @@ class QAStepResponse(DeviceStepResponse):
         description="Detailed reason why the scenario is infeasible. None if feasible.",
     )
 
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_common_provider_shapes(cls, value):
-        """Normalize equivalent shapes produced despite advisory JSON schemas."""
-        if not isinstance(value, dict):
-            return value
-        normalized = dict(value)
-        verifications = normalized.get("rule_verifications")
-        if isinstance(verifications, dict):
-            normalized["rule_verifications"] = [
-                {
-                    "rule": rule,
-                    "status": status,
-                    "reasoning": "Provider returned a compact rule-status mapping.",
-                }
-                for rule, status in verifications.items()
-            ]
-        for verification in normalized.get("rule_verifications") or []:
-            if isinstance(verification, dict) and "reasoning" not in verification:
-                verification["reasoning"] = verification.pop(
-                    "details", "No reasoning supplied by the provider."
-                )
-        for issue in normalized.get("detected_issues") or []:
-            if not isinstance(issue, dict):
-                continue
-            if "description" not in issue and "issue" in issue:
-                issue["description"] = issue.pop("issue")
-            issue.setdefault("issue_type", "qa_issue")
-        return normalized
 
 
 class MarksQAStepResponse(QAStepResponse):
@@ -143,7 +102,7 @@ class QAPlanner(DevicePlanner):
         marks: Optional[list] = None,
         screen_height: int = 0,
     ) -> QAStepResponse:
-        from ronin.utils.redactor import redact_elements, redact_text
+        from ronin.utils.redactor import redact_elements, safe_text
 
         if gui_elements:
             gui_elements = redact_elements(gui_elements)
@@ -181,17 +140,12 @@ class QAPlanner(DevicePlanner):
         )
 
         def clean(text):
-            return self._scrubber.scrub(redact_text(text))
+            return safe_text(text, self._scrubber)
 
         response.reasoning = clean(response.reasoning)
         response.observation = clean(response.observation)
         response.evaluation_previous_goal = clean(response.evaluation_previous_goal)
         response.infeasibility_reason = clean(response.infeasibility_reason)
-        for issue in response.detected_issues:
-            issue.description = clean(issue.description)
-        for verify in response.rule_verifications:
-            verify.reasoning = clean(verify.reasoning)
-            verify.rule = clean(verify.rule)
 
         return response
 
@@ -219,10 +173,10 @@ Complete the full user journey from the beginning — do not assume any state or
 {chr(10).join(f"- {step}" for step in goal_lines)}
 
 ### Expected Outcomes / Assertions
-{chr(10).join(f"- [expected:{index}] {o}" for index, o in enumerate(expected_outcomes)) if expected_outcomes else "None specified."}
+{rules.listing(expected_outcomes, rules.EXPECTED)}
 
 ### Custom Security Rules to Enforce
-{chr(10).join(f"- [security:{index}] {r}" for index, r in enumerate(security_rules)) if security_rules else "None specified."}
+{rules.listing(security_rules, rules.SECURITY)}
 
 ### Current UI Elements Detected {self._target_heading()}
 {self.format_targets(gui_elements, marks, screen_height)}
@@ -247,16 +201,16 @@ Complete the full user journey from the beginning — do not assume any state or
 {loop_nudge}
 """
         prompt += """
-### QA Auditing Instructions
-Inspect the visual screenshots and audit the current screen for defects:
-1. **Visual/Layout Bugs**: Scan for diagonal black-and-yellow overflow stripes, clipped text, overlapping buttons, misaligned headers, or empty image containers.
-2. **Security Vulnerabilities**: Scan for plain-text passwords, unmasked PINs, exposed auth tokens, credit card digits, or accessible admin/debug routes.
-3. **Dynamic Screen Assertions**: Generate context-specific assertions for the current layout (e.g. "Login button is visible and enabled", "Password field masks input"). Verify each as passed, failed, or untested.
-4. **Rule Verifications**: For each expected outcome and custom security rule, copy its bracketed ID into `rule_id` and determine its status: "passed", "failed", or "untested".
-   - Report what THIS screen shows. "failed" means you can see the rule broken here. A rule you have not reached yet is "untested", never "failed" — you will be asked again on every screen, and the last answer is the one that counts.
-   - Set `applicable` to false when this screen has nothing the rule could apply to, and use "untested": a card-masking rule on a screen with no card field is not evidence of anything. Never mark a rule "passed" because its subject is absent.
-   - Dynamic assertions may omit `rule_id`.
-5. **Scenario Feasibility**: A scenario starts from a freshly launched app, so the screen it targets usually needs navigating to first. If its elements are not here yet, work towards them — sign in, open the relevant section — and keep going. Mark `is_scenario_feasible = False` only when the scenario is genuinely impossible: it contradicts how the app works, or its target cannot be reached from here at all.
+### Scenario Feasibility
+A scenario starts from a freshly launched app, so the screen it targets usually
+needs navigating to first. If its elements are not here yet, work towards them —
+sign in, open the relevant section — and keep going. Mark `is_scenario_feasible`
+false only when the scenario is genuinely impossible: it contradicts how the app
+works, or its target cannot be reached from here at all.
+
+Do not grade the app. Whether the expected outcomes hold, whether a security
+rule is met, and whether anything on screen looks wrong are judged separately,
+by something that is not told what you decided to do.
 """
         prompt += self._action_vocabulary() + self._action_constraints()
         prompt += """

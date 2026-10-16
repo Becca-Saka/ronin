@@ -8,6 +8,7 @@ rule has to be evidenced by at least one scenario, or be named as unevidenced.
 
 from typing import Iterable, List
 
+from ronin.testing import rules
 from ronin.testing.models import ScenarioReport
 
 
@@ -18,15 +19,14 @@ def unevidenced_security_rules(
     evidenced = set()
     for scenario in scenarios:
         for verification in scenario.rule_verifications:
-            rule_id = verification.rule_id or ""
             if (
-                rule_id.startswith("security:")
+                rules.is_kind(verification.rule_id, rules.SECURITY)
                 and verification.status == "passed"
                 and verification.applicable
             ):
-                evidenced.add(rule_id)
+                evidenced.add(verification.rule_id)
     return [
         rule
         for index, rule in enumerate(security_rules)
-        if f"security:{index}" not in evidenced
+        if rules.rule_id(rules.SECURITY, index) not in evidenced
     ]

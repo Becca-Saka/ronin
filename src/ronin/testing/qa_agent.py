@@ -34,6 +34,8 @@ from ronin.testing.models import (
 from ronin.testing.capabilities import unsupported_reason
 from ronin.agent.device_planner import GROUNDING_COORDINATES
 from ronin.agent.perception.marks import DETAIL_NUMBERS
+from ronin.testing import rules
+from ronin.testing.qa_auditor import Assessment, QAAuditor
 from ronin.testing.qa_planner import QAPlanner, QAStepResponse
 
 from ronin.agent.actuation.actions import WaitAction
@@ -82,7 +84,7 @@ def _terminal_outcome(
     return None
 
 
-def _defer_first_look(step_response, first_look: bool) -> bool:
+def _defer_first_look(step_response, assessment, first_look: bool) -> bool:
     """Withdraws a terminal verdict taken before the app may have finished drawing.
 
     A launching app shows an empty screen for a moment, which reads as both
@@ -99,10 +101,10 @@ def _defer_first_look(step_response, first_look: bool) -> bool:
         return False
 
     deferred = False
-    if any(i.issue_type == "crash_screen" for i in step_response.detected_issues):
+    if any(i.issue_type == "crash_screen" for i in assessment.detected_issues):
         logger.warning("Crash screen on the first look — re-checking next step.")
-        step_response.detected_issues = [
-            i for i in step_response.detected_issues if i.issue_type != "crash_screen"
+        assessment.detected_issues = [
+            i for i in assessment.detected_issues if i.issue_type != "crash_screen"
         ]
         deferred = True
     if not step_response.is_scenario_feasible:
@@ -146,7 +148,7 @@ def _violated_security_rule(verifications: List[RuleVerification]):
             verification
             for verification in verifications
             if verification.status == "failed"
-            and (verification.rule_id or "").startswith("security:")
+            and rules.is_kind(verification.rule_id, rules.SECURITY)
         ),
         None,
     )
@@ -170,8 +172,8 @@ def _missing_required_ids(
     counts as required only once some screen could have broken it. Once
     evidenced there, it stays evidenced, whatever later screens show.
     """
-    expected_ids = {f"expected:{index}" for index, _ in enumerate(required_outcomes)}
-    security_ids = {f"security:{index}" for index, _ in enumerate(security_rules)}
+    expected_ids = rules.ids(required_outcomes, rules.EXPECTED)
+    security_ids = rules.ids(security_rules, rules.SECURITY)
     applicable = {
         verification.rule_id
         for verification in verifications
@@ -270,18 +272,31 @@ class QAAgent:
         start_time = time.time()
 
         qa_outputs: List[QAStepResponse] = []
+        assessments: List[Assessment] = []
         stop_reason: dict = {"value": None}  # mutable so the nested hook can write out
 
-        def step_hook(step_response: DeviceStepResponse) -> Optional[bool]:
+        auditor = QAAuditor(
+            self._fast_llm,
+            test_case.expected_outcomes,
+            security_rules,
+            scrubber=self._device_agent.scrubber,
+        )
+
+        def step_hook(step_response: DeviceStepResponse, snapshot) -> Optional[bool]:
             if not isinstance(step_response, QAStepResponse):
                 return None
 
             qa_outputs.append(step_response)
+            # The screen is audited by something that was not told the plan, so
+            # a verdict here is capable of contradicting the action above it.
+            assessment = auditor.audit(snapshot.raw_img_bytes, snapshot.current_phash)
+            assessment.screen_name = assessment.screen_name or step_response.current_screen
+            assessments.append(assessment)
 
-            if _defer_first_look(step_response, len(qa_outputs) == 1):
+            if _defer_first_look(step_response, assessment, len(qa_outputs) == 1):
                 return None
 
-            if any(i.issue_type == "crash_screen" for i in step_response.detected_issues):
+            if any(i.issue_type == "crash_screen" for i in assessment.detected_issues):
                 logger.error("App crash screen detected — stopping scenario.")
                 stop_reason["value"] = "App crashed: crash screen detected."
                 return False
@@ -359,6 +374,7 @@ class QAAgent:
             test_case=test_case,
             run_result=run_result,
             qa_outputs=qa_outputs,
+            assessments=assessments,
             stop_reason=stop_reason["value"],
             duration=time.time() - start_time,
             security_rules=security_rules,
@@ -369,6 +385,7 @@ class QAAgent:
         test_case: GeneratedTestCase,
         run_result: DeviceRunResult,
         qa_outputs: List[QAStepResponse],
+        assessments: List[Assessment],
         stop_reason: Optional[str],
         duration: float,
         security_rules: List[str],
@@ -378,24 +395,24 @@ class QAAgent:
 
         scrub = self._device_agent.scrubber.scrub
 
-        for step_resp in qa_outputs:
-            for verify in step_resp.rule_verifications:
+        for assessment in assessments:
+            for verify in assessment.rule_verifications:
                 if not verify.screen_name:
-                    verify.screen_name = step_resp.current_screen
+                    verify.screen_name = assessment.screen_name
                 # An audit naming the value it found — "password123 is visible
                 # unmasked" — would otherwise write it into logs and reports.
                 verify.rule = scrub(verify.rule)
                 verify.reasoning = scrub(verify.reasoning)
                 all_verifications.append(verify)
 
-            for issue in step_resp.detected_issues:
-                issue.current_screen = step_resp.current_screen
+            for issue in assessment.detected_issues:
+                issue.current_screen = assessment.screen_name
                 issue.description = scrub(issue.description)
                 all_issues.append(issue)
                 logger.info(
                     "QA issue [%s/%s] on '%s': %s",
                     issue.severity, issue.issue_type,
-                    step_resp.current_screen, issue.description,
+                    assessment.screen_name, issue.description,
                 )
 
         status, failure_reason = self._determine_status(
@@ -404,6 +421,7 @@ class QAAgent:
             all_verifications=all_verifications,
             all_issues=all_issues,
             qa_outputs=qa_outputs,
+            assessments=assessments,
             required_outcomes=test_case.expected_outcomes,
             security_rules=security_rules,
         )
@@ -427,23 +445,27 @@ class QAAgent:
         all_verifications: List[RuleVerification],
         all_issues: List[QAIssue],
         qa_outputs: List[QAStepResponse],
+        assessments: List[Assessment],
         required_outcomes: List[str],
         security_rules: List[str],
     ):
+        # Feasibility stays the planner's call: it is a statement about whether
+        # the agent can proceed, not about whether the app is correct.
         terminal = _terminal_outcome(
             run_result, stop_reason, all_verifications, all_issues, qa_outputs
         )
         if terminal:
             return terminal
 
-        if run_result.status != "goal_reached" or not qa_outputs:
+        if run_result.status != "goal_reached" or not assessments:
             return "UNVERIFIED", "The scenario did not produce verified completion evidence."
 
-        final = qa_outputs[-1]
+        # The auditor's word, not the planner's: the planner wanted to be done.
+        final = assessments[-1]
         if not final.goal_satisfied or not final.goal_evidence.strip():
             return (
                 "UNVERIFIED",
-                "The planner stopped without observable goal evidence on the final screen.",
+                "No observable evidence of the goal on the final screen.",
             )
 
         missing = _missing_required_ids(

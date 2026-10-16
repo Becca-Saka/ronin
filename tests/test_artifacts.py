@@ -284,7 +284,6 @@ class ScenarioProgressTests(unittest.TestCase):
         return ScenarioProgress(Path(directory), journey, scenarios)
 
     def test_plan_is_written_before_anything_runs(self):
-        import json
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -296,7 +295,6 @@ class ScenarioProgressTests(unittest.TestCase):
             self.assertEqual(data["counts"], {"pending": 2})
 
     def test_status_updates_as_scenarios_finish(self):
-        import json
         import tempfile
 
         from ronin.testing.models import ScenarioReport
@@ -327,7 +325,6 @@ class ScenarioProgressTests(unittest.TestCase):
 
 class ProgressAbortTests(unittest.TestCase):
     def test_a_crash_leaves_nothing_marked_running(self):
-        import json
         import tempfile
 
         from ronin.testing.models import GeneratedTestCase, UserJourney

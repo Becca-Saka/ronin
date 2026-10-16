@@ -1,10 +1,9 @@
 """Numbering the detected elements so a target can be named rather than guessed.
 
-The planner used to answer with coordinates, which we could not check. Any pair
-of numbers is structurally valid, so an element the planner could not find
-became a tap into empty space. Numbering the detections turns the answer into a
-choice from a known set. An index that does not exist is caught before anything
-touches the device.
+A coordinate answer cannot be checked. Any pair of numbers is structurally
+valid, so an element the planner cannot find becomes a tap into empty space.
+Numbering the detections makes the answer a choice from a known set, and an
+index that names nothing fails before anything touches the device.
 
 The screenshot labels and the prompt labels are generated here, from one pass,
 so the two cannot drift apart.

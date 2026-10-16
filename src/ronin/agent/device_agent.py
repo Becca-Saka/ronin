@@ -269,7 +269,7 @@ class DeviceAgent:
 
         if step_hook:
             hook_result = outcomes.hook_stop(
-                step_hook, step_response, session_trail, snapshot.current_phash, ctx
+                step_hook, step_response, snapshot, session_trail, snapshot.current_phash, ctx
             )
             if hook_result is not None:
                 return hook_result

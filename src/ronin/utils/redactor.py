@@ -48,6 +48,17 @@ def mask_typed_text(text: str) -> str:
     return f"{len(text)} character(s)"
 
 
+def safe_text(text, scrubber=None) -> str:
+    """Text fit to persist: declared secrets masked, credential patterns caught.
+
+    The order matters and is the same everywhere it is applied, so it is
+    written once: the journey's own values first, then the patterns that catch
+    a value nobody declared.
+    """
+    cleaned = redact_text(text)
+    return scrubber.scrub(cleaned) if scrubber else cleaned
+
+
 def redact_elements(elements):
     """Redacts secret values in detected GUI elements, leaving their labels intact."""
     if not elements:

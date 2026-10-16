@@ -12,7 +12,9 @@ from ronin.agent.device_agent import (
 
 
 class ProviderNormalizationTests(unittest.TestCase):
-    def test_compact_provider_shapes_are_normalized(self):
+    """Schemas are advisory, so equivalent shapes have to be accepted."""
+
+    def test_the_planner_accepts_a_coordinate_pair(self):
         from ronin.testing.qa_planner import QAStepResponse
 
         response = QAStepResponse.model_validate(
@@ -20,22 +22,26 @@ class ProviderNormalizationTests(unittest.TestCase):
                 "current_screen": "Login",
                 "observation": "Login form",
                 "reasoning": "Focus email",
-                "action": {
-                    "type": "tap",
-                    "coordinates": [10, 20],
-                    "reason": "focus",
-                },
-                "rule_verifications": {"Login is visible": "passed"},
-                "detected_issues": [
-                    {"issue": "Debug banner", "severity": "low"}
-                ],
+                "action": {"type": "tap", "coordinates": [10, 20], "reason": "focus"},
             }
         )
 
         self.assertEqual(response.action.coordinates.x, 10)
-        self.assertEqual(response.rule_verifications[0].status, "passed")
-        self.assertEqual(response.detected_issues[0].issue_type, "qa_issue")
-        self.assertEqual(response.detected_issues[0].description, "Debug banner")
+
+    def test_the_auditor_accepts_a_compact_rule_mapping(self):
+        from ronin.testing.qa_auditor import Assessment
+
+        assessment = Assessment.model_validate(
+            {
+                "screen_name": "Login",
+                "rule_verifications": {"Login is visible": "passed"},
+                "detected_issues": [{"issue": "Debug banner", "severity": "low"}],
+            }
+        )
+
+        self.assertEqual(assessment.rule_verifications[0].status, "passed")
+        self.assertEqual(assessment.detected_issues[0].issue_type, "qa_issue")
+        self.assertEqual(assessment.detected_issues[0].description, "Debug banner")
 
 
 class PlannerAgreementTests(unittest.TestCase):

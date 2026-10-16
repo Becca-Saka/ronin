@@ -1,13 +1,13 @@
 """What every model call cost, and what it spent that on.
 
-Totals answer "what did this run cost". The per-call rows answer the questions
-that come after: was the prompt cached, how much of it was the screenshot, did
-an answer get truncated rather than finished, was this a retry, and which model
-actually served it. Each row also carries the whole response, so a question
-nobody thought of tonight is still answerable from the file.
+Totals the token counts, cache counts, latency and cost across a run, and keeps
+one row per call carrying the whole response. Counts two kinds of call
+separately: answers cut off at the token limit, and questions asked twice after
+a schema mismatch.
 
-Those responses carry the model's own words, which quote the values a journey
-declared secret, so the file is written through the scrubber like any other.
+A response quotes the values a journey declared secret, because the model
+writes its reasoning in its own words. The scrubber masks them before anything
+reaches disk.
 """
 
 import json
@@ -27,10 +27,10 @@ TRUNCATED = "length"
 
 @dataclass
 class Totals:
-    """What a run spent, accumulated one call at a time.
+    """What a run spent, one call at a time.
 
-    Field names are the ones written to the report, so telemetry already on
-    disk stays readable.
+    These field names go straight into the report. They match the names already
+    written to telemetry on disk, so an older file stays readable.
     """
 
     total_calls: int = 0
@@ -44,10 +44,10 @@ class Totals:
     total_latency_ms: float = 0.0
 
     truncated_calls: int = 0
-    """Answers cut off at the token limit, which read as malformed rather than wrong."""
+    """Answers cut off at the token limit. They read as malformed, not as wrong."""
 
     retried_calls: int = 0
-    """Questions asked twice because the first answer did not fit the schema."""
+    """Questions asked twice, because the first answer did not fit the schema."""
 
     components: Dict[str, Any] = field(default_factory=dict)
 
@@ -99,7 +99,7 @@ class LLMUsageTracker:
         component["calls"].append(asdict(call) | {"cost_known": call.cost is not None})
 
     def _scrubbed(self, value):
-        """Masks declared secrets anywhere in the records before they are written."""
+        """Masks declared secrets anywhere in the records, before anything writes them."""
         if self._scrubber is None:
             return value
         if isinstance(value, str):

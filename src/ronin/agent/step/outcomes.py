@@ -18,11 +18,17 @@ from typing import Callable, Literal, Optional
 
 from ronin.agent.device_planner import DeviceStepResponse, DoneAction
 from ronin.agent.history import AgentHistory
+from ronin.agent.step.observation import PerceptionSnapshot
 from ronin.agent.trail import SessionTrail
 
 logger = logging.getLogger(__name__)
 
-StepHookFn = Callable[[DeviceStepResponse], Optional[bool]]
+StepHookFn = Callable[[DeviceStepResponse, PerceptionSnapshot], Optional[bool]]
+"""Called after planning and before acting, with the plan and its screen.
+
+The screen comes too. A hook that sees only the plan has to take the planner's
+word for what the screen holds.
+"""
 
 
 @dataclass
@@ -112,11 +118,12 @@ def action_repetition(
 def hook_stop(
     step_hook: StepHookFn,
     step_response: DeviceStepResponse,
+    snapshot: PerceptionSnapshot,
     session_trail: Optional[SessionTrail],
     current_phash: Optional[str],
     ctx,
 ) -> Optional[DeviceRunResult]:
-    if step_hook(step_response) is not False:
+    if step_hook(step_response, snapshot) is not False:
         return None
 
     flush_trail(session_trail, current_phash)

@@ -1,16 +1,9 @@
-"""What one completion is worth remembering about itself.
+"""One completion, recorded.
 
-The provider reports far more than a token count, and most of it answers a
-question we would otherwise guess at: whether a prompt was cached, how much of
-it was the screenshot, whether an answer was cut off rather than finished, and
-which model actually served a request that named a family.
-
-Collected at the call so the parts that are not on the usage block — the
-finish reason, the latency, the generation id — are still reachable.
-
-The whole response is kept alongside the fields picked out of it. A completion
-is about a kilobyte and does not echo the prompt back, so there is no reason to
-decide now which parts a later question will want.
+Reads a provider response into a CallRecord. The token counts, cache counts and
+cost come from the usage block. The finish reason, latency, served model and
+generation id sit outside it. The record also keeps the whole response, which
+costs about a kilobyte and does not repeat the prompt.
 """
 
 from dataclasses import dataclass, field
@@ -19,7 +12,7 @@ from typing import Optional
 
 @dataclass(frozen=True)
 class CallRecord:
-    """One completion, as it should be written down."""
+    """One completion, in the form the tracker stores."""
 
     model: str
     """The model asked for."""
@@ -28,13 +21,13 @@ class CallRecord:
     """The model the provider actually used, which a gateway may choose."""
 
     generation_id: str
-    """The provider's handle for this call, for tracing it in their dashboard."""
+    """The provider's handle for this call. Traces it in their dashboard."""
 
     attempt: int
     """1 unless a schema mismatch forced the question to be asked again."""
 
     finish_reason: str
-    """"length" means the answer was truncated, which looks like a bad answer."""
+    """"length" means the answer ran out of room. It then reads as a bad answer."""
 
     latency_ms: float
     cost: Optional[float]
@@ -53,7 +46,7 @@ class CallRecord:
     cost_details: dict = field(default_factory=dict)
 
     raw: dict = field(default_factory=dict)
-    """The response as the provider sent it, so nothing has to be guessed later."""
+    """The response as the provider sent it, whole."""
 
 
 def _detail(block: dict, name: str, default=0):
@@ -62,7 +55,7 @@ def _detail(block: dict, name: str, default=0):
 
 
 def record(response, model: str, attempt: int) -> CallRecord:
-    """Reads a completion into the record we keep of it."""
+    """Reads a provider response into a CallRecord."""
     usage = response.usage.model_dump()
     prompt_details = usage.get("prompt_tokens_details") or {}
     completion_details = usage.get("completion_tokens_details") or {}

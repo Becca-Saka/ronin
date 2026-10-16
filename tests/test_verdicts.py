@@ -13,13 +13,15 @@ class VerdictTests(unittest.TestCase):
     def _result(self, status="goal_reached", reason=None):
         return SimpleNamespace(status=status, failure_reason=reason)
 
-    def _output(self, satisfied=True, evidence="Confirmation is visible"):
+    def _output(self, feasible=True):
+        """What the planner answers: whether it can proceed."""
         return SimpleNamespace(
-            is_scenario_feasible=True,
-            infeasibility_reason=None,
-            goal_satisfied=satisfied,
-            goal_evidence=evidence,
+            is_scenario_feasible=feasible, infeasibility_reason=None
         )
+
+    def _assessment(self, satisfied=True, evidence="Confirmation is visible"):
+        """What the auditor answers: whether the screen shows the goal met."""
+        return SimpleNamespace(goal_satisfied=satisfied, goal_evidence=evidence)
 
     def _verdict(self, **overrides):
         values = {
@@ -28,6 +30,7 @@ class VerdictTests(unittest.TestCase):
             "all_verifications": [],
             "all_issues": [],
             "qa_outputs": [self._output()],
+            "assessments": [self._assessment()],
             "required_outcomes": [],
             "security_rules": [],
         }
@@ -35,7 +38,8 @@ class VerdictTests(unittest.TestCase):
         return self._agent()._determine_status(**values)
 
     def test_model_done_without_observable_evidence_is_not_a_pass(self):
-        status, _reason = self._verdict(qa_outputs=[self._output(False, "")])
+        """The planner wanting to be done is not evidence that it is."""
+        status, _reason = self._verdict(assessments=[self._assessment(False, "")])
 
         self.assertEqual(status, "UNVERIFIED")
 
@@ -124,7 +128,13 @@ class VerdictTests(unittest.TestCase):
 class FirstLookTests(unittest.TestCase):
     """Verdicts read off a screen that may still be painting are withdrawn once."""
 
-    def _response(self, crash=False, feasible=True):
+    def _response(self, feasible=True):
+        return SimpleNamespace(
+            is_scenario_feasible=feasible,
+            action=SimpleNamespace(type="done", reason="stop"),
+        )
+
+    def _assessment(self, crash=False):
         from ronin.testing.models import QAIssue
 
         issues = []
@@ -137,52 +147,48 @@ class FirstLookTests(unittest.TestCase):
                     current_screen="Blank Screen",
                 )
             )
-        return SimpleNamespace(
-            detected_issues=issues,
-            is_scenario_feasible=feasible,
-            action=SimpleNamespace(type="done", reason="stop"),
-        )
+        return SimpleNamespace(detected_issues=issues)
 
     def test_a_crash_on_the_first_look_is_withdrawn(self):
         from ronin.testing.qa_agent import _defer_first_look
 
-        response = self._response(crash=True)
+        response, assessment = self._response(), self._assessment(crash=True)
 
-        self.assertTrue(_defer_first_look(response, first_look=True))
-        self.assertEqual(response.detected_issues, [])
+        self.assertTrue(_defer_first_look(response, assessment, first_look=True))
+        self.assertEqual(assessment.detected_issues, [])
         self.assertEqual(response.action.type, "wait")
 
     def test_a_crash_seen_later_stands(self):
         from ronin.testing.qa_agent import _defer_first_look
 
-        response = self._response(crash=True)
+        response, assessment = self._response(), self._assessment(crash=True)
 
-        self.assertFalse(_defer_first_look(response, first_look=False))
-        self.assertEqual(len(response.detected_issues), 1)
+        self.assertFalse(_defer_first_look(response, assessment, first_look=False))
+        self.assertEqual(len(assessment.detected_issues), 1)
 
     def test_infeasibility_on_the_first_look_is_withdrawn(self):
         from ronin.testing.qa_agent import _defer_first_look
 
-        response = self._response(feasible=False)
+        response, assessment = self._response(feasible=False), self._assessment()
 
-        self.assertTrue(_defer_first_look(response, first_look=True))
+        self.assertTrue(_defer_first_look(response, assessment, first_look=True))
         self.assertTrue(response.is_scenario_feasible)
         self.assertEqual(response.action.type, "wait")
 
     def test_infeasibility_seen_later_stands(self):
         from ronin.testing.qa_agent import _defer_first_look
 
-        response = self._response(feasible=False)
+        response, assessment = self._response(feasible=False), self._assessment()
 
-        self.assertFalse(_defer_first_look(response, first_look=False))
+        self.assertFalse(_defer_first_look(response, assessment, first_look=False))
         self.assertFalse(response.is_scenario_feasible)
 
     def test_a_healthy_first_look_is_left_alone(self):
         from ronin.testing.qa_agent import _defer_first_look
 
-        response = self._response()
+        response, assessment = self._response(), self._assessment()
 
-        self.assertFalse(_defer_first_look(response, first_look=True))
+        self.assertFalse(_defer_first_look(response, assessment, first_look=True))
         self.assertEqual(response.action.type, "done")
 
     def test_withdrawing_a_verdict_replaces_the_done_that_came_with_it(self):
@@ -190,9 +196,9 @@ class FirstLookTests(unittest.TestCase):
         from ronin.agent.actuation.actions import ActionType
         from ronin.testing.qa_agent import _defer_first_look
 
-        response = self._response(crash=True)
+        response, assessment = self._response(), self._assessment(crash=True)
 
-        _defer_first_look(response, first_look=True)
+        _defer_first_look(response, assessment, first_look=True)
 
         self.assertEqual(response.action.type, ActionType.WAIT)
         self.assertGreater(response.action.duration, 0)
@@ -221,11 +227,11 @@ class VerificationAggregationTests(unittest.TestCase):
             "all_verifications": [],
             "all_issues": [],
             "qa_outputs": [
+                SimpleNamespace(is_scenario_feasible=True, infeasibility_reason=None)
+            ],
+            "assessments": [
                 SimpleNamespace(
-                    is_scenario_feasible=True,
-                    infeasibility_reason=None,
-                    goal_satisfied=True,
-                    goal_evidence="Confirmation is visible",
+                    goal_satisfied=True, goal_evidence="Confirmation is visible"
                 )
             ],
             "required_outcomes": [],
@@ -423,3 +429,33 @@ class AbortReportingTests(unittest.TestCase):
 
         self.assertEqual(failed, 1)
         self.assertEqual([r.test_id for r in reports], ["TS_1", "TS_2"])
+
+
+class AuditorOwnershipTests(unittest.TestCase):
+    """Which half of the loop owns which answer."""
+
+    def test_the_planner_is_not_asked_for_verdicts(self):
+        """It used to grade the work it had just decided to do."""
+        from ronin.testing.qa_planner import QAStepResponse
+
+        fields = QAStepResponse.model_fields
+
+        self.assertNotIn("rule_verifications", fields)
+        self.assertNotIn("detected_issues", fields)
+
+    def test_the_auditor_is_asked_for_them(self):
+        from ronin.testing.qa_auditor import Assessment
+
+        fields = Assessment.model_fields
+
+        self.assertIn("rule_verifications", fields)
+        self.assertIn("detected_issues", fields)
+        self.assertIn("goal_satisfied", fields)
+
+    def test_feasibility_stays_with_the_planner(self):
+        """Whether the agent can proceed is not a statement about the app."""
+        from ronin.testing.qa_auditor import Assessment
+        from ronin.testing.qa_planner import QAStepResponse
+
+        self.assertIn("is_scenario_feasible", QAStepResponse.model_fields)
+        self.assertNotIn("is_scenario_feasible", Assessment.model_fields)
