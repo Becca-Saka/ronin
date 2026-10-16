@@ -158,8 +158,8 @@ class QAPlanner(DevicePlanner):
 
         prompt = f"""You are a closed-loop mobile E2E testing agent performing QA validation on a mobile app.
 Your task is to execute the following test scenario and verify all expected outcomes and security rules.
-Each scenario begins with a fresh app launch. The app always starts on the Login Screen.
-Complete the full user journey from the beginning — do not assume any state or progress from a previous scenario.
+{self._test_case.setup.describe()}
+Read the screen in front of you to find where you are. Do not assume a screen.
 
 ### Test Scenario Instructions
 {chr(10).join(f"- {step}" for step in goal_lines)}

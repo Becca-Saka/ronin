@@ -19,7 +19,7 @@ from ronin.agent.device_planner import (
     DeviceStepResponse,
 )
 from ronin.agent.history import ActionEntry, AgentHistory
-from ronin.agent.device.launch import restart_app
+from ronin.agent.device.launch import SetupMode, clear_app_data, restart_app
 from ronin.agent.step import outcomes
 from ronin.agent.step.outcomes import DeviceRunResult, StepHookFn
 from ronin.agent.step import observation
@@ -127,6 +127,7 @@ class DeviceAgent:
         step_hook: Optional[StepHookFn] = None,
         planner_override: Optional[DevicePlanner] = None,
         max_steps: Optional[int] = None,
+        setup: SetupMode = SetupMode.RELAUNCH,
     ) -> DeviceRunResult:
         """Runs the ReAct loop until something stops it.
 
@@ -145,7 +146,12 @@ class DeviceAgent:
         )
 
         try:
-            restart_app(device_control)
+            # Establish the state the caller asked for, rather than describing
+            # a state to the planner and hoping the device agrees.
+            if setup is SetupMode.CLEAR_DATA:
+                clear_app_data(device_control)
+            if setup is not SetupMode.PRESERVE:
+                restart_app(device_control)
             replay_known_path(
                 ledger=self.replay_ledger,
                 device_control=device_control,

@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 from typing import Dict, List, Literal, Optional
 
 # Trail models live in agent/trail.py — re-exported here for backward compatibility.
+from ronin.agent.device.launch import SetupMode  # noqa: F401
 from ronin.agent.trail import SessionTrail, TrailElement, ScreenEntry  # noqa: F401
 
 
@@ -35,6 +36,15 @@ class GeneratedTestCase(BaseModel):
     ]
     steps_instructions: List[str]
     expected_outcomes: List[str] = Field(default_factory=list)
+    setup: SetupMode = Field(
+        default=SetupMode.CLEAR_DATA,
+        description=(
+            "The state this scenario needs before its first step. "
+            "'clear_data' wipes the app so it starts as a first install would. "
+            "'relaunch' restarts it and keeps any session. "
+            "'preserve' leaves the app where the previous scenario left it."
+        ),
+    )
 
 
 # The model writes this one to point at what it reports. The detector's

@@ -14,6 +14,7 @@ go completely still. So content that has held for a while also counts.
 import io
 import logging
 import time
+from enum import Enum
 from typing import Optional, Tuple
 
 import imagehash
@@ -121,6 +122,68 @@ def _clear_task_restart(device_control, package_id: str) -> bool:
         return True
     except DeviceUnavailable as launch_err:
         logger.warning("ADB clear-task failed: %s. Falling back.", launch_err)
+        return False
+
+
+class SetupMode(str, Enum):
+    """The state a scenario needs before its first step.
+
+    Required state is part of what a test is. Left unstated, it becomes an
+    assumption in a prompt, and an assumption cannot be enforced: one run told
+    the planner the app always opens on a login screen, restarted the app
+    without clearing it, and skipped the scenario when it found the screen the
+    last one had navigated to.
+    """
+
+    CLEAR_DATA = "clear_data"
+    """Wipe the app's data. The scenario starts as a first install would."""
+
+    RELAUNCH = "relaunch"
+    """Restart the app and keep its data, including any session."""
+
+    PRESERVE = "preserve"
+    """Leave the app as the previous scenario left it."""
+
+    def describe(self) -> str:
+        """What the planner is told about the state it starts in.
+
+        States what was done, not what will be on screen. A named screen is a
+        claim about one app, and a wrong one tells the planner to disbelieve
+        the screen in front of it.
+        """
+        return {
+            SetupMode.CLEAR_DATA: (
+                "The app's data was cleared before this scenario, so it is in the "
+                "state a first install would be in. Any sign-in, permission or "
+                "saved data from earlier scenarios is gone."
+            ),
+            SetupMode.RELAUNCH: (
+                "The app was restarted before this scenario. Its stored data is "
+                "unchanged, so a sign-in or saved data from an earlier scenario "
+                "may still be in place."
+            ),
+            SetupMode.PRESERVE: (
+                "The app was left exactly as the previous scenario left it. It was "
+                "not restarted."
+            ),
+        }[self]
+
+
+def clear_app_data(device_control) -> bool:
+    """Wipes the app's stored data so it opens as a first install would.
+
+    Android only. Returns whether the data went. A caller that asked for a
+    cleared app and did not get one is testing a different scenario from the
+    one it described, so it needs to know.
+    """
+    if device_control.platform != Platform.ANDROID:
+        logger.warning("Clearing app data is an Android operation; leaving state as it is.")
+        return False
+    try:
+        AdbControl.clear_app_data(device_control.serial, device_control.package_id)
+        return True
+    except (DeviceUnavailable, OSError) as exc:
+        logger.warning("Could not clear app data: %s", exc)
         return False
 
 

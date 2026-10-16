@@ -2,6 +2,8 @@
 
 import unittest
 
+from ronin.agent.device.launch import SetupMode
+
 
 class RuleIdTests(unittest.TestCase):
     def test_an_id_names_its_kind_and_position(self):
@@ -63,7 +65,7 @@ class PromptAgreementTests(unittest.TestCase):
         planner = QAPlanner.__new__(QAPlanner)
         planner.grounding = GROUNDING_COORDINATES
         planner.use_multimodal_vision = False
-        planner._test_case = SimpleNamespace(expected_outcomes=self.OUTCOMES)
+        planner._test_case = SimpleNamespace(expected_outcomes=self.OUTCOMES, setup=SetupMode.CLEAR_DATA)
         planner._security_rules = self.SECURITY
         return planner._build_qa_prompt(
             goal_lines=["Sign in"],

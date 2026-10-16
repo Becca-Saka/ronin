@@ -416,6 +416,7 @@ class QAAgent:
                 step_hook=step_hook,
                 planner_override=qa_planner,
                 max_steps=step_budget,
+                setup=test_case.setup,
             )
         finally:
             self._device_agent.replay_ledger = replay

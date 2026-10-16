@@ -1,6 +1,8 @@
 """What Ronin asks the model, and what it records about the answer."""
 
 import unittest
+
+from ronin.agent.device.launch import SetupMode
 from types import SimpleNamespace
 from unittest.mock import Mock
 from ronin.agent.device_agent import (
@@ -52,7 +54,7 @@ class PlannerAgreementTests(unittest.TestCase):
 
         planner = QAPlanner.__new__(QAPlanner)
         planner.use_multimodal_vision = False
-        planner._test_case = SimpleNamespace(expected_outcomes=["Order confirmed"])
+        planner._test_case = SimpleNamespace(expected_outcomes=["Order confirmed"], setup=SetupMode.CLEAR_DATA)
         planner._security_rules = ["Card is masked"]
         return planner._build_qa_prompt(
             goal_lines=["Sign in"],
