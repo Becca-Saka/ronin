@@ -95,9 +95,9 @@ class RoninCLI:
         """Loads one or more UserJourneys from a JSON or YAML file."""
         if not filepath.exists():
             raise FileNotFoundError(f"Journey file not found: {filepath}")
-            
+
         content = filepath.read_text(encoding="utf-8")
-        
+
         if filepath.suffix in (".yaml", ".yml"):
             try:
                 import yaml
@@ -107,10 +107,10 @@ class RoninCLI:
                 raw = self._parse_simple_yaml(content)
         else:
             raw = json.loads(content)
-            
+
         self.raw_config = raw
         journeys = []
-        
+
         # Support unified suite structure: dictionary with a 'journeys' list key
         if isinstance(raw, dict) and "journeys" in raw:
             raw_journeys = raw["journeys"]
@@ -128,7 +128,7 @@ class RoninCLI:
             journeys.append(self._build_journey_object(raw))
         else:
             raise ValueError("Invalid journey file format: must be a list of journeys, a single journey dictionary, or a suite with a 'journeys' key.")
-            
+
         return journeys
 
     def _build_journey_object(self, data: dict) -> UserJourney:
@@ -169,7 +169,7 @@ class RoninCLI:
                 parts = line.split(":", 1)
                 key = parts[0].strip()
                 val = parts[1].strip()
-                
+
                 if val == ">" or val == "|":
                     block = []
                     i += 1
@@ -191,7 +191,7 @@ class RoninCLI:
                 else:
                     data[key] = val.strip('"').strip("'")
                     current_list_key = key
-                    
+
             i += 1
         return data
 
@@ -215,7 +215,7 @@ class RoninCLI:
         except Exception as e:
             logger.error("Failed to load journey file: %s", e)
             return 2
-            
+
         # Settings come from the flag if given, then the suite's device block,
         # then ronin.config (project/global files, env), then the defaults.
         device_cfg = {}
@@ -265,14 +265,14 @@ class RoninCLI:
             grounding=setting("grounding", args.grounding) or GROUNDING_COORDINATES,
             mark_detail=setting("mark_detail", args.mark_detail) or DETAIL_NUMBERS,
         )
-        
+
         logger.info("==================================================")
         logger.info("Ronin CLI: Executing test suite for %d journeys", len(journeys))
         logger.info("==================================================")
-        
+
         all_passed = True
         results = []
-        
+
         for journey in journeys:
             logger.info("Starting run for journey: %s (%s)", journey.name, journey.id)
             try:
@@ -285,14 +285,14 @@ class RoninCLI:
                 logger.error("Error executing journey %s: %s", journey.id, journey_err)
                 results.append((journey.id, journey.name, "ERROR"))
                 all_passed = False
-                
+
         logger.info("==================================================")
         logger.info("Execution Summary:")
         for j_id, j_name, status in results:
             status_icon = "🟢" if status == "PASSED" else "🔴"
             logger.info("  %s %s (%s): %s", status_icon, j_name, j_id, status)
         logger.info("==================================================")
-        
+
         if all_passed:
             logger.info("All user journeys passed successfully.")
             return 0
@@ -303,4 +303,3 @@ class RoninCLI:
 def main():
     cli = RoninCLI()
     sys.exit(cli.run())
-

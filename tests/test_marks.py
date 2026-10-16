@@ -341,5 +341,3 @@ class KeyboardBandTests(unittest.TestCase):
 
         self.assertEqual([e.text for e in kept], ["Place Order"])
         self.assertEqual(len(keys), 2)
-
-

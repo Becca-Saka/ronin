@@ -131,5 +131,3 @@ class ConfigFileTests(unittest.TestCase):
             settings = read_file(path)
 
         self.assertEqual(settings, {"platform": "ios", "max_steps": 7})
-
-

@@ -478,5 +478,3 @@ class DeviceAgent:
 
     def _restart_app(self, device_control) -> None:
         restart_app(device_control)
-
-

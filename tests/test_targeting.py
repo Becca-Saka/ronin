@@ -358,5 +358,3 @@ class CoordinateShapeTests(unittest.TestCase):
         )
 
         self.assertEqual((action.coordinates.x, action.coordinates.y), (537, 1260))
-
-

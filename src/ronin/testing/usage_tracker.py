@@ -62,7 +62,7 @@ class LLMUsageTracker:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         filepath = self.output_dir / f"llm_usage_{timestamp}.json"
-        
+
         temporary = filepath.with_suffix(filepath.suffix + ".tmp")
         temporary.write_text(json.dumps(self.usage_records, indent=2), encoding="utf-8")
         temporary.replace(filepath)

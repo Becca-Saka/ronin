@@ -14,11 +14,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # git diff --check below needs the merge base
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
       - run: uv sync --group dev
       - run: uv run ruff check
+      # Catches what no lint rule does: a blank line added at end of file, and
+      # a conflict marker. Empty on a push, since the merge base is HEAD.
+      - run: git diff --check "$(git merge-base origin/${{ github.event.repository.default_branch }} HEAD)"..HEAD
       - run: uv run python tools/quality_gate.py
       - run: uv run coverage run -m pytest
       - run: uv run coverage report

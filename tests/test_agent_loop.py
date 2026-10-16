@@ -203,5 +203,3 @@ class ReplayTests(unittest.TestCase):
         self._replay(agent, ["anything"], self._context())
 
         orchestrator.return_value.execute.assert_not_called()
-
-

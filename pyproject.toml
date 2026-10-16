@@ -54,7 +54,7 @@ dev = [
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "B", "SIM", "C90", "BLE"]
+select = ["E", "F", "B", "SIM", "C90", "BLE", "W"]
 # The formatter owns code width. The long lines that remain are prompt text and
 # model-facing field descriptions, and nothing may rewrap them.
 ignore = ["E501"]

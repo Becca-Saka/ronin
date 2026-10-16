@@ -423,5 +423,3 @@ class AbortReportingTests(unittest.TestCase):
 
         self.assertEqual(failed, 1)
         self.assertEqual([r.test_id for r in reports], ["TS_1", "TS_2"])
-
-

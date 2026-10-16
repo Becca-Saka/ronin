@@ -66,7 +66,7 @@ class DeviceSession:
         self.record_session = record_session
         self.is_recording = False
         self.session_id = session_id or str(uuid4())
-        
+
         # Ensure structured session directories exist
         self.session_root = self.session_dir / self.session_id
         self.logs_dir = self.session_root / "logs"
@@ -78,17 +78,17 @@ class DeviceSession:
 
         self.appium_log_path = self.logs_dir / f"appium_session_{self.session_id}.log"
         self.root_log_file = self.logs_dir / f"ronin_session_{self.session_id}.log"
-        
+
         # Create a file log handler to save all python logging output to the assets directory
         self._file_handler = logging.FileHandler(self.root_log_file, encoding="utf-8")
         self._file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
         logging.getLogger().addHandler(self._file_handler)
-        
+
         host = os.environ.get("APPIUM_HOST", "127.0.0.1")
         port = int(os.environ.get("APPIUM_PORT", "4723"))
         self._appium_url = f"http://{host}:{port}"
         self._owns_appium = False
- 
+
         self._appium_service = AppiumService()
         self._appium_args = {
             "host": host,
@@ -104,7 +104,7 @@ class DeviceSession:
                 "--log-no-colors",
             ],
         }
- 
+
     def _ensure_directories(self) -> None:
         for directory in (
             self.logs_dir,
@@ -133,7 +133,7 @@ class DeviceSession:
             raise RuntimeError(f"Appium failed to start. See {self.appium_log_path}")
         logger.info("Appium started")
         self._owns_appium = True
- 
+
     def start(self, is_headless: bool = False) -> DeviceControl:
         self._ensure_directories()
         self._start_appium()

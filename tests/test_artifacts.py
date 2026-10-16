@@ -406,5 +406,3 @@ class SecretScrubbingTests(unittest.TestCase):
         self.assertEqual(
             self._scrubber().scrub("Tap the Login button"), "Tap the Login button"
         )
-
-

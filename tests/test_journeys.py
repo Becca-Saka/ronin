@@ -140,5 +140,3 @@ class MissingEnvTests(unittest.TestCase):
             resolve({"env": {"password": "${RONIN_DEFINITELY_UNSET}"}})
 
         self.assertIn("RONIN_DEFINITELY_UNSET", str(caught.exception))
-
-

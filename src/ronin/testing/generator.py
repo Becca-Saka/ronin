@@ -26,7 +26,7 @@ class ScenarioGenerator:
     def generate_scenarios(self, journey: UserJourney) -> List[GeneratedTestCase]:
         """Generates scenarios covering happy paths, edge cases, boundaries, and destructive monkeys."""
         logger.info("Decomposing journey into test scenarios...")
-        
+
         prompt = f"""You are a senior QA Test Engineer. Your goal is to analyze the following natural-language User Journey and design a comprehensive suite of E2E test scenarios to thoroughly test the app and try to make it break.
 
 ### User Journey Description:
