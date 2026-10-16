@@ -1,3 +1,4 @@
+import io
 import json
 import tempfile
 import time
@@ -6,6 +7,9 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
+
+
+from ronin.errors import ObservationUnavailable
 
 
 def _solid_png(fill: str, size=(200, 400)) -> bytes:
@@ -556,7 +560,9 @@ class LaunchPaintTests(unittest.TestCase):
     def test_an_unreadable_screen_does_not_block_the_launch(self):
         from ronin.agent.launch import await_first_paint, screen_is_blank
 
-        device = SimpleNamespace(get_screenshot=Mock(side_effect=RuntimeError("no screen")))
+        device = SimpleNamespace(
+            get_screenshot=Mock(side_effect=ObservationUnavailable("no screen"))
+        )
 
         self.assertIsNone(screen_is_blank(device))
         await_first_paint(device)
@@ -1258,6 +1264,170 @@ class StalenessTests(unittest.TestCase):
         )
 
 
+class ExitCodeTests(unittest.TestCase):
+    """Only the entry point ends the process; everything below answers with a code."""
+
+    def test_a_usage_problem_is_reported_once_and_exits_two(self):
+        from ronin.cli.main import main
+        from ronin.errors import UsageError
+
+        with (
+            patch("ronin.cli.main.load_config", side_effect=UsageError("no app binary")),
+            patch("sys.stderr", new=io.StringIO()) as captured,
+        ):
+            code = main(["doctor"])
+
+        self.assertEqual(code, 2)
+        self.assertIn("no app binary", captured.getvalue())
+
+    def test_an_unloadable_suite_answers_two_without_exiting(self):
+        from ronin.testing.cli import RoninCLI
+
+        cli = RoninCLI()
+
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "absent.yaml"
+            code = cli.run([str(missing)])
+
+        self.assertEqual(code, 2)
+
+    def test_no_journey_file_is_a_usage_error_not_an_exit(self):
+        from ronin.errors import UsageError
+        from ronin.testing.cli import RoninCLI
+
+        cli = RoninCLI()
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("ronin.testing.cli.Path.cwd", return_value=Path(directory)),
+            self.assertRaises(UsageError),
+        ):
+            cli._resolve_journey_file(None)
+
+    def test_a_setting_ronin_config_does_not_know_is_not_looked_up_there(self):
+        """grounding and mark_detail come from a flag or the journey, or default."""
+        from ronin.agent.device_planner import GROUNDING_COORDINATES
+        from ronin.agent.perception.marks import DETAIL_NUMBERS
+        from ronin.testing.cli import RoninCLI
+        from ronin.testing.models import JourneyReport
+
+        cli = RoninCLI()
+        report = JourneyReport(
+            journey_id="j", journey_name="J", description="d", status="PASSED"
+        )
+
+        with (
+            patch.object(
+                RoninCLI,
+                "load_journeys",
+                return_value=[SimpleNamespace(id="j", name="J")],
+            ),
+            patch.object(RoninCLI, "_resolve_journey_file", return_value=Path("j.yaml")),
+            patch("ronin.testing.cli.resolve_app_path", return_value=Path("app.apk")),
+            patch("ronin.testing.cli.RoninTestRunner") as runner_class,
+        ):
+            runner_class.return_value.run_journey.return_value = report
+            cli.run(["j.yaml"])
+
+        self.assertEqual(
+            runner_class.call_args.kwargs["grounding"], GROUNDING_COORDINATES
+        )
+        self.assertEqual(runner_class.call_args.kwargs["mark_detail"], DETAIL_NUMBERS)
+
+    def test_the_suite_result_decides_the_code(self):
+        from ronin.testing.cli import RoninCLI
+        from ronin.testing.models import JourneyReport
+
+        def report(status):
+            return JourneyReport(
+                journey_id="j", journey_name="J", description="d", status=status
+            )
+
+        for status, expected in (("PASSED", 0), ("FAILED", 1)):
+            cli = RoninCLI()
+            with (
+                patch.object(
+                RoninCLI,
+                "load_journeys",
+                return_value=[SimpleNamespace(id="j", name="J")],
+            ),
+                patch.object(RoninCLI, "_resolve_journey_file", return_value=Path("j.yaml")),
+                patch("ronin.testing.cli.resolve_app_path", return_value=Path("app.apk")),
+                patch("ronin.testing.cli.RoninTestRunner") as runner_class,
+            ):
+                runner_class.return_value.run_journey.return_value = report(status)
+                self.assertEqual(cli.run(["j.yaml"]), expected)
+
+
+class DeviceFailureTests(unittest.TestCase):
+    """A failed device instruction has to say what it was, and keep its cause."""
+
+    def _failing_adb(self):
+        from ronin.utils.subprocess_runner import SubprocessRunError
+
+        return SubprocessRunError("adb failed", 1, "", "device offline")
+
+    def test_a_failed_command_names_the_intent_and_keeps_the_cause(self):
+        from ronin.agent.device.adb_control import AdbControl
+        from ronin.errors import DeviceUnavailable
+        from ronin.utils.subprocess_runner import SubprocessRunError
+
+        cause = self._failing_adb()
+        with (
+            patch("ronin.agent.device.adb_control.run_command", side_effect=cause),
+            self.assertRaises(DeviceUnavailable) as raised,
+        ):
+            AdbControl.set_airplane_mode("emulator-5554", True)
+
+        self.assertIn("set airplane mode", str(raised.exception))
+        self.assertIn("airplane-mode enable", str(raised.exception))
+        self.assertIsInstance(raised.exception.__cause__, SubprocessRunError)
+        self.assertEqual(raised.exception.__cause__.stderr, "device offline")
+
+    def test_a_nested_call_reports_the_instruction_that_failed(self):
+        """Not the outermost wrapper: the step that could not be carried out."""
+        from ronin.agent.device.adb_control import AdbControl
+        from ronin.errors import DeviceUnavailable
+
+        with (
+            patch(
+                "ronin.agent.device.adb_control.run_command",
+                side_effect=self._failing_adb(),
+            ),
+            self.assertRaises(DeviceUnavailable) as raised,
+        ):
+            AdbControl.enable_feedback("emulator-5554", True, True)
+
+        self.assertIn("toggle pointer location", str(raised.exception))
+
+    def test_an_unreadable_screen_is_reported_as_such(self):
+        from ronin.agent.device.device_control import DeviceControl
+        from ronin.errors import ObservationUnavailable
+
+        control = DeviceControl.__new__(DeviceControl)
+        control.device_name = "emulator-5554"
+        control.driver = SimpleNamespace(
+            get_screenshot_as_png=Mock(side_effect=OSError("connection reset"))
+        )
+
+        with self.assertRaises(ObservationUnavailable) as raised:
+            control.get_screenshot()
+
+        self.assertIsInstance(raised.exception.__cause__, OSError)
+
+    def test_a_report_that_cannot_be_written_says_so(self):
+        from ronin.errors import ArtifactWriteFailed
+        from ronin.testing.models import JourneyReport
+        from ronin.testing.reports import save_markdown_report
+
+        report = JourneyReport(
+            journey_id="j", journey_name="Journey", description="d", status="PASSED"
+        )
+
+        with self.assertRaises(ArtifactWriteFailed):
+            save_markdown_report(report, Path("/nonexistent-directory-for-ronin"))
+
+
 class VisionWeightsTests(unittest.TestCase):
     """The weights decide what the agent can see, so which weights must be fixed."""
 
@@ -1506,7 +1676,7 @@ class TargetDecisionTests(unittest.TestCase):
         from ronin.agent.targeting import evaluate
 
         device = SimpleNamespace(
-            get_screenshot=Mock(side_effect=RuntimeError("session gone"))
+            get_screenshot=Mock(side_effect=ObservationUnavailable("session gone"))
         )
 
         decision = evaluate(

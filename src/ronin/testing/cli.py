@@ -1,5 +1,4 @@
 import argparse
-import asyncio
 import json
 import logging
 import sys
@@ -10,7 +9,8 @@ from ronin.agent.device.platform import Platform
 from ronin.agent.device_planner import GROUNDING_COORDINATES, GROUNDING_MARKS
 from ronin.agent.perception.marks import DETAIL_NONE, DETAIL_NUMBERS, DETAIL_TEXT
 from ronin.app_discovery import find_journey_files, resolve_app_path
-from ronin.config import Config, load_config
+from ronin.config import SETTINGS, Config, load_config
+from ronin.errors import UsageError
 from .journey_env import resolve, substitute
 from .models import UserJourney
 from .runner import RoninTestRunner
@@ -81,12 +81,12 @@ class RoninCLI:
             logger.info("Using journey file %s", candidates[0].name)
             return candidates[0]
         if not candidates:
-            raise SystemExit(
+            raise UsageError(
                 f"No journey file found in {Path.cwd()}.\n"
                 "Pass one: ronin test <journey.yaml>"
             )
         listed = "\n".join(f"  {path.name}" for path in candidates)
-        raise SystemExit(
+        raise UsageError(
             f"Several journey files found in {Path.cwd()}:\n{listed}\n"
             "Pass the one you want: ronin test <journey.yaml>"
         )
@@ -195,16 +195,23 @@ class RoninCLI:
             i += 1
         return data
 
-    async def run(self, args_list: List[str] = None):
-        """Parses arguments, executes all loaded journeys, prints a summary, and exits."""
+    def run(self, args_list: Optional[List[str]] = None) -> int:
+        """Executes all loaded journeys, prints a summary, and returns an exit code.
+
+        Returns 0 when every journey passed, 1 when any failed, and 2 when the
+        suite could not be loaded. The caller owns the process.
+        """
         args = self.parser.parse_args(args_list)
-        filepath = self._resolve_journey_file(args.journey_file)
-        
+
         try:
+            filepath = self._resolve_journey_file(args.journey_file)
             journeys = self.load_journeys(filepath)
+        except UsageError as e:
+            logger.error("%s", e)
+            return 2
         except Exception as e:
             logger.error("Failed to load journey file: %s", e)
-            sys.exit(2)
+            return 2
             
         # Settings come from the flag if given, then the suite's device block,
         # then ronin.config (project/global files, env), then the defaults.
@@ -218,7 +225,9 @@ class RoninCLI:
             for key in journey_keys or (name,):
                 if key in device_cfg:
                     return device_cfg[key]
-            return self.config.get(name)
+            # grounding and mark_detail are flags and journey keys only, so the
+            # caller supplies the default rather than ronin.config.
+            return self.config.get(name) if name in SETTINGS else None
 
         platform_str = setting("platform", args.platform)
         # The journey file's directory counts as a search root, so a suite can
@@ -264,7 +273,7 @@ class RoninCLI:
         for journey in journeys:
             logger.info("Starting run for journey: %s (%s)", journey.name, journey.id)
             try:
-                report = await runner.run_journey(journey)
+                report = runner.run_journey(journey)
                 passed = (report.status == "PASSED")
                 results.append((journey.id, journey.name, "PASSED" if passed else "FAILED"))
                 if not passed:
@@ -283,13 +292,12 @@ class RoninCLI:
         
         if all_passed:
             logger.info("All user journeys passed successfully.")
-            sys.exit(0)
-        else:
-            logger.error("One or more user journeys failed or encountered errors.")
-            sys.exit(1)
+            return 0
+        logger.error("One or more user journeys failed or encountered errors.")
+        return 1
 
 
 def main():
     cli = RoninCLI()
-    asyncio.run(cli.run())
+    sys.exit(cli.run())
 

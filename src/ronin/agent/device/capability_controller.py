@@ -2,6 +2,7 @@ import logging
 import os
 from ronin.agent.device.platform import Platform
 from ronin.agent.actuation.actions import CapabilityType
+from ronin.errors import ActionRejected, DeviceUnavailable
 from ronin.utils.subprocess_runner import run_command
 from ronin.agent.device.adb_control import AdbControl
 
@@ -65,7 +66,9 @@ class CapabilityController:
                 getattr(self, method_name)(udid_or_serial, parameters)
             except Exception as e:
                 logger.error("Failed to execute capability %s: %s", capability.value, e)
-                raise RuntimeError(f"Capability {capability.value} failed: {e}")
+                raise ActionRejected(
+                    f"Capability {capability.value} failed: {e}"
+                ) from e
         else:
             logger.warning("Unsupported capability type: %s", capability.value)
 
@@ -94,7 +97,7 @@ class CapabilityController:
                     logger.info("Enabling airplane mode via ADB connectivity service")
                     AdbControl.set_airplane_mode(udid_or_serial, True)
                     success = True
-                except Exception as e:
+                except DeviceUnavailable as e:
                     logger.warning(
                         "ADB connectivity control failed: %s. Falling back to Appium set_network_connection.",
                         e,
@@ -104,7 +107,7 @@ class CapabilityController:
                     logger.info("Disabling airplane mode via ADB connectivity service")
                     AdbControl.set_airplane_mode(udid_or_serial, False)
                     success = True
-                except Exception as e:
+                except DeviceUnavailable as e:
                     logger.warning(
                         "ADB connectivity control failed: %s. Falling back to Appium set_network_connection.",
                         e,

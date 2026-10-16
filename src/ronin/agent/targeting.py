@@ -19,6 +19,7 @@ from ronin.agent.history import ActionEntry, ActionResult
 from ronin.agent.device_planner import GROUNDING_MARKS
 from ronin.agent.perception import marks
 from ronin.agent.staleness import has_target, target_moved
+from ronin.errors import ObservationUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -117,16 +118,13 @@ def stale_target_reason(device_control, snapshot, action) -> Optional[str]:
     Refusing costs a step and re-perceives, which is cheaper than touching
     whatever has taken the target's place. A screen that cannot be read at all
     is no evidence the target survived, so it counts too.
-
-    The catch is broad because a lost session surfaces in several shapes, and
-    every one of them leaves the target unverified.
     """
     if not has_target(action):
         return None
 
     try:
         fresh = device_control.get_screenshot()
-    except Exception as exc:
+    except ObservationUnavailable as exc:
         logger.warning("Could not re-read the screen before acting: %s", exc)
         return SCREEN_UNREADABLE
     if not fresh:

@@ -24,6 +24,7 @@ from ronin.agent.device.adb_control import AdbControl
 from ronin.agent.device.platform import Platform
 
 from ronin.agent.perception.perception import NAVIGATION_THRESHOLD
+from ronin.errors import DeviceUnavailable, ObservationUnavailable
 from ronin.defaults import (
     BLANK_SCREEN_STDDEV,
     LAUNCH_CONTENT_GRACE,
@@ -43,7 +44,7 @@ def _sample(device_control) -> Tuple[Optional[bool], Optional[object]]:
     """
     try:
         img = Image.open(io.BytesIO(device_control.get_screenshot())).convert("L")
-    except Exception:
+    except (ObservationUnavailable, OSError):  # PIL raises OSError on bad bytes
         return None, None
     width, height = img.size
     body = img.crop((0, int(height * 0.08), width, int(height * 0.92)))
@@ -101,7 +102,7 @@ def _clear_task_restart(device_control, package_id: str) -> bool:
     adb_runner = getattr(device_control, "adb_control", None) or AdbControl
     try:
         _, activity = adb_runner.get_apk_info(device_control.app_path)
-    except Exception as apk_err:
+    except DeviceUnavailable as apk_err:
         logger.warning("Failed to get APK activity: %s", apk_err)
         return False
     if not activity:
@@ -119,7 +120,7 @@ def _clear_task_restart(device_control, package_id: str) -> bool:
     try:
         adb_runner.run_adb_command(cmd)
         return True
-    except Exception as launch_err:
+    except DeviceUnavailable as launch_err:
         logger.warning("ADB clear-task failed: %s. Falling back.", launch_err)
         return False
 
@@ -143,4 +144,4 @@ def restart_app(device_control) -> None:
         device_control.driver.activate_app(package_id)
         await_first_paint(device_control)
     except Exception as exc:
-        raise RuntimeError(f"Failed to restart app: {exc}") from exc
+        raise DeviceUnavailable(f"Failed to restart app: {exc}") from exc

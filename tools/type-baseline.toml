@@ -15,7 +15,6 @@
 "src/ronin/llm/credentials.py" = 1
 "src/ronin/llm/llm_client.py" = 6
 "src/ronin/setup/steps.py" = 4
-"src/ronin/testing/cli.py" = 1
 "src/ronin/testing/generator.py" = 1
 "src/ronin/testing/qa_agent.py" = 1
 "src/ronin/testing/qa_planner.py" = 3

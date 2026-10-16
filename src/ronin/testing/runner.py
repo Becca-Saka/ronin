@@ -12,6 +12,7 @@ from ronin.agent.perception.perception import ScreenPerception
 from ronin.agent.device_planner import GROUNDING_COORDINATES
 from ronin.agent.perception.marks import DETAIL_NUMBERS
 from ronin.agent.replay import ReplayLedger
+from ronin.errors import ArtifactWriteFailed
 from .coverage import unevidenced_security_rules
 from .generator import ScenarioGenerator
 from .progress import ScenarioProgress
@@ -107,7 +108,7 @@ class RoninTestRunner:
             detector=f"{YOLO_REPO_ID}@{YOLO_REVISION}",
         )
 
-    async def run_journey(self, journey: UserJourney) -> JourneyReport:
+    def run_journey(self, journey: UserJourney) -> JourneyReport:
         """Generates scenarios from the journey, executes them, and builds reports & LLM usage metrics."""
         start_time = time.time()
 
@@ -320,14 +321,14 @@ class RoninTestRunner:
                 self._save_markdown_report(
                     report, session=session, scrubber=artifact_scrubber
                 )
-            except Exception as report_err:
+            except ArtifactWriteFailed as report_err:
                 logger.error("Failed to save markdown report: %s", report_err)
                 self._mark_report_write_failure(report, "markdown_report", report_err)
             try:
                 self._save_junit_report(
                     report, session=session, scrubber=artifact_scrubber
                 )
-            except Exception as junit_err:
+            except ArtifactWriteFailed as junit_err:
                 logger.error("Failed to save JUnit report: %s", junit_err)
                 self._mark_report_write_failure(report, "junit_report", junit_err)
 
@@ -421,7 +422,7 @@ class RoninTestRunner:
             save_junit_report(
                 checkpoint, session.telemetry_dir, scrubber, label="partial"
             )
-        except Exception as exc:
+        except ArtifactWriteFailed as exc:
             logger.error("Failed to checkpoint partial reports: %s", exc)
 
     def _save_markdown_report(

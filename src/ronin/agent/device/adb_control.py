@@ -3,6 +3,7 @@ import os
 import re
 from typing import Optional
 
+from ronin.errors import DeviceUnavailable
 from ronin.utils.subprocess_runner import run_command, SubprocessRunError
 
 logger = logging.getLogger(__name__)
@@ -16,19 +17,25 @@ class AdbControl:
     BASE_SYSTEM = ["adb", "shell", "settings", "put", "system"]
 
     @staticmethod
-    def run_adb_command(command):
-        """Runs a raw command in a shell subprocess.
+    def run_adb_command(command, doing: str = ""):
+        """Runs one adb command, or reports what the device could not do.
 
         Args:
             command: A list of command-line arguments to execute.
+            doing: What the command was for, named in the failure message
+                because the argv alone does not say why it was run.
 
         Returns:
             The CompletedProcess result from the run command.
+
+        Raises:
+            DeviceUnavailable: If the command could not be run or failed.
         """
         try:
             return run_command(command, check=True)
-        except SubprocessRunError as e:
-            raise RuntimeError(f"Failed to run command: {command}") from e
+        except SubprocessRunError as exc:
+            attempt = f"Failed to {doing}" if doing else "Failed to run adb command"
+            raise DeviceUnavailable(f"{attempt}: {' '.join(command)}") from exc
 
     @staticmethod
     def find_aapt():
@@ -40,17 +47,14 @@ class AdbControl:
         try:
             ANDROID_HOME = os.getenv("ANDROID_HOME")
             if ANDROID_HOME is None:
-                raise ValueError("ANDROID_HOME is not set")
+                raise DeviceUnavailable("ANDROID_HOME is not set")
             command = ["find", f"{ANDROID_HOME}/build-tools", "-name", "aapt"]
             result = run_command(command, check=True, capture_output=True, text=True)
             if not result.stdout.strip():
-                raise ValueError("aapt not found")
-            aapt_path = result.stdout.split("\n")[0]
-            if aapt_path is None:
-                raise ValueError("aapt not found")
-            return aapt_path
-        except SubprocessRunError as e:
-            raise RuntimeError(f"Failed to find aapt: {e.stderr}") from e
+                raise DeviceUnavailable(f"No aapt under {ANDROID_HOME}/build-tools")
+            return result.stdout.split("\n")[0]
+        except SubprocessRunError as exc:
+            raise DeviceUnavailable(f"Failed to find aapt: {exc.stderr}") from exc
 
     @staticmethod
     def get_apk_info(apk_path):
@@ -74,8 +78,8 @@ class AdbControl:
             package_id = package_match.group(1) if package_match else None
             activity = activity_match.group(1) if activity_match else None
             return package_id, activity
-        except SubprocessRunError as e:
-            raise RuntimeError(f"Failed to get APK info: {e.stderr}") from e
+        except SubprocessRunError as exc:
+            raise DeviceUnavailable(f"Failed to read {apk_path}: {exc.stderr}") from exc
 
     @staticmethod
     def toggle_tap_highlights(serial: str, enabled: bool):
@@ -85,12 +89,9 @@ class AdbControl:
             serial: The target device serial number.
             enabled: True to display touch highlights, False to turn them off.
         """
-        try:
-            val = "1" if enabled else "0"
-            command = ["adb", "-s", serial, "shell", "settings", "put", "system", "show_touches", val]
-            AdbControl.run_adb_command(command)
-        except Exception as e:
-            raise RuntimeError(f"Failed to toggle tap highlights: {e}")
+        val = "1" if enabled else "0"
+        command = ["adb", "-s", serial, "shell", "settings", "put", "system", "show_touches", val]
+        AdbControl.run_adb_command(command, doing="toggle tap highlights")
 
     @staticmethod
     def toggle_pointer_location(serial: str, enabled: bool):
@@ -100,13 +101,10 @@ class AdbControl:
             serial: The target device serial number.
             enabled: True to display trace details, False to turn them off.
         """
-        try:
-            val = "1" if enabled else "0"
-            command = ["adb", "-s", serial, "shell", "settings", "put", "system", "pointer_location", val]
-            AdbControl.run_adb_command(command)
-            logger.info("Pointer location %s", 'enabled' if enabled else 'disabled')
-        except Exception as e:
-            raise RuntimeError(f"Failed to toggle pointer location: {e}")
+        val = "1" if enabled else "0"
+        command = ["adb", "-s", serial, "shell", "settings", "put", "system", "pointer_location", val]
+        AdbControl.run_adb_command(command, doing="toggle pointer location")
+        logger.info("Pointer location %s", 'enabled' if enabled else 'disabled')
 
     @staticmethod
     def enable_feedback(serial: str, pointer_location: bool, tap_highlights: bool):
@@ -117,20 +115,14 @@ class AdbControl:
             pointer_location: True to display pointer coordinates, False otherwise.
             tap_highlights: True to show circle touches, False otherwise.
         """
-        try:
-            AdbControl.toggle_pointer_location(serial, pointer_location)
-            AdbControl.toggle_tap_highlights(serial, tap_highlights)
-        except Exception as e:
-            raise RuntimeError(f"Failed to enable feedback: {e}")
+        AdbControl.toggle_pointer_location(serial, pointer_location)
+        AdbControl.toggle_tap_highlights(serial, tap_highlights)
 
     @staticmethod
     def disable_feedback(serial: str):
         """Disables all system pointer tracking and touch highlights on the device."""
-        try:
-            AdbControl.toggle_pointer_location(serial, False)
-            AdbControl.toggle_tap_highlights(serial, False)
-        except Exception as e:
-            raise RuntimeError(f"Failed to disable feedback: {e}")
+        AdbControl.toggle_pointer_location(serial, False)
+        AdbControl.toggle_tap_highlights(serial, False)
 
     @staticmethod
     def avd_name(serial: str) -> Optional[str]:
@@ -145,7 +137,7 @@ class AdbControl:
         ):
             try:
                 result = run_command(command, timeout=10, log_command=False)
-            except Exception as exc:
+            except SubprocessRunError as exc:
                 logger.debug("Could not read the AVD name via %s: %s", command[-1], exc)
                 continue
             name = (result.stdout or "").strip().splitlines()
@@ -162,7 +154,7 @@ class AdbControl:
                 timeout=20,
                 log_command=False,
             )
-        except Exception as exc:
+        except SubprocessRunError as exc:
             logger.debug("Could not list packages on %s: %s", serial, exc)
             return set()
         return {
@@ -187,79 +179,58 @@ class AdbControl:
                 # If it's an emulator serial, query its AVD profile name
                 if serial.startswith("emulator-") and AdbControl.avd_name(serial) == device_name:
                     return serial
-        except Exception as e:
+        except SubprocessRunError as e:
             logger.warning("Failed to resolve emulator serial for %s: %s", device_name, e)
         return None
 
     @staticmethod
     def kill_emulator(device_name: str, serial: str = None):
         """Terminates a running emulator matching the specified device name (AVD profile name or serial)."""
-        try:
-            target_serial = serial or AdbControl.resolve_emulator_serial(device_name)
-            if target_serial:
-                logger.info("Found matching emulator serial '%s' for '%s'. Terminating.", target_serial, device_name)
-                AdbControl.run_adb_command(["adb", "-s", target_serial, "emu", "kill"])
-            else:
-                logger.warning("No active emulator serial found matching '%s'. Skipping termination.", device_name)
-        except Exception as e:
-            raise RuntimeError(f"Failed to kill emulator: {e}")
+        target_serial = serial or AdbControl.resolve_emulator_serial(device_name)
+        if target_serial:
+            logger.info("Found matching emulator serial '%s' for '%s'. Terminating.", target_serial, device_name)
+            AdbControl.run_adb_command(["adb", "-s", target_serial, "emu", "kill"], doing="kill emulator")
+        else:
+            logger.warning("No active emulator serial found matching '%s'. Skipping termination.", device_name)
 
     @staticmethod
     def mock_location(serial: str, lat: float, lng: float):
         """Mocks GPS location coordinates on the emulator."""
-        try:
-            cmd = ["adb", "-s", serial, "emu", "geo", "fix", str(lng), str(lat)]
-            run_command(cmd, check=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to mock location: {e}")
+        cmd = ["adb", "-s", serial, "emu", "geo", "fix", str(lng), str(lat)]
+        AdbControl.run_adb_command(cmd, doing="mock location")
 
     @staticmethod
     def set_airplane_mode(serial: str, enabled: bool):
         """Enables or disables airplane mode via connectivity service."""
-        try:
-            action = "enable" if enabled else "disable"
-            cmd = ["adb", "-s", serial, "shell", "cmd", "connectivity", "airplane-mode", action]
-            run_command(cmd, check=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to set airplane mode: {e}")
+        action = "enable" if enabled else "disable"
+        cmd = ["adb", "-s", serial, "shell", "cmd", "connectivity", "airplane-mode", action]
+        AdbControl.run_adb_command(cmd, doing="set airplane mode")
 
     @staticmethod
     def set_battery_status(serial: str, level: int, charging: bool):
         """Overrides battery level and AC power charging status."""
-        try:
-            ac_val = "1" if charging else "0"
-            run_command(["adb", "-s", serial, "shell", "dumpsys", "battery", "set", "level", str(level)], check=True)
-            run_command(["adb", "-s", serial, "shell", "dumpsys", "battery", "set", "ac", ac_val], check=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to set battery status: {e}")
+        ac_val = "1" if charging else "0"
+        AdbControl.run_adb_command(["adb", "-s", serial, "shell", "dumpsys", "battery", "set", "level", str(level)], doing="set battery status")
+        AdbControl.run_adb_command(["adb", "-s", serial, "shell", "dumpsys", "battery", "set", "ac", ac_val], doing="set battery status")
 
     @staticmethod
     def set_timezone(serial: str, timezone: str):
         """Sets the system timezone via settings global service."""
-        try:
-            cmd = ["adb", "-s", serial, "shell", "settings", "put", "global", "timezone", timezone]
-            run_command(cmd, check=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to set timezone: {e}")
+        cmd = ["adb", "-s", serial, "shell", "settings", "put", "global", "timezone", timezone]
+        AdbControl.run_adb_command(cmd, doing="set timezone")
 
     @staticmethod
     def set_app_locale(serial: str, package_id: str, locale_str: str):
         """Configures language locale settings for the target application package."""
-        try:
-            cmd = ["adb", "-s", serial, "shell", "cmd", "locale", "set-app-locales", package_id, "--locales", locale_str]
-            run_command(cmd, check=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to set app locale: {e}")
+        cmd = ["adb", "-s", serial, "shell", "cmd", "locale", "set-app-locales", package_id, "--locales", locale_str]
+        AdbControl.run_adb_command(cmd, doing="set app locale")
 
     @staticmethod
     def set_app_permission(serial: str, package_id: str, permission: str, grant: bool):
         """Grants or revokes a specific system permission for the target package."""
-        try:
-            action_cmd = "grant" if grant else "revoke"
-            cmd = ["adb", "-s", serial, "shell", "pm", action_cmd, package_id, permission]
-            run_command(cmd, check=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to set app permission: {e}")
+        action_cmd = "grant" if grant else "revoke"
+        cmd = ["adb", "-s", serial, "shell", "pm", action_cmd, package_id, permission]
+        AdbControl.run_adb_command(cmd, doing="set app permission")
 
     @staticmethod
     def get_app_pid(serial: str, package_id: str) -> str:
@@ -267,107 +238,72 @@ class AdbControl:
         try:
             res = run_command(["adb", "-s", serial, "shell", "pidof", package_id], capture_output=True, text=True)
             return res.stdout.strip()
-        except Exception as e:
+        except SubprocessRunError as e:
             logger.warning("Failed to get PID for %s: %s", package_id, e)
             return ""
 
     @staticmethod
     def simulate_low_memory(serial: str, pid: str):
         """Triggers a low memory simulation (RUNNING_CRITICAL) on the target PID."""
-        try:
-            cmd = ["adb", "-s", serial, "shell", "am", "send-trim-memory", pid, "RUNNING_CRITICAL"]
-            run_command(cmd, check=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to simulate low memory: {e}")
+        cmd = ["adb", "-s", serial, "shell", "am", "send-trim-memory", pid, "RUNNING_CRITICAL"]
+        AdbControl.run_adb_command(cmd, doing="simulate low memory")
 
     @staticmethod
     def simulate_incoming_call(serial: str, phone: str):
         """Simulates an incoming GSM call on the emulator."""
-        try:
-            cmd = ["adb", "-s", serial, "emu", "gsm", "call", str(phone)]
-            run_command(cmd, check=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to simulate incoming call: {e}")
+        cmd = ["adb", "-s", serial, "emu", "gsm", "call", str(phone)]
+        AdbControl.run_adb_command(cmd, doing="simulate incoming call")
 
     @staticmethod
     def open_deeplink(serial: str, url: str, package_id: str = None):
         """Launches a deep link URL intent via Activity Manager."""
-        try:
-            cmd = ["adb", "-s", serial, "shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url]
-            if package_id:
-                cmd.append(package_id)
-            run_command(cmd, check=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to open deep link: {e}")
+        cmd = ["adb", "-s", serial, "shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url]
+        if package_id:
+            cmd.append(package_id)
+        AdbControl.run_adb_command(cmd, doing="open deep link")
 
     @staticmethod
     def force_stop_app(serial: str, package_id: str):
         """Force stops the target application package."""
-        try:
-            cmd = ["adb", "-s", serial, "shell", "am", "force-stop", package_id]
-            run_command(cmd, check=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to force stop app: {e}")
+        cmd = ["adb", "-s", serial, "shell", "am", "force-stop", package_id]
+        AdbControl.run_adb_command(cmd, doing="force stop app")
 
     @staticmethod
     def clear_app_data(serial: str, package_id: str):
         """Clears all storage and user data for the target application package."""
-        try:
-            cmd = ["adb", "-s", serial, "shell", "pm", "clear", package_id]
-            run_command(cmd, check=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to clear app data: {e}")
+        cmd = ["adb", "-s", serial, "shell", "pm", "clear", package_id]
+        AdbControl.run_adb_command(cmd, doing="clear app data")
 
     @staticmethod
     def push_file(serial: str, local_path: str, remote_path: str):
         """Pushes a local file to the emulator filesystem."""
-        try:
-            cmd = ["adb", "-s", serial, "push", local_path, remote_path]
-            run_command(cmd, check=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to push file: {e}")
+        cmd = ["adb", "-s", serial, "push", local_path, remote_path]
+        AdbControl.run_adb_command(cmd, doing="push file")
 
     @staticmethod
     def scan_media_file(serial: str, remote_path: str):
         """Broadcasts a media scan request for the specified path."""
-        try:
-            cmd = [
-                "adb", "-s", serial, "shell", "am", "broadcast",
-                "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
-                "-d", f"file://{remote_path}"
-            ]
-            run_command(cmd, check=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to scan media file: {e}")
+        cmd = [
+            "adb", "-s", serial, "shell", "am", "broadcast",
+            "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+            "-d", f"file://{remote_path}"
+        ]
+        AdbControl.run_adb_command(cmd, doing="scan media file")
 
     @staticmethod
     def start_app_via_monkey(serial: str, package_id: str):
         """Starts the target app using the monkey tool."""
-        try:
-            cmd = ["adb", "-s", serial, "shell", "monkey", "-p", package_id, "1"]
-            run_command(cmd, check=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to start app via monkey: {e}")
+        cmd = ["adb", "-s", serial, "shell", "monkey", "-p", package_id, "1"]
+        AdbControl.run_adb_command(cmd, doing="start app via monkey")
 
     @staticmethod
     def set_accessibility_service(serial: str, service: str, enabled: bool):
         """Enables or disables a system accessibility service globally on the device via settings."""
-        try:
-            if enabled:
-                logger.info("Registering accessibility service: %s", service)
-                AdbControl.run_adb_command(
-                    ["adb", "-s", serial, "shell", "settings", "put", "secure", "enabled_accessibility_services", service]
-                )
-                AdbControl.run_adb_command(
-                    ["adb", "-s", serial, "shell", "settings", "put", "secure", "accessibility_enabled", "1"]
-                )
-            else:
-                logger.info("Deregistering accessibility services")
-                AdbControl.run_adb_command(
-                    ["adb", "-s", serial, "shell", "settings", "put", "secure", "enabled_accessibility_services", '""']
-                )
-                AdbControl.run_adb_command(
-                    ["adb", "-s", serial, "shell", "settings", "put", "secure", "accessibility_enabled", "0"]
-                )
-        except Exception as e:
-            raise RuntimeError(f"Failed to set accessibility service: {e}")
+        if enabled:
+            logger.info("Registering accessibility service: %s", service)
+            AdbControl.run_adb_command(["adb", "-s", serial, "shell", "settings", "put", "secure", "enabled_accessibility_services", service], doing="set accessibility service")
+            AdbControl.run_adb_command(["adb", "-s", serial, "shell", "settings", "put", "secure", "accessibility_enabled", "1"], doing="set accessibility service")
+        else:
+            logger.info("Deregistering accessibility services")
+            AdbControl.run_adb_command(["adb", "-s", serial, "shell", "settings", "put", "secure", "enabled_accessibility_services", '""'], doing="set accessibility service")
+            AdbControl.run_adb_command(["adb", "-s", serial, "shell", "settings", "put", "secure", "accessibility_enabled", "0"], doing="set accessibility service")

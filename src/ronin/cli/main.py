@@ -15,7 +15,9 @@ from dotenv import find_dotenv, load_dotenv
 from ronin import __version__
 from ronin.cli import config as config_command
 from ronin.cli import devices, doctor, run, setup, test
+from ronin.cli.console import Console
 from ronin.config import load_config
+from ronin.errors import UsageError
 
 COMMANDS = (doctor, setup, devices, config_command, test, run)
 
@@ -70,7 +72,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         args = parser.parse_args(argv)
     args.extra = extra
 
-    return handler(args, load_config())
+    try:
+        return handler(args, load_config())
+    except UsageError as exc:
+        Console(stream=sys.stderr).write(str(exc))
+        return 2
 
 
 if __name__ == "__main__":

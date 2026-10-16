@@ -10,6 +10,8 @@ import io
 from contextlib import redirect_stderr, redirect_stdout
 from typing import Optional
 
+from ronin.errors import UsageError
+
 
 def missing_credentials(model: Optional[str]) -> list[str]:
     """Returns the environment variables a model needs but does not have."""
@@ -23,11 +25,11 @@ def missing_credentials(model: Optional[str]) -> list[str]:
 
 
 def require_credentials(*models: Optional[str]) -> None:
-    """Exits with an actionable message when a model's credentials are absent."""
+    """Refuses to start when a model's credentials are absent."""
     for model in models:
         missing = missing_credentials(model)
         if missing:
-            raise SystemExit(
+            raise UsageError(
                 f"Missing credentials for '{model}': {', '.join(missing)}.\n"
                 "Add them to a .env file in this directory or export them."
             )

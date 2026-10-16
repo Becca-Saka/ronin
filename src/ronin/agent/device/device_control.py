@@ -24,6 +24,7 @@ from ronin.defaults import (
     FOCUS_POLL_INTERVAL,
     FOCUS_POLL_TIMEOUT,
 )
+from ronin.errors import ActionRejected, DeviceUnavailable, ObservationUnavailable
 from ronin.utils.subprocess_runner import run_command
 
 logger = logging.getLogger(__name__)
@@ -119,7 +120,7 @@ class DeviceControl:
             message = str(exc)
             if "getting AVD" not in message and "Condition unmet" not in message:
                 raise
-            raise RuntimeError(
+            raise DeviceUnavailable(
                 f"The emulator '{self.device_name}' did not start within "
                 f"{AVD_LAUNCH_TIMEOUT_MS // 1000}s.\n{diagnose_avd_launch(self.device_name)}"
             ) from exc
@@ -166,7 +167,16 @@ class DeviceControl:
         )
 
     def get_screenshot(self):
-        return self.driver.get_screenshot_as_png()
+        """The screen as PNG bytes, or ObservationUnavailable if unreadable.
+
+        A lost session arrives as whatever the driver chose to raise.
+        """
+        try:
+            return self.driver.get_screenshot_as_png()
+        except Exception as exc:
+            raise ObservationUnavailable(
+                f"Could not read the screen of '{self.device_name}': {exc}"
+            ) from exc
 
     def __tap_screen(self, x, y):
         touch = PointerInput("touch", "finger")
@@ -225,7 +235,7 @@ class DeviceControl:
             and rect.get("y", 0) <= y <= rect.get("y", 0) + height
         )
         if not inside:
-            raise RuntimeError(
+            raise ActionRejected(
                 f"{action} at ({x}, {y}) did not focus anything there — focus is on the "
                 f"element at x={rect.get('x')},y={rect.get('y')} "
                 f"({width}x{height}). Nothing was entered. The layout has probably moved "

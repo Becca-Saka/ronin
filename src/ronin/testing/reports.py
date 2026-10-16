@@ -6,6 +6,7 @@ import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from ronin.errors import ArtifactWriteFailed
 from ronin.testing.models import JourneyReport, ScenarioReport
 from ronin.utils.secrets import SecretScrubber
 
@@ -22,12 +23,16 @@ def _scrub(scrubber: SecretScrubber | None, value: str | None) -> str:
 
 
 def _write_atomic(path: Path, content: str | bytes) -> None:
+    """Writes via a temporary file, so a half-written report never appears."""
     temporary = path.with_suffix(path.suffix + ".tmp")
-    if isinstance(content, bytes):
-        temporary.write_bytes(content)
-    else:
-        temporary.write_text(content, encoding="utf-8")
-    temporary.replace(path)
+    try:
+        if isinstance(content, bytes):
+            temporary.write_bytes(content)
+        else:
+            temporary.write_text(content, encoding="utf-8")
+        temporary.replace(path)
+    except OSError as exc:
+        raise ArtifactWriteFailed(f"Could not write {path}: {exc}") from exc
 
 
 def _environment_lines(environment) -> list[str]:

@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 
 from ronin.agent.device.device_control import DeviceControl
 from ronin.agent.device.platform import Platform
+from ronin.errors import ActionRejected
 from ronin.agent.device_agent import (
     AgentHistory,
     DeviceAgent,
@@ -96,7 +97,7 @@ class DeviceTypingTests(unittest.TestCase):
             {"x": 63, "y": 820, "width": 954, "height": 147}
         )
 
-        with self.assertRaisesRegex(RuntimeError, "did not focus anything there"):
+        with self.assertRaisesRegex(ActionRejected, "did not focus anything there"):
             control.type("test@email.com", 537, 1260)
 
         control.tap.assert_called_once_with(537, 1260)
@@ -122,7 +123,7 @@ class DeviceTypingTests(unittest.TestCase):
 
         control.tap = Mock(side_effect=tap)
 
-        with self.assertRaisesRegex(RuntimeError, "did not focus anything there"):
+        with self.assertRaisesRegex(ActionRejected, "did not focus anything there"):
             control.type("password123", 537, 1444)
 
         email.send_keys.assert_not_called()
@@ -133,7 +134,7 @@ class DeviceTypingTests(unittest.TestCase):
             {"x": 63, "y": 820, "width": 954, "height": 147}
         )
 
-        with self.assertRaisesRegex(RuntimeError, "did not focus anything there"):
+        with self.assertRaisesRegex(ActionRejected, "did not focus anything there"):
             control.clear(537, 1260)
 
         control.tap.assert_called_once_with(537, 1260)

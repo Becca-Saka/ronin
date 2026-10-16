@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from ronin.errors import UsageError
+
 logger = logging.getLogger(__name__)
 
 ANDROID_SUFFIXES = (".apk",)
@@ -232,7 +234,7 @@ def resolve_app_path(
                 relative = Path(directory) / candidate
                 if relative.exists():
                     return relative
-        raise SystemExit(
+        raise UsageError(
             f"App binary not found: {explicit}\n"
             "Pass --app-path with a path relative to this directory, or an absolute one."
         )
@@ -263,7 +265,7 @@ def resolve_app_path(
 
     looked = "\n".join(f"  {directory}" for directory in _unique_dirs(search_dirs))
     suffixes = " or ".join(_suffixes_for(platform))
-    raise SystemExit(
+    raise UsageError(
         f"No {platform} app binary ({suffixes}) found under:\n{looked}\n"
         "Build the app, then pass --app-path with a relative or absolute path "
         "to it — or set it once with: ronin config set app_path <path>"

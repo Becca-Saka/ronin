@@ -1,7 +1,6 @@
 """`ronin test` — run a journey file as a generated test suite."""
 
 import argparse
-import asyncio
 from typing import List
 
 from ronin.config import Config
@@ -45,6 +44,5 @@ def run(args: argparse.Namespace, config: Config) -> int:
     require_credentials(
         config.resolve("model", parsed.model), config.resolve("fast_model", parsed.fast_model)
     )
-    # RoninCLI.run() re-parses and calls sys.exit() with the suite's status.
-    asyncio.run(cli.run(argv))
-    return 0
+    # RoninCLI.run() re-parses argv and answers with the suite's status.
+    return cli.run(argv)
