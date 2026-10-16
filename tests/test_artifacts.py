@@ -1,0 +1,410 @@
+"""Reports, progress files and screenshots, and what must never reach them."""
+
+import json
+import tempfile
+import unittest
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from types import SimpleNamespace
+from ronin.agent.device.platform import Platform
+
+
+class ArtifactSafetyTests(unittest.TestCase):
+    def _scenario(self):
+        from ronin.testing.models import GeneratedTestCase
+
+        return GeneratedTestCase(
+            test_id="TS_1",
+            scenario_name="Checkout",
+            classification="happy_path",
+            steps_instructions=["Enter 'password123' in Password"],
+            expected_outcomes=["Do not display '4111222233334444'"],
+        )
+
+    def test_progress_sanitizes_the_filename(self):
+        from ronin.testing.models import UserJourney
+        from ronin.testing.progress import ScenarioProgress
+        from ronin.utils.secrets import SecretScrubber
+
+        scenario = self._scenario()
+        scrubber = SecretScrubber()
+        journey = UserJourney(
+            id="../../escape", name="Journey", description="test", security_rules=[]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            progress = ScenarioProgress(
+                Path(directory), journey, [scenario], scrubber=scrubber
+            )
+            progress.write()
+            payload = progress.path.read_text()
+
+            self.assertEqual(progress.path.parent, Path(directory))
+            self.assertIn("TS_1", payload)
+            self.assertFalse(progress.path.with_suffix(".json.tmp").exists())
+
+    def test_progress_redacts_known_values(self):
+        from ronin.testing.models import UserJourney
+        from ronin.testing.progress import ScenarioProgress
+        from ronin.utils.secrets import SecretScrubber
+
+        scenario = self._scenario()
+        scrubber = SecretScrubber()
+        scrubber.learn_secrets(
+            {"password": "password123", "card_number": "4111222233334444"}
+        )
+        journey = UserJourney(id="j", name="Journey", description="test", security_rules=[])
+        with tempfile.TemporaryDirectory() as directory:
+            progress = ScenarioProgress(
+                Path(directory), journey, [scenario], scrubber=scrubber
+            )
+            progress.write()
+            payload = progress.path.read_text()
+
+            self.assertNotIn("password123", payload)
+            self.assertNotIn("4111222233334444", payload)
+
+    def test_junit_distinguishes_errors_from_assertion_failures(self):
+        from ronin.testing.models import JourneyReport, ScenarioReport
+        from ronin.testing.runner import RoninTestRunner
+
+        report = JourneyReport(
+            journey_id="j",
+            journey_name="Journey",
+            description="d",
+            status="FAILED",
+            scenarios=[
+                ScenarioReport(
+                    test_id="one",
+                    scenario_name="Harness",
+                    classification="happy_path",
+                    status="ERROR",
+                    failure_reason="connection refused",
+                ),
+                ScenarioReport(
+                    test_id="two",
+                    scenario_name="Evidence",
+                    classification="happy_path",
+                    status="UNVERIFIED",
+                    failure_reason="missing evidence",
+                ),
+            ],
+            failed_count=2,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            runner = RoninTestRunner.__new__(RoninTestRunner)
+            runner.assets_dir = Path(directory)
+            runner._save_junit_report(report)
+            path = next(Path(directory).glob("junit_*.xml"))
+            root = ET.parse(path).getroot()
+
+            self.assertEqual(root.attrib["errors"], "1")
+            self.assertEqual(root.attrib["failures"], "1")
+            self.assertEqual(len(root.findall(".//error")), 1)
+            self.assertEqual(len(root.findall(".//failure")), 1)
+
+    def test_the_report_records_what_produced_it(self):
+        """A run that behaves differently must be attributable to what changed."""
+        from ronin.testing.models import JourneyReport, RunEnvironment
+        from ronin.testing.reports import save_markdown_report
+
+        report = JourneyReport(
+            journey_id="j",
+            journey_name="Journey",
+            description="d",
+            status="PASSED",
+            passed_count=1,
+            environment=RunEnvironment(
+                ronin_version="0.1.0",
+                model="openrouter/some/model",
+                fast_model="openrouter/some/fast",
+                platform="android",
+                grounding="marks",
+                detector="orasul/deki-yolo@287f12d1",
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = save_markdown_report(report, Path(directory))
+            payload = path.read_text()
+
+        self.assertIn("openrouter/some/model", payload)
+        self.assertIn("openrouter/some/fast", payload)
+        self.assertIn("orasul/deki-yolo@287f12d1", payload)
+        self.assertIn("marks", payload)
+
+    def test_a_report_without_an_environment_still_writes(self):
+        from ronin.testing.models import JourneyReport
+        from ronin.testing.reports import save_markdown_report
+
+        report = JourneyReport(
+            journey_id="j", journey_name="Journey", description="d", status="PASSED"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            payload = save_markdown_report(report, Path(directory)).read_text()
+
+        self.assertIn("Journey", payload)
+        self.assertNotIn("**Detector**", payload)
+
+    def test_the_runner_records_the_pinned_detector(self):
+        from ronin.agent.perception.image_descriptor import YOLO_REVISION
+        from ronin.testing.runner import RoninTestRunner
+
+        runner = RoninTestRunner(
+            device_name="emulator-5554",
+            app_path="app.apk",
+            platform=Platform.ANDROID,
+            model="openrouter/some/model",
+            grounding="marks",
+        )
+
+        environment = runner._environment()
+
+        self.assertEqual(environment.platform, "android")
+        self.assertIn(YOLO_REVISION, environment.detector)
+
+    def test_report_write_failure_makes_the_run_fail(self):
+        from ronin.testing.models import JourneyReport
+        from ronin.testing.runner import RoninTestRunner
+
+        report = JourneyReport(
+            journey_id="j",
+            journey_name="Journey",
+            description="d",
+            status="PASSED",
+            passed_count=1,
+        )
+
+        RoninTestRunner._mark_report_write_failure(
+            report, "junit_report", OSError("disk full")
+        )
+
+        self.assertEqual(report.status, "FAILED")
+        self.assertEqual(report.failed_count, 1)
+        self.assertEqual(report.scenarios[-1].status, "ERROR")
+
+    def _element(self, text, box=(2, 3, 8, 9)):
+        return SimpleNamespace(
+            text=text,
+            bounding_box=SimpleNamespace(
+                x_min=box[0], y_min=box[1], x_max=box[2], y_max=box[3]
+            ),
+        )
+
+    def test_declared_secret_regions_are_covered_before_saving(self):
+        from PIL import Image
+
+        from ronin.agent.perception.media_manager import MediaManager
+        from ronin.utils.secrets import SecretScrubber
+
+        scrubber = SecretScrubber()
+        scrubber.learn_secrets({"card_number": "4111222233334444"})
+        image = Image.new("RGB", (20, 20), "white")
+
+        safe = MediaManager(scrubber).redact_artifact_image(
+            image, [self._element("4111 2222 3333 4444")]
+        )
+        self.assertEqual(safe.getpixel((4, 5)), (255, 255, 255))
+
+        safe = MediaManager(scrubber).redact_artifact_image(
+            image, [self._element("4111222233334444")]
+        )
+        self.assertEqual(safe.getpixel((4, 5)), (0, 0, 0))
+        self.assertEqual(image.getpixel((4, 5)), (255, 255, 255))
+
+    def test_ordinary_labels_are_never_covered(self):
+        from PIL import Image
+
+        from ronin.agent.perception.media_manager import MediaManager
+        from ronin.utils.secrets import SecretScrubber
+
+        scrubber = SecretScrubber()
+        scrubber.learn_secrets({"password": "secret-password123"})
+        image = Image.new("RGB", (20, 20), "white")
+
+        safe = MediaManager(scrubber).redact_artifact_image(
+            image, [self._element("Continue")]
+        )
+
+        self.assertEqual(safe.getpixel((4, 5)), (255, 255, 255))
+
+    def test_unknown_cost_is_reported_as_unknown(self):
+        from ronin.testing.usage_tracker import LLMUsageTracker
+
+        usage = SimpleNamespace(prompt_tokens=3, completion_tokens=2, total_tokens=5)
+        with tempfile.TemporaryDirectory() as directory:
+            tracker = LLMUsageTracker(Path(directory))
+            tracker.add_call("scenario:TS_1", "provider/model", None, usage)
+            path = tracker.save_report()
+            payload = json.loads(path.read_text())
+
+        self.assertEqual(payload["cost_unknown_calls"], 1)
+        call = payload["components"]["scenario:TS_1"]["calls"][0]
+        self.assertFalse(call["cost_known"])
+        self.assertEqual(call["model"], "provider/model")
+
+
+class ScanDumpSafetyTests(unittest.TestCase):
+    """A scan dump is a file, so detected text in it outlives the run."""
+
+    def _element(self, text):
+        from ronin.agent.perception.elements import BoundingBox, GUIElement
+
+        return GUIElement(
+            element="Text",
+            type="text",
+            confidence=0.9,
+            text=text,
+            bounding_box=BoundingBox(x_min=0, y_min=0, x_max=10, y_max=10),
+        )
+
+    def test_declared_secrets_are_masked_in_the_dump(self):
+        from ronin.agent.perception.scan_dump import element_to_dict
+        from ronin.utils.secrets import SecretScrubber
+
+        scrubber = SecretScrubber()
+        scrubber.learn_secrets({"password": "secret-password123"})
+
+        dumped = element_to_dict(self._element("secret-password123"), 0, scrubber)
+
+        self.assertEqual(dumped["text"], "{{password}}")
+
+    def test_ordinary_detected_text_survives(self):
+        from ronin.agent.perception.scan_dump import element_to_dict
+        from ronin.utils.secrets import SecretScrubber
+
+        scrubber = SecretScrubber()
+        scrubber.learn_secrets({"password": "secret-password123"})
+
+        dumped = element_to_dict(self._element("Continue"), 0, scrubber)
+
+        self.assertEqual(dumped["text"], "Continue")
+
+
+class ScenarioProgressTests(unittest.TestCase):
+    def _progress(self, directory):
+        from ronin.testing.models import GeneratedTestCase, UserJourney
+        from ronin.testing.progress import ScenarioProgress
+
+        journey = UserJourney(id="j1", name="Journey", description="d", security_rules=[])
+        scenarios = [
+            GeneratedTestCase(
+                test_id=f"TS_00{n}",
+                scenario_name=f"Scenario {n}",
+                classification="happy_path",
+                steps_instructions=["open app"],
+                expected_outcomes=["ok"],
+            )
+            for n in (1, 2)
+        ]
+        return ScenarioProgress(Path(directory), journey, scenarios)
+
+    def test_plan_is_written_before_anything_runs(self):
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            progress = self._progress(tmp)
+            progress.write()
+
+            data = json.loads(progress.path.read_text())
+            self.assertEqual(data["total"], 2)
+            self.assertEqual(data["counts"], {"pending": 2})
+
+    def test_status_updates_as_scenarios_finish(self):
+        import json
+        import tempfile
+
+        from ronin.testing.models import ScenarioReport
+
+        with tempfile.TemporaryDirectory() as tmp:
+            progress = self._progress(tmp)
+            progress.start("TS_001")
+            progress.record(
+                "TS_001",
+                ScenarioReport(
+                    test_id="TS_001",
+                    scenario_name="Scenario 1",
+                    classification="happy_path",
+                    status="FAILED",
+                    duration=12.34,
+                    steps_executed=9,
+                    failure_reason="wrong screen",
+                ),
+            )
+
+            data = json.loads(progress.path.read_text())
+            first = data["scenarios"][0]
+            self.assertEqual(first["status"], "FAILED")
+            self.assertEqual(first["steps_executed"], 9)
+            self.assertEqual(first["duration_seconds"], 12.3)
+            self.assertEqual(data["counts"], {"FAILED": 1, "pending": 1})
+
+
+class ProgressAbortTests(unittest.TestCase):
+    def test_a_crash_leaves_nothing_marked_running(self):
+        import json
+        import tempfile
+
+        from ronin.testing.models import GeneratedTestCase, UserJourney
+        from ronin.testing.progress import ScenarioProgress
+
+        journey = UserJourney(id="j1", name="J", description="d", security_rules=[])
+        scenarios = [
+            GeneratedTestCase(
+                test_id=f"TS_00{n}",
+                scenario_name=f"S{n}",
+                classification="happy_path",
+                steps_instructions=["x"],
+                expected_outcomes=[],
+            )
+            for n in (1, 2)
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            progress = ScenarioProgress(Path(tmp), journey, scenarios)
+            progress.start("TS_001")
+            progress.abort("interrupted")
+
+            data = json.loads(progress.path.read_text())
+            self.assertEqual(data["counts"], {"ABORTED": 2})
+            self.assertTrue(all(s["failure_reason"] == "interrupted" for s in data["scenarios"]))
+
+
+class SecretScrubbingTests(unittest.TestCase):
+    def _scrubber(self):
+        from ronin.utils.secrets import SecretScrubber
+
+        scrubber = SecretScrubber()
+        scrubber.learn_secrets({"email": "test@example.com", "password": "password123"})
+        return scrubber
+
+    def test_values_are_replaced_by_the_name_that_declared_them(self):
+        scrubbed = self._scrubber().scrub("Type 'password123' into the Password field")
+
+        self.assertNotIn("password123", scrubbed)
+        self.assertIn("{{password}}", scrubbed)
+        self.assertIn("Password field", scrubbed)
+
+    def test_undeclared_quoted_text_is_not_treated_as_a_secret(self):
+        from ronin.utils.secrets import SecretScrubber
+
+        scrubber = SecretScrubber()
+        scrubber.learn_from_instructions(["Tap the 'Continue' button"])
+
+        self.assertEqual(scrubber.scrub("Tap Continue"), "Tap Continue")
+
+    def test_values_typed_at_runtime_are_learned(self):
+        from ronin.utils.secrets import SecretScrubber
+
+        scrubber = SecretScrubber()
+        scrubber.learn("hunter2")
+
+        self.assertNotIn("hunter2", scrubber.scrub("I will enter hunter2 now"))
+
+    def test_ordinary_text_is_untouched(self):
+        self.assertEqual(
+            self._scrubber().scrub("Tap the Login button"), "Tap the Login button"
+        )
+
+

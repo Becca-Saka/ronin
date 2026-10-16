@@ -166,8 +166,8 @@ def main(argv: list[str] | None = None) -> int:
         "paths",
         nargs="*",
         type=Path,
-        default=[REPOSITORY_ROOT / "src" / "ronin"],
-        help="Python files or directories to inspect (default: src/ronin)",
+        default=[REPOSITORY_ROOT / "src" / "ronin", REPOSITORY_ROOT / "tests"],
+        help="Python files or directories to inspect (default: src/ronin and tests)",
     )
     args = parser.parse_args(argv)
 
