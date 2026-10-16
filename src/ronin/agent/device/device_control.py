@@ -211,18 +211,20 @@ class DeviceControl:
             # The planner focuses a field in the preceding step. Avoid tapping it
             # again after the keyboard has reflowed the layout when it is already
             # the active element at the current coordinates.
+            before = self.focus.rect()
             if not self.focus.contains(x, y):
                 self.tap(x, y)
                 self.focus.wait_for(x, y)
-            self.focus.assert_at(x, y, "TYPE")
+            self.focus.assert_at(x, y, "TYPE", before=before)
             self.driver.switch_to.active_element.send_keys(text)
 
     def clear(self, x, y):
         try:
+            before = self.focus.rect()
             self.tap(x, y)
             self.focus.wait_for(x, y)
             if self.platform != Platform.IOS:
-                self.focus.assert_at(x, y, "CLEAR")
+                self.focus.assert_at(x, y, "CLEAR", before=before)
             if self.platform == Platform.IOS:
                 self.driver.switch_to.active_element.clear()
             else:

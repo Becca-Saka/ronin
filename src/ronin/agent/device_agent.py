@@ -62,6 +62,9 @@ class _RunContext:
     last_action_type: Optional[str] = None
     screen_height: Optional[int] = None
     pending_loop_nudge: Optional[str] = None
+    unlisted_phash: Optional[str] = None
+    """Where the planner last said the target it needs carries no number. A
+    second refusal on that same screen means looking again did not help."""
 
 
 class DeviceAgent:
@@ -306,10 +309,14 @@ class DeviceAgent:
                     session_dir / f"not_listed_step{step + 1}_{snapshot.timestamp}.png",
                     snapshot,
                 )
-            if decision.stop_scenario:
-                return outcomes.loop_detected(
-                    ctx, session_trail, snapshot.current_phash, decision.stop_scenario
+                final = targeting.unlisted_is_final(
+                    ctx.unlisted_phash, snapshot.current_phash, action.description
                 )
+                if final:
+                    return outcomes.loop_detected(
+                        ctx, session_trail, snapshot.current_phash, final
+                    )
+                ctx.unlisted_phash = snapshot.current_phash
             return None
 
         action = decision.action or action

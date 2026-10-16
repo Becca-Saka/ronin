@@ -141,13 +141,31 @@ class Decision:
 
     ok: bool = True
     observation: Optional[str] = None
-    stop_scenario: Optional[str] = None
     unmatched: bool = False
+    """The planner asked for something no number names. The loop decides whether
+    that ends the scenario, because only the loop knows if the screen changed
+    since the last time it was asked."""
     action: Optional[object] = None
     """The action to run instead, once a number has been turned into a point."""
 
 
 USABLE = Decision()
+
+
+def unlisted_is_final(seen_phash, current_phash, description) -> Optional[str]:
+    """Why an unnumbered target ends the scenario, or None to allow another look.
+
+    Only what is on screen carries a number, so the first refusal often means
+    the target is below the fold or behind the keyboard. Scrolling changes the
+    screen. A refusal on a screen that already refused means looking again did
+    not help, and nothing further will come of asking a third time.
+    """
+    if seen_phash is None or seen_phash != current_phash:
+        return None
+    return (
+        "Target was not among the detected elements, on a screen already "
+        f"searched for it: {description}"
+    )
 
 
 def evaluate(action, snapshot, device_control, grounding: str = "") -> Decision:
@@ -160,9 +178,12 @@ def evaluate(action, snapshot, device_control, grounding: str = "") -> Decision:
         )
         return Decision(
             ok=False,
-            observation=f"Target not detected: {action.description}",
-            stop_scenario=(
-                f"Target was not among the detected elements: {action.description}"
+            observation=(
+                f"Not executed — nothing on this screen is numbered as: "
+                f"{action.description}. Only what is visible gets a number, so a "
+                "target below the fold or behind the keyboard has none. Scroll it "
+                "into view, or dismiss the keyboard with key_event 4, then look "
+                "again. Say target_not_listed once more if it is still absent."
             ),
             unmatched=True,
         )

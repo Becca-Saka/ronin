@@ -143,9 +143,15 @@ class TargetDecisionTests(unittest.TestCase):
 
         self.assertFalse(decision.ok)
         self.assertIn("no element 47", decision.observation)
-        self.assertIsNone(decision.stop_scenario)
+        self.assertFalse(decision.unmatched)
 
-    def test_an_undetected_target_ends_the_scenario_and_is_kept(self):
+    def test_an_undetected_target_is_reported_without_ending_the_scenario(self):
+        """Only what is on screen is numbered, so looking again may find it.
+
+        Ending here cost two scenarios in a recorded run, where the field was
+        simply behind the keyboard. Whether a second refusal ends the run is
+        the loop's call, because only the loop knows if the screen changed.
+        """
         from ronin.agent.actuation.actions import TargetNotListedAction
         from ronin.agent.step.targeting import evaluate
 
@@ -157,7 +163,24 @@ class TargetDecisionTests(unittest.TestCase):
 
         self.assertFalse(decision.ok)
         self.assertTrue(decision.unmatched)
-        self.assertIn("blue button at the bottom", decision.stop_scenario)
+        self.assertIn("blue button at the bottom", decision.observation)
+        self.assertIn("Scroll it into view", decision.observation)
+
+    def test_one_more_look_is_allowed_after_a_target_is_not_numbered(self):
+        """The field may be behind the keyboard, and scrolling changes the screen."""
+        from ronin.agent.step.targeting import unlisted_is_final
+
+        self.assertIsNone(unlisted_is_final(None, "screenA", "the CVV field"))
+        self.assertIsNone(unlisted_is_final("screenA", "screenB", "the CVV field"))
+
+    def test_a_second_refusal_on_the_same_screen_ends_the_scenario(self):
+        """Looking again at identical pixels is not progress."""
+        from ronin.agent.step.targeting import unlisted_is_final
+
+        final = unlisted_is_final("screenA", "screenA", "the CVV field")
+
+        self.assertIn("already searched", final)
+        self.assertIn("the CVV field", final)
 
     def test_coordinates_still_work_when_marks_are_not_in_use(self):
         from ronin.agent.actuation.actions import Coordinates, TapAction

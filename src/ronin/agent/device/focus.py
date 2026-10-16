@@ -83,12 +83,20 @@ class Focus:
                 return
             time.sleep(FOCUS_POLL_INTERVAL)
 
-    def assert_at(self, x, y, action: str) -> None:
+    def rect(self):
+        """The focused element's bounds, for comparing focus before and after."""
+        return self._rect()
+
+    def assert_at(self, x, y, action: str, before=None) -> None:
         """Raises unless focus is on the element at (x, y).
 
         A change of focus is not evidence that the right field was hit. Any
         text field opens the keyboard, so a tap on the wrong one looks
         identical to the layout reflowing.
+
+        `before` is focus as it stood before the tap. Unchanged focus means the
+        tap landed on something that cannot hold text, which is a different
+        problem from a layout that moved, and needs a different answer.
         """
         rect = self._rect()
         if rect is None:
@@ -106,10 +114,25 @@ class Focus:
         if self._holds(rect, x, y):
             return
 
-        width, height = rect.get("width", 0), rect.get("height", 0)
-        raise ActionRejected(
-            f"{action} at ({x}, {y}) did not focus anything there — focus is on the "
-            f"element at x={rect.get('x')},y={rect.get('y')} "
-            f"({width}x{height}). Nothing was entered. The layout has probably moved "
-            "since these coordinates were read, so re-check the field's position."
+        raise ActionRejected(f"{action} {self._why(rect, before)} Nothing was entered.")
+
+    @staticmethod
+    def _why(rect, before) -> str:
+        """What went wrong, in terms of the next thing to try.
+
+        The planner reads this and chooses again, so it has to name a different
+        move. Told only that coordinates went stale, one run retried the same
+        target five times: in marks mode the planner never sees a coordinate,
+        so it could do nothing with that.
+        """
+        if before is not None and rect == before:
+            return (
+                "did not reach the target you chose, which cannot hold text — a "
+                "label, or a picture of a field rather than the field itself. "
+                "Focus never moved. Choose the element that takes the typing, or "
+                "scroll if it is off screen or behind the keyboard."
+            )
+        return (
+            "landed on a different element than the one you chose, so the screen "
+            "has moved since it was read. Read the screen again before choosing."
         )

@@ -386,12 +386,17 @@ class DeviceTypingTests(unittest.TestCase):
             control.clear(537, 1260)
 
     @patch("ronin.agent.device.device_control.time.sleep")
-    def test_type_rejects_stale_coordinates(self, _sleep):
+    def test_type_rejects_a_tap_that_left_focus_where_it_was(self, _sleep):
+        """Focus that never moved means the tap hit something that takes no text.
+
+        A picture of a field reads like the field. The planner has to be told
+        to choose a different target, not to re-read the coordinates.
+        """
         control, element = self._control(
             {"x": 63, "y": 820, "width": 954, "height": 147}
         )
 
-        with self.assertRaisesRegex(ActionRejected, "did not focus anything there"):
+        with self.assertRaisesRegex(ActionRejected, "cannot hold text"):
             control.type("test@email.com", 537, 1260)
 
         control.tap.assert_called_once_with(537, 1260)
@@ -417,18 +422,18 @@ class DeviceTypingTests(unittest.TestCase):
 
         control.tap = Mock(side_effect=tap)
 
-        with self.assertRaisesRegex(ActionRejected, "did not focus anything there"):
+        with self.assertRaisesRegex(ActionRejected, "screen has moved"):
             control.type("password123", 537, 1444)
 
         email.send_keys.assert_not_called()
 
     @patch("ronin.agent.device.device_control.time.sleep")
-    def test_clear_propagates_stale_coordinate_failure(self, _sleep):
+    def test_clear_propagates_the_focus_failure(self, _sleep):
         control, _element = self._control(
             {"x": 63, "y": 820, "width": 954, "height": 147}
         )
 
-        with self.assertRaisesRegex(ActionRejected, "did not focus anything there"):
+        with self.assertRaisesRegex(ActionRejected, "cannot hold text"):
             control.clear(537, 1260)
 
         control.tap.assert_called_once_with(537, 1260)
