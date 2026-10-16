@@ -21,8 +21,6 @@ IOS_SUFFIXES = (".app", ".ipa")
 JOURNEY_SUFFIXES = (".yaml", ".yml", ".json")
 
 NOT_JOURNEYS = {
-    "ronin.yaml",
-    "ronin.yml",
     "pubspec.yaml",
     "pubspec.lock",
     "package.json",
@@ -34,7 +32,7 @@ NOT_JOURNEYS = {
     "analysis_options.yaml",
 }
 
-JOURNEY_KEYS = {"journey", "journeys", "security_rules"}
+JOURNEY_KEYS = {"journey", "journeys", "workflows", "security_rules"}
 
 # Where builds usually land, searched before a wider sweep.
 BUILD_DIR_NAMES = ("build", "out", "dist", "outputs", "artifacts", "target")

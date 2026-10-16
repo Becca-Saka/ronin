@@ -127,15 +127,11 @@ class DevicePlanner:
         screen_height: int = 0,
     ) -> DeviceStepResponse:
         """Plan the next action given current screen state and accumulated history."""
-        from ronin.utils.redactor import redact_elements, redact_text
 
         if isinstance(goal, str):
             goal_lines = [goal]
         else:
             goal_lines = goal or []
-
-        if gui_elements:
-            gui_elements = redact_elements(gui_elements)
 
         prompt = self._build_prompt(
             goal_lines=goal_lines,
@@ -159,10 +155,6 @@ class DevicePlanner:
             [message], self.step_response_model()
         )
 
-        response.reasoning = redact_text(response.reasoning)
-        response.evaluation_previous_goal = redact_text(
-            response.evaluation_previous_goal
-        )
         return response
 
     def _action_vocabulary(self) -> str:

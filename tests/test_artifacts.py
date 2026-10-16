@@ -367,21 +367,30 @@ class SecretScrubbingTests(unittest.TestCase):
         self.assertIn("{{password}}", scrubbed)
         self.assertIn("Password field", scrubbed)
 
-    def test_undeclared_quoted_text_is_not_treated_as_a_secret(self):
+    def test_a_value_the_journey_did_not_declare_is_written_as_it_is(self):
+        """The `env` block is the whole of what Ronin hides.
+
+        Masking a value nobody declared made reports unreadable: an assertion
+        about an ordinary title came back as "the month view shows
+        '[REDACTED]'", and a reader could not tell what the test checked.
+        """
         from ronin.utils.secrets import SecretScrubber
 
         scrubber = SecretScrubber()
-        scrubber.learn_from_instructions(["Tap the 'Continue' button"])
+        scrubber.learn_secrets({"password": "hunter2"})
 
-        self.assertEqual(scrubber.scrub("Tap Continue"), "Tap Continue")
+        self.assertEqual(
+            scrubber.scrub("The month view shows 'Dentist appointment' today."),
+            "The month view shows 'Dentist appointment' today.",
+        )
 
-    def test_values_typed_at_runtime_are_learned(self):
+    def test_text_shaped_like_a_credential_is_still_written_as_it_is(self):
+        """Patterns guessed at secrets, and a guess is not a declaration."""
         from ronin.utils.secrets import SecretScrubber
 
-        scrubber = SecretScrubber()
-        scrubber.learn("hunter2")
+        text = "Password: hunter2 and card 4111 1111 1111 1111"
 
-        self.assertNotIn("hunter2", scrubber.scrub("I will enter hunter2 now"))
+        self.assertEqual(SecretScrubber().scrub(text), text)
 
     def test_ordinary_text_is_untouched(self):
         self.assertEqual(

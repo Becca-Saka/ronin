@@ -99,10 +99,7 @@ class QAPlanner(DevicePlanner):
         marks: Optional[list] = None,
         screen_height: int = 0,
     ) -> QAStepResponse:
-        from ronin.utils.redactor import redact_elements, safe_text
-
-        if gui_elements:
-            gui_elements = redact_elements(gui_elements)
+        from ronin.utils.redactor import safe_text
 
         if isinstance(goal, str):
             goal_lines = [goal]

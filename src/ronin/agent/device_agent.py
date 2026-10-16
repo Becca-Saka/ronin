@@ -39,7 +39,6 @@ from ronin.agent.perception.perception import ScreenPerception
 from ronin.agent.trail import SessionTrail
 from ronin.errors import TargetNotInteractive
 from ronin.llm.llm_client import LLMClient
-from ronin.utils.redactor import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +183,7 @@ class DeviceAgent:
             )
 
         except Exception as exc:
-            safe_error = self.scrubber.scrub(redact_text(str(exc)))
+            safe_error = self.scrubber.scrub(str(exc))
             logger.error(
                 "Device agent run failed (%s): %s", type(exc).__name__, safe_error
             )
@@ -388,9 +387,6 @@ class DeviceAgent:
         session_trail: Optional[SessionTrail],
         ctx: RunContext,
     ) -> None:
-        action_text = getattr(step_response.action, "text", None)
-        self.scrubber.learn(action_text)
-
         logger.info("Screen: %s", step_response.current_screen)
         logger.info("Reasoning: %s", self.scrubber.scrub(step_response.reasoning))
         if step_response.evaluation_previous_goal:

@@ -12,7 +12,6 @@ from ronin.agent.step.outcomes import DeviceRunResult
 from ronin.testing import rules
 from ronin.testing.models import QAIssue, RuleVerification
 from ronin.testing.qa_planner import QAStepResponse
-from ronin.utils.redactor import redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +34,7 @@ def _terminal_outcome(
     if run_result.status == "hook_stop" and stop_reason and "infeasible" in stop_reason.lower():
         return "SKIPPED", stop_reason
     if run_result.status == "exception":
-        return "ERROR", redact_text(run_result.failure_reason or "Execution exception")
+        return "ERROR", run_result.failure_reason or "Execution exception"
     if run_result.status in ("loop_detected", "step_limit"):
         return "UNVERIFIED", run_result.failure_reason
     critical = next(

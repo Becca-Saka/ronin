@@ -15,6 +15,7 @@ wheels/
 .venv
 .env
 assets/
+example/other_testing_apps/
 docs/
 test_models/
 # macOS

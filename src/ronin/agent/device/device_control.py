@@ -3,10 +3,8 @@ High-level control interface for interacting with mobile devices (Android/iOS) v
 Encapsulates driver initialization, screenshots, and gesture/input execution.
 """
 
-import base64
 import logging
 import time
-from pathlib import Path
 from typing import Optional
 
 from appium import webdriver
@@ -62,6 +60,9 @@ class DeviceControl:
         self.device_name = device_name
         self.app_path = app_path
         self.bundle_id = None
+        # Only an Android session resolves one, and teardown asks either way.
+        self.package_id: Optional[str] = None
+        self.serial: Optional[str] = None
         self.keep_device = keep_device
         self.reuse_app = reuse_app
         self.server_url = server_url
@@ -91,10 +92,12 @@ class DeviceControl:
                 self._skip_redundant_setup(options)
             self.adb_control = adb_control
             adb_runner = adb_control if adb_control is not None else AdbControl
-            package_id, activity = adb_runner.get_apk_info(app_path)
+            package_id, _ = adb_runner.get_apk_info(app_path)
             self.package_id = package_id
             options.app_package = package_id
-            options.app_activity = activity
+            options.app_activity = adb_runner.resolve_launch_activity(
+                app_path, package_id, AdbControl.resolve_emulator_serial(device_name)
+            )
 
         self.driver = self._start_session(options)
         self.device_info = self._init_device_info()
@@ -371,17 +374,6 @@ class DeviceControl:
 
     def execute_script(self, script, args):
         self.driver.execute_script(script, args if isinstance(args, list) else [args])
-
-    def start_recording(self):
-        self.driver.start_recording_screen()
-
-    def stop_recording(self, output_path: str | Path = "session.mp4") -> Path:
-        raw = self.driver.stop_recording_screen()
-        path = Path(output_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(base64.b64decode(raw))
-        logger.info("Recording saved to %s", path)
-        return path
 
     def _resolve_bundle_id(self) -> str | None:
         """Lazily resolve and cache the iOS bundle ID from driver capabilities."""

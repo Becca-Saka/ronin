@@ -8,9 +8,9 @@ class JourneyEnvTests(unittest.TestCase):
     """A journey declares its values and says which are secret."""
 
     def _journey(self, data):
-        from ronin.testing.cli import RoninCLI
+        from ronin.testing.suite import _journey
 
-        return RoninCLI.__new__(RoninCLI)._build_journey_object(data)
+        return _journey(data, {}, 1)
 
     def test_placeholders_are_replaced_in_the_journey_text(self):
         journey = self._journey(

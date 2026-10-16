@@ -5,8 +5,9 @@ Precedence, strongest first:
 1. an explicit CLI flag
 2. a RONIN_* environment variable
 3. ./ronin.yaml in the working directory or any parent
-4. the global ~/.ronin/config.yaml
-5. the built-in defaults
+4. the built-in defaults
+
+ronin.yaml holds the settings and the journeys together.
 
 Each value remembers where it came from, so `ronin config` can explain itself.
 """
@@ -15,13 +16,17 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 import yaml
+from pydantic import ValidationError
 
+from ronin.schema import RoninFile as RoninFileSpec, Settings as SettingsSpec, explain
 from ronin.defaults import (
     DEFAULT_APP_PATH,
     DEFAULT_DEVICE,
+    DEFAULT_GROUNDING,
+    DEFAULT_RECORD,
     DEFAULT_MAX_STEPS,
     DEFAULT_MODEL,
     DEFAULT_OUTPUT_DIR,
@@ -30,7 +35,6 @@ from ronin.defaults import (
 )
 
 PROJECT_CONFIG_FILENAME = "ronin.yaml"
-GLOBAL_CONFIG_PATH = Path.home() / ".ronin" / "config.yaml"
 ENV_PREFIX = "RONIN_"
 
 DEFAULT_ORIGIN = "built-in default"
@@ -44,18 +48,17 @@ def _as_bool(raw: Any) -> bool:
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
-SETTINGS: dict[str, Callable[[Any], Any]] = {
-    "platform": str,
-    "device": str,
-    "model": str,
-    "fast_model": str,
-    "app_path": str,
-    "output_dir": str,
-    "max_steps": int,
-    "settle_time": float,
-    "headless": _as_bool,
-    "use_multimodal_vision": _as_bool,
-}
+SETTING_ALIASES = {"app": "app_path", "emulator": "device", "record_session": "record"}
+"""Spellings a file may use for a setting Ronin knows by another name."""
+
+SETTINGS: frozenset[str] = frozenset(
+    name for name in SettingsSpec.model_fields if name not in SETTING_ALIASES
+)
+"""Every setting, taken from the schema that validates a ronin.yaml.
+
+Naming them twice meant `ronin config set platform androdi` could be accepted
+here and refused by the loader reading the same file.
+"""
 
 BUILT_IN: dict[str, Any] = {
     "platform": DEFAULT_PLATFORM,
@@ -68,7 +71,26 @@ BUILT_IN: dict[str, Any] = {
     "settle_time": DEFAULT_SETTLE_TIME,
     "headless": False,
     "use_multimodal_vision": False,
+    "grounding": DEFAULT_GROUNDING,
+    "record": DEFAULT_RECORD,
 }
+
+
+STRUCTURE_KEYS: frozenset[str] = frozenset(
+    set(RoninFileSpec.model_fields) - set(SettingsSpec.model_fields)
+)
+"""Keys that describe what to test, not how Ronin runs.
+
+Taken from the schema, because a key listed in one place and forgotten here
+is reported as a misspelled setting while the run applies it.
+"""
+
+DEVICE_BLOCK = {"name": "device", "platform": "platform", "headless": "headless"}
+"""What a `device:` block may name, and the setting each key resolves to.
+
+One word for one thing: `device` names the target in a block, and the rest of
+Ronin resolves it as the flat `device` setting.
+"""
 
 
 class ConfigError(Exception):
@@ -107,14 +129,53 @@ class Config:
 
 
 def coerce(name: str, raw: Any) -> Any:
+    """One setting's value, checked against the schema that defines it."""
     if name not in SETTINGS:
         raise ConfigError(f"Unknown setting '{name}'. Known: {', '.join(sorted(SETTINGS))}")
     if raw is None:
         return None
     try:
-        return SETTINGS[name](raw)
-    except (TypeError, ValueError) as exc:
-        raise ConfigError(f"Invalid value for '{name}': {raw!r} ({exc})") from exc
+        return SettingsSpec.model_validate({name: raw}).model_dump()[name]
+    except ValidationError as exc:
+        reason = "; ".join(explain(exc))
+        raise ConfigError(f"Invalid value for '{name}': {raw!r} ({reason})") from None
+
+
+def expand_device(loaded: dict[str, Any], where: str) -> dict[str, Any]:
+    """Turns a `device:` block into the flat settings Ronin resolves.
+
+    A bare string is the device name on its own.
+
+    Args:
+        loaded: The mapping read from a file or a workflow.
+        where: What to name in a message about an unusable value.
+    """
+    raw = loaded.get("device")
+    if raw is None or isinstance(raw, str):
+        return loaded
+    if not isinstance(raw, dict):
+        raise ConfigError(f"'device' in {where} must be a name or a mapping, not {type(raw).__name__}")
+
+    expanded = {key: value for key, value in loaded.items() if key != "device"}
+    unknown = sorted(key for key in raw if key not in DEVICE_BLOCK)
+    if unknown:
+        logger.warning(
+            "Ignoring unknown key(s) in the device block of %s: %s. Known keys: %s",
+            where,
+            ", ".join(str(key) for key in unknown),
+            ", ".join(sorted(DEVICE_BLOCK)),
+        )
+    for key, setting in DEVICE_BLOCK.items():
+        if key not in raw:
+            continue
+        if setting in expanded:
+            logger.warning(
+                "%s sets '%s' twice: the device block wins over the top-level value.",
+                where,
+                setting,
+            )
+        expanded[setting] = raw[key]
+    return expanded
 
 
 def read_file(path: Path) -> dict[str, Any]:
@@ -131,8 +192,12 @@ def read_file(path: Path) -> dict[str, Any]:
         raise ConfigError(f"Could not parse {path}: {exc}") from exc
     if not isinstance(loaded, dict):
         raise ConfigError(f"{path} must contain a mapping of settings")
+    loaded = expand_device(loaded, str(path))
+    loaded = {SETTING_ALIASES.get(key, key): value for key, value in loaded.items()}
     known = {key: value for key, value in loaded.items() if key in SETTINGS}
-    unknown = sorted(key for key in loaded if key not in SETTINGS)
+    unknown = sorted(
+        key for key in loaded if key not in SETTINGS and key not in STRUCTURE_KEYS
+    )
     if unknown:
         logger.warning(
             "Ignoring unknown setting(s) in %s: %s. Known settings: %s",
@@ -168,9 +233,8 @@ def load_config(start: Optional[Path] = None) -> Config:
     config = Config(values=dict(BUILT_IN))
     config.origins = {name: DEFAULT_ORIGIN for name in BUILT_IN}
 
-    for path in (GLOBAL_CONFIG_PATH, find_project_config(start)):
-        if path is None:
-            continue
+    path = find_project_config(start)
+    if path is not None:
         settings = read_file(path)
         if settings:
             config.files.append(path)
@@ -185,34 +249,116 @@ def load_config(start: Optional[Path] = None) -> Config:
     return config
 
 
-def config_path(scope: str = "global", start: Optional[Path] = None) -> Path:
-    """The file a write targets: the global file, or ronin.yaml in this project."""
-    if scope == "global":
-        return GLOBAL_CONFIG_PATH
+def config_path(start: Optional[Path] = None) -> Path:
+    """The ronin.yaml a write targets, whether or not it exists yet."""
     existing = find_project_config(start)
     return existing or (start or Path.cwd()) / PROJECT_CONFIG_FILENAME
 
 
-def set_value(name: str, raw: Any, scope: str = "global", start: Optional[Path] = None) -> Path:
-    """Writes one setting, creating the file if needed, and returns its path."""
-    value = coerce(name, raw)
-    path = config_path(scope, start)
-    settings = read_file(path)
-    settings[name] = value
+class _BlockDumper(yaml.SafeDumper):
+    """Writes multi-line text as a block scalar, the way a person would."""
+
+
+def _block_scalar(dumper: yaml.SafeDumper, value: str):
+    style = "|" if "\n" in value else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
+
+
+_BlockDumper.add_representer(str, _block_scalar)
+
+
+def write_document(path: Path, document: dict[str, Any]) -> None:
+    """Saves a config file, keeping it readable.
+
+    A journey is a paragraph of prose. Written as a quoted scalar it becomes
+    one long line, so it goes back as a block. Key order is kept for the same
+    reason: this file is read and edited by hand.
+
+    Comments do not survive, so a file that carries journeys says so.
+    """
+    if any(key in document for key in STRUCTURE_KEYS):
+        logger.warning("Rewriting %s. Any comments in it are lost.", path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(settings, sort_keys=True), encoding="utf-8")
+    path.write_text(
+        yaml.dump(document, Dumper=_BlockDumper, sort_keys=False, width=100),
+        encoding="utf-8",
+    )
+
+
+def read_document(path: Path) -> dict[str, Any]:
+    """A whole config file, unfiltered.
+
+    A write has to keep what it does not understand. The same file holds the
+    journeys, so filtering to known settings before writing back would delete
+    every test in it.
+    """
+    if not path.is_file():
+        return {}
+    try:
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"Could not parse {path}: {exc}") from exc
+    if not isinstance(loaded, dict):
+        raise ConfigError(f"{path} must contain a mapping of settings")
+    return loaded
+
+
+def _block_key(document: dict[str, Any], name: str) -> Optional[str]:
+    """Which key of this file's device block holds a setting, if it has one."""
+    device = document.get("device")
+    if not isinstance(device, dict):
+        return None
+    for key, setting in DEVICE_BLOCK.items():
+        if setting == name:
+            return key
+    return None
+
+
+def _place_setting(document: dict[str, Any], name: str, value: Any) -> None:
+    """Writes one setting where this file already keeps it.
+
+    A file that describes its target as a block keeps it there, rather than
+    gaining a second spelling of the same setting beside it.
+    """
+    key = _block_key(document, name)
+    if key is None:
+        document[name] = value
+        return
+    document["device"][key] = value
+
+
+def _remove_setting(document: dict[str, Any], name: str) -> None:
+    """Removes one setting from wherever this file keeps it.
+
+    Only that setting. Removing the device by name must leave the platform
+    and the rest of the block it shares.
+    """
+    key = _block_key(document, name)
+    if key is None:
+        document.pop(name, None)
+        return
+    document["device"].pop(key, None)
+
+
+def set_value(name: str, raw: Any, start: Optional[Path] = None) -> Path:
+    """Writes one setting into ronin.yaml, creating the file if needed."""
+    value = coerce(name, raw)
+    path = config_path(start)
+    document = read_document(path)
+    _place_setting(document, name, value)
+    write_document(path, document)
     return path
 
 
-def unset_value(name: str, scope: str = "global", start: Optional[Path] = None) -> Path:
-    """Removes one setting from a config file."""
+def unset_value(name: str, start: Optional[Path] = None) -> Path:
+    """Removes one setting from ronin.yaml, keeping everything else in it."""
     if name not in SETTINGS:
         raise ConfigError(f"Unknown setting '{name}'")
-    path = config_path(scope, start)
-    settings = read_file(path)
-    settings.pop(name, None)
-    if settings:
-        path.write_text(yaml.safe_dump(settings, sort_keys=True), encoding="utf-8")
+    path = config_path(start)
+    document = read_document(path)
+    _remove_setting(document, name)
+    if document:
+        write_document(path, document)
     elif path.is_file():
         path.unlink()
     return path

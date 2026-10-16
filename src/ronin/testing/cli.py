@@ -1,18 +1,17 @@
 import argparse
-import json
 import logging
 import sys
 from pathlib import Path
 from typing import Any, List, Optional
 
 from ronin.agent.device.platform import Platform
-from ronin.agent.device_planner import GROUNDING_COORDINATES, GROUNDING_MARKS
+from ronin.agent.device_planner import GROUNDING_COORDINATES
 from ronin.app_discovery import find_journey_files, resolve_app_path
 from ronin.config import SETTINGS, Config, load_config
 from ronin.errors import UsageError
-from .journey_env import resolve, substitute
-from .models import UserJourney
+from ronin.schema import GROUNDINGS, PLATFORMS
 from .runner import RoninTestRunner
+from .suite import Workflow, load_workflows, select
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +36,7 @@ class RoninCLI:
             nargs="?",
             help="Path to the journey YAML/JSON file. Found in this directory when omitted.",
         )
-        parser.add_argument("--platform", choices=["android", "ios"], help="Target platform")
+        parser.add_argument("--platform", choices=list(PLATFORMS), help="Target platform")
         parser.add_argument("--device", help="Name of emulator/device")
         parser.add_argument("--app-path", help="App binary path")
         parser.add_argument("--output-dir", help="Directory to save test outputs and reports")
@@ -49,7 +48,7 @@ class RoninCLI:
         parser.add_argument("--headless", action="store_true", default=None, help="Run android emulator headlessly")
         parser.add_argument(
             "--grounding",
-            choices=[GROUNDING_COORDINATES, GROUNDING_MARKS],
+            choices=list(GROUNDINGS),
             help="How the planner names a target: 'coordinates' (default) or "
             "'marks', where every detected element is numbered on the screenshot "
             "and the planner selects a number, which Ronin validates against the "
@@ -61,6 +60,24 @@ class RoninCLI:
             help="Skip reinstalling the app, using whatever build is on the device. "
             "Only correct when that build is the one under test: a rebuilt debug APK "
             "keeps its version, so a stale one is used without warning",
+        )
+        parser.add_argument(
+            "--workflow",
+            help="Which workflow(s) in the file to run, comma separated. "
+            "Every workflow runs when this is not given",
+        )
+        parser.add_argument(
+            "--no-record",
+            action="store_true",
+            help="Do not record the screen. The run reports results either way, "
+            "but no video is kept",
+        )
+        parser.add_argument(
+            "--keep-app",
+            action="store_true",
+            help="Leave the app installed when the run ends. By default a run uninstalls "
+            "the app it installed, so a rotation of apps does not fill the device. An app "
+            "that was already on the device is never removed",
         )
         parser.add_argument(
             "--replay",
@@ -90,109 +107,50 @@ class RoninCLI:
             "Pass the one you want: ronin test <journey.yaml>"
         )
 
-    def load_journeys(self, filepath: Path) -> List[UserJourney]:
-        """Loads one or more UserJourneys from a JSON or YAML file."""
-        if not filepath.exists():
-            raise FileNotFoundError(f"Journey file not found: {filepath}")
+    def _runner_for(self, workflow: Workflow, args: Any, filepath: Path) -> "RoninTestRunner":
+        """Builds the runner one workflow needs.
 
-        content = filepath.read_text(encoding="utf-8")
+        Settings come from the flag if given, then the workflow, then
+        ronin.yaml and the RONIN_* variables, then the defaults.
+        """
 
-        if filepath.suffix in (".yaml", ".yml"):
-            try:
-                import yaml
-                raw = yaml.safe_load(content)
-            except ImportError:
-                logger.warning("PyYAML not found, using simple fallback parser.")
-                raw = self._parse_simple_yaml(content)
-        else:
-            raw = json.loads(content)
+        def setting(name: str, flag: Any) -> Any:
+            if flag is not None:
+                return flag
+            if name in workflow.settings:
+                return workflow.settings[name]
+            # grounding is a flag and a file key only, so the caller supplies
+            # the default rather than ronin.config.
+            return self.config.get(name) if name in SETTINGS else None
 
-        self.raw_config = raw
-        journeys = []
-
-        # Support unified suite structure: dictionary with a 'journeys' list key
-        if isinstance(raw, dict) and "journeys" in raw:
-            raw_journeys = raw["journeys"]
-            if isinstance(raw_journeys, list):
-                for item in raw_journeys:
-                    journeys.append(self._build_journey_object(item))
-            else:
-                raise ValueError("'journeys' key must be a list of journey dictionaries.")
-        # Support list of journeys
-        elif isinstance(raw, list):
-            for item in raw:
-                journeys.append(self._build_journey_object(item))
-        # Support single journey dictionary
-        elif isinstance(raw, dict):
-            journeys.append(self._build_journey_object(raw))
-        else:
-            raise ValueError("Invalid journey file format: must be a list of journeys, a single journey dictionary, or a suite with a 'journeys' key.")
-
-        return journeys
-
-    def _build_journey_object(self, data: dict) -> UserJourney:
-        values, secrets = resolve(data)
-        description = data.get("journey", data.get("description", ""))
-        return UserJourney(
-            id=data.get("id", "journey_01"),
-            name=data.get("name", "User Journey"),
-            description=substitute(description, values),
-            security_rules=[
-                substitute(rule, values) for rule in data.get("security_rules", [])
-            ],
-            secrets=secrets,
+        platform_str = setting("platform", args.platform)
+        app_path = resolve_app_path(
+            setting("app_path", args.app_path),
+            platform_str,
+            Path.cwd(),
+            filepath.resolve().parent,
         )
-
-    def _parse_simple_yaml(self, content: str) -> dict:
-        """Fallback simple YAML parser to parse top-level fields and simple list blocks."""
-        data = {}
-        lines = content.splitlines()
-        i = 0
-        current_list_key = None
-        while i < len(lines):
-            line = lines[i]
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                i += 1
-                continue
-            # Check if it's a list item
-            if stripped.startswith("-"):
-                if current_list_key:
-                    if current_list_key not in data:
-                        data[current_list_key] = []
-                    item_val = stripped[1:].strip().strip('"').strip("'")
-                    data[current_list_key].append(item_val)
-                i += 1
-                continue
-            if ":" in line:
-                parts = line.split(":", 1)
-                key = parts[0].strip()
-                val = parts[1].strip()
-
-                if val == ">" or val == "|":
-                    block = []
-                    i += 1
-                    while i < len(lines):
-                        next_line = lines[i]
-                        if not next_line.strip():
-                            block.append("")
-                            i += 1
-                            continue
-                        indent = len(next_line) - len(next_line.lstrip())
-                        if indent > 0:
-                            block.append(next_line.strip())
-                            i += 1
-                        else:
-                            break
-                    data[key] = " ".join(block) if val == ">" else "\n".join(block)
-                    current_list_key = None
-                    continue
-                else:
-                    data[key] = val.strip('"').strip("'")
-                    current_list_key = key
-
-            i += 1
-        return data
+        return RoninTestRunner(
+            platform=Platform.named(platform_str),
+            device_name=setting("device", args.device),
+            app_path=str(app_path),
+            model=setting("model", args.model),
+            assets_dir=Path(setting("output_dir", args.output_dir)),
+            max_steps=int(setting("max_steps", args.max_steps)),
+            settle_time=float(setting("settle_time", args.settle_time)),
+            use_multimodal_vision=_as_bool(
+                setting("use_multimodal_vision", args.use_multimodal_vision)
+            ),
+            headless=_as_bool(setting("headless", args.headless)),
+            fast_model=setting("fast_model", args.fast_model),
+            record_session=(
+                False if args.no_record else _as_bool(setting("record", None))
+            ),
+            replay=bool(args.replay),
+            reuse_app=bool(args.reuse_app),
+            keep_app=bool(args.keep_app),
+            grounding=setting("grounding", args.grounding) or GROUNDING_COORDINATES,
+        )
 
     def run(self, args_list: Optional[List[str]] = None) -> int:
         """Executes all loaded journeys, prints a summary, and returns a code.
@@ -207,7 +165,7 @@ class RoninCLI:
 
         try:
             filepath = self._resolve_journey_file(args.journey_file)
-            journeys = self.load_journeys(filepath)
+            workflows = select(load_workflows(filepath), args.workflow)
         except UsageError as e:
             logger.error("%s", e)
             return 2
@@ -215,81 +173,53 @@ class RoninCLI:
             logger.error("Failed to load journey file: %s", e)
             return 2
 
-        # Settings come from the flag if given, then the suite's device block,
-        # then ronin.config (project/global files, env), then the defaults.
-        device_cfg = {}
-        if hasattr(self, "raw_config") and isinstance(self.raw_config, dict):
-            device_cfg = self.raw_config.get("device", {})
-
-        def setting(name: str, flag: Any, *journey_keys: str) -> Any:
-            if flag is not None:
-                return flag
-            for key in journey_keys or (name,):
-                if key in device_cfg:
-                    return device_cfg[key]
-            # grounding is a flag and a journey key only, so the caller
-            # supplies the default rather than ronin.config.
-            return self.config.get(name) if name in SETTINGS else None
-
-        platform_str = setting("platform", args.platform)
-        # The journey file's directory counts as a search root, so a suite can
-        # live beside the app it tests and be run from anywhere.
-        app_path = resolve_app_path(
-            setting("app_path", args.app_path),
-            platform_str,
-            Path.cwd(),
-            filepath.resolve().parent,
-        )
-        device_name = setting("device", args.device, "emulator", "device")
-        headless_val = _as_bool(setting("headless", args.headless))
-
-        record_val = device_cfg.get("record", device_cfg.get("record_session", True))
-        record_val = _as_bool(record_val)
-
-        runner = RoninTestRunner(
-            platform=Platform.ANDROID if platform_str == "android" else Platform.IOS,
-            device_name=device_name,
-            app_path=str(app_path),
-            model=setting("model", args.model),
-            assets_dir=Path(setting("output_dir", args.output_dir)),
-            max_steps=int(setting("max_steps", args.max_steps)),
-            settle_time=float(setting("settle_time", args.settle_time)),
-            use_multimodal_vision=_as_bool(
-                setting("use_multimodal_vision", args.use_multimodal_vision)
-            ),
-            headless=headless_val,
-            fast_model=setting("fast_model", args.fast_model),
-            record_session=record_val,
-            replay=bool(args.replay),
-            reuse_app=bool(args.reuse_app),
-            grounding=setting("grounding", args.grounding) or GROUNDING_COORDINATES,
-        )
-
+        total = sum(len(workflow.journeys) for workflow in workflows)
         logger.info("==================================================")
-        logger.info("Ronin CLI: Executing test suite for %d journeys", len(journeys))
+        logger.info(
+            "Ronin CLI: Executing %d journey(s) across %d workflow(s)",
+            total,
+            len(workflows),
+        )
         logger.info("==================================================")
 
         all_passed = True
         results = []
 
-        for journey in journeys:
-            logger.info("Starting run for journey: %s (%s)", journey.name, journey.id)
+        for workflow in workflows:
+            if workflow.name:
+                logger.info("Workflow: %s", workflow.name)
             try:
-                report = runner.run_journey(journey)
-                passed = (report.status == "PASSED")
-                results.append((journey.id, journey.name, "PASSED" if passed else "FAILED"))
-                if not passed:
-                    all_passed = False
-            except Exception as journey_err:
-                logger.error("Error executing journey %s: %s", journey.id, journey_err)
-                results.append((journey.id, journey.name, "ERROR"))
+                runner = self._runner_for(workflow, args, filepath)
+            except Exception as setup_err:
+                logger.error(
+                    "Could not prepare workflow '%s': %s", workflow.name, setup_err
+                )
+                for journey in workflow.journeys:
+                    results.append((workflow.name, journey.id, journey.name, "ERROR"))
                 all_passed = False
+                continue
+
+            for journey in workflow.journeys:
+                logger.info("Starting run for journey: %s (%s)", journey.name, journey.id)
+                try:
+                    report = runner.run_journey(journey)
+                    passed = (report.status == "PASSED")
+                    results.append(
+                        (workflow.name, journey.id, journey.name, "PASSED" if passed else "FAILED")
+                    )
+                    if not passed:
+                        all_passed = False
+                except Exception as journey_err:
+                    logger.error("Error executing journey %s: %s", journey.id, journey_err)
+                    results.append((workflow.name, journey.id, journey.name, "ERROR"))
+                    all_passed = False
 
         logger.info("==================================================")
         logger.info("Execution Summary:")
-        for j_id, j_name, status in results:
+        for flow_name, j_id, j_name, status in results:
             status_icon = "🟢" if status == "PASSED" else "🔴"
-            logger.info("  %s %s (%s): %s", status_icon, j_name, j_id, status)
+            label = f"{flow_name}/{j_name}" if flow_name else j_name
+            logger.info("  %s %s (%s): %s", status_icon, label, j_id, status)
         logger.info("==================================================")
 
         if all_passed:

@@ -111,7 +111,6 @@ def reaction(
 
 def describe(action) -> str:
     """Produce a concise, redacted human-readable action description for history."""
-    from ronin.utils.redactor import mask_typed_text, redact_text
 
     t = action.type.value if hasattr(action.type, "value") else str(action.type)
 
@@ -124,8 +123,7 @@ def describe(action) -> str:
     )
 
     if t == ActionType.TYPE.value:
-        text_repr = mask_typed_text(getattr(action, "text", ""))
-        desc = f"type {text_repr} at {where}"
+        desc = f"type {getattr(action, 'text', '')!r} at {where}"
     elif t in (
         ActionType.TAP.value,
         ActionType.DOUBLE_TAP.value,
@@ -146,5 +144,5 @@ def describe(action) -> str:
 
     reason = getattr(action, "reason", "")
     if reason:
-        desc += f" (reason: {redact_text(reason)})"
+        desc += f" (reason: {reason})"
     return desc

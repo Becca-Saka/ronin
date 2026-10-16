@@ -100,17 +100,16 @@ def await_first_paint(device_control) -> None:
 def _clear_task_restart(device_control, package_id: str) -> bool:
     """Relaunches an Android app with a clean back stack. False if unavailable."""
     adb_runner = getattr(device_control, "adb_control", None) or AdbControl
-    try:
-        _, activity = adb_runner.get_apk_info(device_control.app_path)
-    except DeviceUnavailable as apk_err:
-        logger.warning("Failed to get APK activity: %s", apk_err)
-        return False
-    if not activity:
-        return False
-
     serial = getattr(device_control, "serial", None) or adb_runner.resolve_emulator_serial(
         device_control.device_name
     )
+    try:
+        activity = adb_runner.resolve_launch_activity(
+            device_control.app_path, package_id, serial
+        )
+    except DeviceUnavailable as apk_err:
+        logger.warning("Failed to get APK activity: %s", apk_err)
+        return False
     cmd = ["adb"]
     if serial:
         cmd.extend(["-s", serial])

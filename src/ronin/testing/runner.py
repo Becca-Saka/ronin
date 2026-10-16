@@ -7,6 +7,7 @@ from ronin import __version__
 from ronin.agent.trail import SessionTrail
 from ronin.agent.device.device_session import DeviceSession
 from ronin.agent.device.platform import Platform
+from ronin.agent.device.readiness import ensure_device_ready
 from ronin.agent.perception.image_descriptor import YOLO_REPO_ID, YOLO_REVISION
 from ronin.agent.perception.perception import ScreenPerception
 from ronin.agent.device_planner import GROUNDING_COORDINATES
@@ -81,6 +82,7 @@ class RoninTestRunner:
         max_steps: int = 40,
         replay: bool = False,
         reuse_app: bool = False,
+        keep_app: bool = False,
         settle_time: float = 2.0,
         use_multimodal_vision: bool = False,
         headless: bool = True,
@@ -90,6 +92,7 @@ class RoninTestRunner:
     ):
         self.grounding = grounding
         self.reuse_app = reuse_app
+        self.keep_app = keep_app
         self.platform = platform
         self.device_name = device_name
         self.app_path = app_path
@@ -125,6 +128,7 @@ class RoninTestRunner:
             record_session=self.record_session,
             session_dir=self.assets_dir,
             reuse_app=self.reuse_app,
+            keep_app=self.keep_app,
         )
 
         agent = QAAgent(
@@ -163,6 +167,10 @@ class RoninTestRunner:
         device_agent.scrubber.learn_secrets(journey.secrets)
 
         try:
+            # Before the model call, because a device that cannot be driven
+            # otherwise costs a generated suite to discover.
+            ensure_device_ready(self.platform, self.device_name)
+
             scenarios = ScenarioGenerator(device_agent.llm).generate_scenarios(journey)
             scenarios.sort(key=lambda s: CLASSIFICATION_ORDER.get(s.classification, 99))
 
@@ -217,7 +225,9 @@ class RoninTestRunner:
                         "WebDriver/instrumentation session is unresponsive. Attempting session recovery..."
                     )
                     try:
-                        session.close()
+                        # Recovery, not teardown: the scenarios still to run
+                        # need the app that this session was testing.
+                        session.close(final=False)
                     except Exception as close_err:
                         logger.warning(
                             "Error closing old session during recovery: %s", close_err
@@ -231,6 +241,10 @@ class RoninTestRunner:
                         session_dir=self.assets_dir,
                         session_id=session.session_id,
                         reuse_app=self.reuse_app,
+                        keep_app=self.keep_app,
+                        # The app is on the device by now, so a fresh look
+                        # would call it preexisting and leave it behind.
+                        installed_by_run=session.installed_by_run,
                     )
                     logger.info(
                         "Starting a new driver connection for session %s...",

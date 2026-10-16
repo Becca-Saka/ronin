@@ -1,13 +1,16 @@
 import logging
 import os
 import re
+import shutil
+from pathlib import Path
 from typing import Optional
 
+from ronin.agent.device import manifest
+from ronin.agent.device.manifest import LAUNCHER_CATEGORY
 from ronin.errors import DeviceUnavailable
 from ronin.utils.subprocess_runner import run_command, SubprocessRunError
 
 logger = logging.getLogger(__name__)
-
 
 class AdbControl:
     """Provides shell interfaces and wrapper utilities for working with Android devices via ADB."""
@@ -38,23 +41,35 @@ class AdbControl:
             raise DeviceUnavailable(f"{attempt}: {' '.join(command)}") from exc
 
     @staticmethod
+    def find_build_tool(name: str):
+        """Finds a build-tools binary in the local Android SDK installation directory.
+
+        Args:
+            name: The executable to look for, such as "aapt" or "aapt2".
+
+        Returns:
+            The string path to the resolved executable.
+        """
+        try:
+            ANDROID_HOME = os.getenv("ANDROID_HOME")
+            if ANDROID_HOME is None:
+                raise DeviceUnavailable("ANDROID_HOME is not set")
+            command = ["find", f"{ANDROID_HOME}/build-tools", "-name", name]
+            result = run_command(command, check=True, capture_output=True, text=True)
+            if not result.stdout.strip():
+                raise DeviceUnavailable(f"No {name} under {ANDROID_HOME}/build-tools")
+            return result.stdout.split("\n")[0]
+        except SubprocessRunError as exc:
+            raise DeviceUnavailable(f"Failed to find {name}: {exc.stderr}") from exc
+
+    @staticmethod
     def find_aapt():
         """Finds the path to the aapt binary in the local Android SDK installation directory.
 
         Returns:
             The string path to the resolved aapt executable.
         """
-        try:
-            ANDROID_HOME = os.getenv("ANDROID_HOME")
-            if ANDROID_HOME is None:
-                raise DeviceUnavailable("ANDROID_HOME is not set")
-            command = ["find", f"{ANDROID_HOME}/build-tools", "-name", "aapt"]
-            result = run_command(command, check=True, capture_output=True, text=True)
-            if not result.stdout.strip():
-                raise DeviceUnavailable(f"No aapt under {ANDROID_HOME}/build-tools")
-            return result.stdout.split("\n")[0]
-        except SubprocessRunError as exc:
-            raise DeviceUnavailable(f"Failed to find aapt: {exc.stderr}") from exc
+        return AdbControl.find_build_tool("aapt")
 
     @staticmethod
     def get_apk_info(apk_path):
@@ -80,6 +95,159 @@ class AdbControl:
             return package_id, activity
         except SubprocessRunError as exc:
             raise DeviceUnavailable(f"Failed to read {apk_path}: {exc.stderr}") from exc
+
+    @staticmethod
+    def dump_manifest(apk_path: str) -> Optional[str]:
+        """The APK's manifest as an aapt2 xmltree dump, or None when unreadable."""
+        try:
+            aapt2 = AdbControl.find_build_tool("aapt2")
+            result = run_command(
+                [aapt2, "dump", "xmltree", "--file", "AndroidManifest.xml", apk_path],
+                check=True,
+                capture_output=True,
+                text=True,
+                log_command=False,
+            )
+            return result.stdout
+        except (SubprocessRunError, DeviceUnavailable) as exc:
+            logger.debug("Could not dump the manifest of %s: %s", apk_path, exc)
+            return None
+
+    @staticmethod
+    def launch_activity_on_device(serial: str, package_id: str) -> Optional[str]:
+        """What the launcher would start for a package, or None if it cannot say.
+
+        This is the only source that accounts for aliases the app enabled or
+        disabled at runtime, so it outranks anything read from the APK. It
+        needs the package installed.
+        """
+        try:
+            result = run_command(
+                [
+                    "adb", "-s", serial, "shell", "cmd", "package", "resolve-activity",
+                    "--brief", "-c", LAUNCHER_CATEGORY, package_id,
+                ],
+                timeout=20,
+                log_command=False,
+            )
+        except SubprocessRunError as exc:
+            logger.debug("resolve-activity failed for %s: %s", package_id, exc)
+            return None
+
+        lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+        if not lines:
+            return None
+        component = lines[-1]
+        if "/" not in component:
+            return None
+        package, _, activity = component.partition("/")
+        if package != package_id or not activity:
+            return None
+        return f"{package_id}{activity}" if activity.startswith(".") else activity
+
+    @staticmethod
+    def resolve_launch_activity(
+        apk_path: str, package_id: str, serial: Optional[str] = None
+    ) -> str:
+        """The activity to name in a launch intent.
+
+        An intent without a component matches every launcher on the device,
+        which Android refuses rather than guessing. So a missing activity has
+        to stop the run here, where the APK is named, instead of surfacing as
+        an adb error about intents.
+
+        Raises:
+            DeviceUnavailable: If no source could name one activity.
+        """
+        if serial:
+            on_device = AdbControl.launch_activity_on_device(serial, package_id)
+            if on_device:
+                return on_device
+
+        xmltree = AdbControl.dump_manifest(apk_path)
+        if xmltree:
+            declared = manifest.enabled_launcher(xmltree, package_id)
+            if declared:
+                return declared
+
+        _, badged = AdbControl.get_apk_info(apk_path)
+        if badged:
+            return badged
+
+        raise DeviceUnavailable(
+            f"Could not find the launcher activity of {package_id} in {apk_path}. "
+            "The device, the manifest and aapt badging all failed to name one."
+        )
+
+    @staticmethod
+    def attached_devices() -> dict[str, str]:
+        """Every device adb can see, and the state it reports for each.
+
+        `resolve_emulator_serial` only matches a device in the "device" state,
+        so an emulator that has gone offline looks exactly like no emulator at
+        all. Reading the states apart from that tells the two cases apart.
+        """
+        try:
+            result = run_command(["adb", "devices"], timeout=20, log_command=False)
+        except SubprocessRunError as exc:
+            logger.debug("Could not list devices: %s", exc)
+            return {}
+        states = {}
+        for line in (result.stdout or "").splitlines()[1:]:
+            parts = line.split()
+            if len(parts) >= 2:
+                states[parts[0]] = parts[1]
+        return states
+
+    @staticmethod
+    def list_avds() -> Optional[list[str]]:
+        """Every emulator Ronin could start, or None when it cannot ask.
+
+        None and an empty list mean different things: one is "the question
+        could not be answered", the other is "there are none".
+        """
+        emulator = shutil.which("emulator")
+        if emulator is None:
+            home = os.getenv("ANDROID_HOME")
+            candidate = Path(home) / "emulator" / "emulator" if home else None
+            if candidate is None or not candidate.is_file():
+                return None
+            emulator = str(candidate)
+        try:
+            result = run_command([emulator, "-list-avds"], timeout=30, log_command=False)
+        except SubprocessRunError as exc:
+            logger.debug("Could not list AVDs: %s", exc)
+            return None
+        return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+
+    @staticmethod
+    def boot_completed(serial: str) -> bool:
+        """Whether Android has finished booting on a device."""
+        try:
+            result = run_command(
+                ["adb", "-s", serial, "shell", "getprop", "sys.boot_completed"],
+                timeout=20,
+                log_command=False,
+            )
+        except SubprocessRunError as exc:
+            logger.debug("Could not read boot state of %s: %s", serial, exc)
+            return False
+        return (result.stdout or "").strip() == "1"
+
+    @staticmethod
+    def uninstall_app(serial: str, package_id: str) -> bool:
+        """Removes one package, reporting whether it is gone.
+
+        Uses adb rather than the driver, because the sessions worth cleaning
+        up after are usually the ones that died with the driver.
+        """
+        try:
+            run_command(["adb", "-s", serial, "uninstall", package_id], timeout=60)
+        except SubprocessRunError as exc:
+            logger.warning("Could not uninstall %s: %s", package_id, exc)
+            return False
+        logger.info("Uninstalled %s from %s", package_id, serial)
+        return True
 
     @staticmethod
     def toggle_tap_highlights(serial: str, enabled: bool):

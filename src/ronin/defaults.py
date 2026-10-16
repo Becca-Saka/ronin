@@ -15,6 +15,8 @@ STEP_BUDGET_FLOOR = 15
 STEP_BUDGET_PER_INSTRUCTION = 2
 DEFAULT_SETTLE_TIME = 2.0
 DEFAULT_APP_PATH = None
+DEFAULT_GROUNDING = "coordinates"
+DEFAULT_RECORD = True
 
 # A cold emulator boot regularly exceeds Appium's 60s default.
 AVD_LAUNCH_TIMEOUT_MS = 180_000

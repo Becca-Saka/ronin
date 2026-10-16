@@ -8,6 +8,13 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 
+def _workflow(name: str = "", **settings):
+    """One unnamed workflow holding one journey, as the loader would return it."""
+    from ronin.testing.suite import Workflow
+
+    return Workflow(name, settings, [SimpleNamespace(id="j", name="J")])
+
+
 class ExitCodeTests(unittest.TestCase):
     """Only the entry point ends the process. Everything below answers with a code."""
 
@@ -60,10 +67,9 @@ class ExitCodeTests(unittest.TestCase):
         )
 
         with (
-            patch.object(
-                RoninCLI,
-                "load_journeys",
-                return_value=[SimpleNamespace(id="j", name="J")],
+            patch(
+                "ronin.testing.cli.load_workflows",
+                return_value=[_workflow()],
             ),
             patch.object(RoninCLI, "_resolve_journey_file", return_value=Path("j.yaml")),
             patch("ronin.testing.cli.resolve_app_path", return_value=Path("app.apk")),
@@ -88,10 +94,9 @@ class ExitCodeTests(unittest.TestCase):
         for status, expected in (("PASSED", 0), ("FAILED", 1)):
             cli = RoninCLI()
             with (
-                patch.object(
-                RoninCLI,
-                "load_journeys",
-                return_value=[SimpleNamespace(id="j", name="J")],
+                patch(
+                "ronin.testing.cli.load_workflows",
+                return_value=[_workflow()],
             ),
                 patch.object(RoninCLI, "_resolve_journey_file", return_value=Path("j.yaml")),
                 patch("ronin.testing.cli.resolve_app_path", return_value=Path("app.apk")),
@@ -143,10 +148,9 @@ class ReuseAppFlagTests(unittest.TestCase):
             journey_id="j", journey_name="J", description="d", status="PASSED"
         )
         with (
-            patch.object(
-                RoninCLI,
-                "load_journeys",
-                return_value=[SimpleNamespace(id="j", name="J")],
+            patch(
+                "ronin.testing.cli.load_workflows",
+                return_value=[_workflow()],
             ),
             patch.object(RoninCLI, "_resolve_journey_file", return_value=Path("j.yaml")),
             patch("ronin.testing.cli.resolve_app_path", return_value=Path("app.apk")),
@@ -162,3 +166,23 @@ class ReuseAppFlagTests(unittest.TestCase):
 
     def test_the_flag_reaches_the_runner(self):
         self.assertTrue(self._runner_kwargs(["j.yaml", "--reuse-app"])["reuse_app"])
+
+
+class PlatformNameTests(unittest.TestCase):
+    """A platform Ronin does not know stops the run."""
+
+    def test_a_known_name_resolves(self):
+        from ronin.agent.device.platform import Platform
+
+        self.assertIs(Platform.named("android"), Platform.ANDROID)
+        self.assertIs(Platform.named("iOS"), Platform.IOS)
+
+    def test_a_misspelled_platform_is_refused(self):
+        """'androdi' used to run the iOS path, failing far from the typo."""
+        from ronin.agent.device.platform import Platform
+        from ronin.errors import UsageError
+
+        with self.assertRaises(UsageError) as caught:
+            Platform.named("androdi")
+
+        self.assertIn("androdi", str(caught.exception))

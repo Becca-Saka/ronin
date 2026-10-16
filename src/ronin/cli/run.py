@@ -7,6 +7,7 @@ from pathlib import Path
 from ronin.app_discovery import resolve_app_path
 from ronin.config import Config
 from ronin.llm.credentials import require_credentials
+from ronin.schema import PLATFORMS
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ def add_device_arguments(parser: argparse.ArgumentParser) -> None:
     Defaults stay None so an explicit flag is distinguishable from an absent
     one; ronin.config supplies the value when the flag is omitted.
     """
-    parser.add_argument("--platform", choices=["android", "ios"], help="Target platform")
+    parser.add_argument("--platform", choices=list(PLATFORMS), help="Target platform")
     parser.add_argument("--device", help="Name of emulator/simulator/device")
     parser.add_argument("--model", help="LiteLLM model to use")
     parser.add_argument("--fast-model", help="Cheaper/faster LiteLLM model for per-step planning")
@@ -84,7 +85,7 @@ def run(args: argparse.Namespace, config: Config) -> int:
     agent = DeviceAgent(
         device_name=config.resolve("device", args.device),
         app_path=str(app_path),
-        platform=Platform.ANDROID if platform == "android" else Platform.IOS,
+        platform=Platform.named(platform),
         model=model,
         fast_model=fast_model,
         assets_dir=Path(config.resolve("output_dir", args.output_dir)),

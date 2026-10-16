@@ -70,8 +70,6 @@ class SessionTrail:
         return None
 
     def record_screen(self, phash_hex: str, screen_name: str, raw_elements) -> None:
-        from ronin.utils.redactor import redact_text
-
         matched = self._find_matching_key(phash_hex)
         canonical = matched if matched is not None else phash_hex
 
@@ -82,7 +80,7 @@ class SessionTrail:
         for el in raw_elements or []:
             cx = (el.bounding_box.x_min + el.bounding_box.x_max) // 2
             cy = (el.bounding_box.y_min + el.bounding_box.y_max) // 2
-            el_text = redact_text(el.text) if el.text else None
+            el_text = el.text or None
             el_hash = hashlib.sha256(
                 f"{el.element}{el_text or ''}{cx // 40}{cy // 40}".encode()
             ).hexdigest()[:16]
@@ -110,9 +108,7 @@ class SessionTrail:
             entry.visit_count += 1
 
     def record_action(self, action_desc: str) -> None:
-        from ronin.utils.redactor import redact_text
-
-        self._pending_actions.append(redact_text(action_desc))
+        self._pending_actions.append(action_desc)
 
     def flush_transition(self, new_phash: str) -> None:
         if self._pending_phash and self._pending_actions:
@@ -125,8 +121,6 @@ class SessionTrail:
         self._pending_phash = self._find_matching_key(new_phash) or new_phash
 
     def format_for_prompt(self) -> Optional[str]:
-        from ronin.utils.redactor import redact_text
-
         if not self._screens:
             return None
 
@@ -153,4 +147,4 @@ class SessionTrail:
                 seq = entry.navigation_sequences[-1]
                 lines.append(f"  Navigation: {' → '.join(seq)}")
 
-        return redact_text("\n".join(lines))
+        return "\n".join(lines)

@@ -79,7 +79,13 @@ Run it with:
 uv run ronin test path/to/journey.yaml --app-path path/to/app.apk
 ```
 
-See [`example/checkout_journey.yaml`](example/checkout_journey.yaml) for a complete example. Journey files may be YAML or JSON and may contain one journey or a suite of journeys.
+See [`example/testing_app/ronin.yaml`](example/testing_app/ronin.yaml) for a complete example. One `ronin.yaml` holds the settings and the tests: a workflow owns an app, a device and an environment, and the journeys inside it are the tests. Run it from the directory that holds the file.
+
+```bash
+cd example/testing_app
+uv run ronin test                           # every workflow
+uv run ronin test --workflow notifications  # one
+```
 
 Ronin writes Markdown and JUnit reports, LLM usage data, and annotated screenshots to `assets/` by default.
 
@@ -139,10 +145,10 @@ Inspect or change the saved configuration with:
 ```bash
 uv run ronin config
 uv run ronin config set device Pixel_8a
-uv run ronin config set model openrouter/google/gemini-2.5-pro --project
+uv run ronin config set model openrouter/google/gemini-2.5-pro
 ```
 
-Configuration is resolved in this order: CLI flags, `RONIN_*` environment variables, the nearest `ronin.yaml`, `~/.ronin/config.yaml`, then built-in defaults. Use `--project` to save a setting in `./ronin.yaml` instead of the global config.
+Configuration is resolved in this order: CLI flags, `RONIN_*` environment variables, the nearest `ronin.yaml`, then built-in defaults. Writes go to `./ronin.yaml`, which is also where the journeys live.
 
 ## Commands
 

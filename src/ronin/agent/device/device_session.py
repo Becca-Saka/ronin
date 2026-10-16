@@ -8,6 +8,7 @@ import os
 import time
 import urllib.request
 from pathlib import Path
+from typing import Optional
 from uuid import uuid4
 
 from appium.webdriver.appium_service import AppiumService
@@ -15,12 +16,13 @@ from appium.webdriver.appium_service import AppiumService
 from ronin.agent.device.adb_control import AdbControl
 from ronin.agent.device.device_control import DeviceControl
 from ronin.agent.device.platform import Platform
+from ronin.agent.device.recording import DeviceRecording
 from ronin.utils.platform_checks import run_android_preflight, run_ios_preflight
 
 logger = logging.getLogger(__name__)
 
 
-class DeviceSession:
+class DeviceSession(DeviceRecording):
     """Manages the startup/teardown of the Appium server and mobile device driver session."""
 
     def __init__(
@@ -33,6 +35,8 @@ class DeviceSession:
         session_id: str = None,
         keep_device: bool = False,
         reuse_app: bool = False,
+        keep_app: bool = False,
+        installed_by_run: Optional[bool] = None,
     ):
         """Initializes a DeviceSession.
 
@@ -48,15 +52,23 @@ class DeviceSession:
             reuse_app: If True, skips reinstalling the app. Only safe when the
                 build has not changed — a debug rebuild keeps its version, so
                 Appium would consider the stale install current.
+            keep_app: If True, leaves the app installed when the session
+                ends. By default a run removes the app it installed.
+            installed_by_run: Whether this run installed the app, when the
+                caller already knows. Session recovery passes what the failed
+                session learned, because by then the app is on the device and
+                a fresh look would call it preexisting.
         """
 
         self.session_dir = session_dir
         self.device_name = device_name
         self.app_path = app_path
         self.platform = platform
-        self.device_control: DeviceControl | None = None
+        self.device_control: Optional[DeviceControl] = None
         self.keep_device = keep_device
         self.reuse_app = reuse_app
+        self.keep_app = keep_app
+        self._installed_by_run: Optional[bool] = installed_by_run
         # Run all preflight checks before touching any hardware
         if self.platform == Platform.IOS:
             run_ios_preflight(app_path)
@@ -105,6 +117,11 @@ class DeviceSession:
             ],
         }
 
+    @property
+    def installed_by_run(self) -> Optional[bool]:
+        """Whether this run installed the app, as far as it could tell."""
+        return self._installed_by_run
+
     def _ensure_directories(self) -> None:
         for directory in (
             self.logs_dir,
@@ -134,9 +151,35 @@ class DeviceSession:
         logger.info("Appium started")
         self._owns_appium = True
 
+    def _note_app_ownership(self) -> None:
+        """Records whether this run is the one that installed the app.
+
+        Teardown removes what the run put there and nothing else, so the
+        answer has to be positive knowledge: the device was reachable, it
+        listed its packages, and the app was not among them.
+
+        Anything else leaves the app alone. A device that has not booted yet
+        cannot be asked, and an adb call that fails answers nothing — neither
+        is evidence that the app arrived with this run.
+        """
+        if self.platform != Platform.ANDROID or self._installed_by_run is not None:
+            return
+        self._installed_by_run = False
+        serial = AdbControl.resolve_emulator_serial(self.device_name)
+        if not serial:
+            logger.info("No device to ask about %s yet. It will be left installed.", self.app_path)
+            return
+        packages = AdbControl.installed_packages(serial)
+        if not packages:
+            logger.info("Could not list packages on %s. The app will be left installed.", serial)
+            return
+        package, _ = AdbControl.get_apk_info(self.app_path)
+        self._installed_by_run = bool(package) and package not in packages
+
     def start(self, is_headless: bool = False) -> DeviceControl:
         self._ensure_directories()
         self._start_appium()
+        self._note_app_ownership()
         self.device_control = DeviceControl(
             device_name=self.device_name,
             app_path=self.app_path,
@@ -154,19 +197,50 @@ class DeviceSession:
             )
         time.sleep(6)
         if self.record_session:
-            self.device_control.start_recording()
-            self.is_recording = True
+            self.start_recording()
         return self.device_control
 
-    def close(self):
-        if self.is_recording:
-            session_path = self.recordings_dir / f"session_{self.session_id}.mp4"
-            try:
-                self.device_control.stop_recording(session_path)
-                logger.info("Session recording saved to %s", session_path)
-            except Exception as e:
-                logger.warning("Failed to save session recording: %s", e)
-            self.is_recording = False
+    def _clean_device(self, final: bool) -> None:
+        """Removes what this run left on the device, once its artifacts are saved.
+
+        A journey leaves behind the app it installed and whatever the recorder
+        wrote. Across a rotation of apps that fills the device, and a full
+        device fails runs for reasons that look nothing like storage.
+
+        Runs after the recording has been copied to the host, and before the
+        driver goes away, because the sessions most worth cleaning up after
+        are the ones whose driver is already gone.
+        """
+        if self.platform != Platform.ANDROID:
+            return
+        self.discard_device_recordings()
+        if not final:
+            return
+        serial = (self.device_control.serial if self.device_control else None) or (
+            AdbControl.resolve_emulator_serial(self.device_name)
+        )
+        if not serial:
+            return
+        package = self.device_control.package_id if self.device_control else None
+        if not package or self.keep_app or self.reuse_app or not self._installed_by_run:
+            return
+        try:
+            AdbControl.uninstall_app(serial, package)
+        except Exception as e:
+            logger.warning("Failed to uninstall %s: %s", package, e)
+
+    def close(self, final: bool = True):
+        """Ends the session, and by default removes what the run installed.
+
+        Session recovery closes a dead session and opens another against the
+        same app, so it passes final=False. Uninstalling there would take the
+        app out from under the scenarios still to run.
+        """
+        try:
+            self.save_recording()
+        except Exception as e:
+            logger.warning("Failed to save session recording: %s", e)
+        self._clean_device(final=final)
         if self.device_control:
             try:
                 self.device_control.quit()

@@ -3,9 +3,7 @@
 import argparse
 
 from ronin.cli.console import BOLD, DIM, OK, WARN, Console
-from ronin.cli.scope import add_scope_argument
 from ronin.config import (
-    GLOBAL_CONFIG_PATH,
     PROJECT_CONFIG_FILENAME,
     SETTINGS,
     Config,
@@ -36,8 +34,6 @@ def register(subcommands: argparse._SubParsersAction) -> None:
     unset_parser = actions.add_parser("unset", help="Remove a saved setting")
     unset_parser.add_argument("key", help="Setting name to remove")
 
-    for action_parser in (set_parser, unset_parser):
-        add_scope_argument(action_parser)
 
 
 def show(config: Config, console: Console) -> int:
@@ -53,15 +49,16 @@ def show(config: Config, console: Console) -> int:
 
 
 def paths(console: Console) -> int:
+    """Where the settings come from, which is one file."""
     project = find_project_config()
-    console.title("Ronin config files")
+    console.title("Ronin config file")
     console.write()
-    for label, path in (("global", GLOBAL_CONFIG_PATH), ("project", project)):
-        if path is None:
-            console.write(f"  {label:8} —  (no {PROJECT_CONFIG_FILENAME} in this directory or above)")
-        else:
-            state = "exists" if path.is_file() else "not created yet"
-            console.write(f"  {label:8} {path}  {console.paint(f'({state})', DIM)}")
+    if project is None:
+        console.write(
+            f"  —  (no {PROJECT_CONFIG_FILENAME} in this directory or above)"
+        )
+    else:
+        console.write(f"  {project}  {console.paint('(exists)', DIM)}")
     return 0
 
 
@@ -77,13 +74,13 @@ def run(args: argparse.Namespace, config: Config) -> int:
 
     try:
         if action == "set":
-            path = set_value(args.key, args.value, scope=args.scope)
+            path = set_value(args.key, args.value)
             updated = load_config()
             console.result(
                 OK, args.key, f"{updated.get(args.key)!r} saved to {path}"
             )
         else:
-            path = unset_value(args.key, scope=args.scope)
+            path = unset_value(args.key)
             updated = load_config()
             console.result(
                 WARN,

@@ -1,0 +1,814 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/Becca-Saka/ronin/master/ronin-schema.json",
+  "$defs": {
+    "DeviceSpec": {
+      "additionalProperties": false,
+      "description": "The target a run drives.",
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Emulator, simulator or device name.",
+          "title": "Name"
+        },
+        "platform": {
+          "anyOf": [
+            {
+              "enum": [
+                "android",
+                "ios"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Which platform to run against.",
+          "title": "Platform"
+        },
+        "headless": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Run the emulator without a window.",
+          "title": "Headless"
+        }
+      },
+      "title": "DeviceSpec",
+      "type": "object"
+    },
+    "JourneySpec": {
+      "additionalProperties": false,
+      "description": "One test: what a user does, and what must be true afterwards.",
+      "properties": {
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "journey": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The journey, in prose.",
+          "title": "Journey"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Another spelling of 'journey'.",
+          "title": "Description"
+        },
+        "security_rules": {
+          "description": "Rules every scenario must respect.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Security Rules",
+          "type": "array"
+        },
+        "env": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SecretValue"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "description": "Values for this test, over the workflow's.",
+          "title": "Env",
+          "type": "object"
+        }
+      },
+      "title": "JourneySpec",
+      "type": "object"
+    },
+    "SecretValue": {
+      "additionalProperties": false,
+      "description": "A declared value, and whether it is sensitive.\n\nA value marked secret is replaced by its name in everything Ronin writes\ndown. Nothing else is masked, so a credential written straight into the\njourney text is not hidden.",
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "secret": {
+          "default": false,
+          "title": "Secret",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "SecretValue",
+      "type": "object"
+    },
+    "WorkflowSpec": {
+      "additionalProperties": false,
+      "description": "One app, one device, one environment, and the tests to run against them.",
+      "properties": {
+        "device": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceSpec"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The target, as a name or a block.",
+          "title": "Device"
+        },
+        "emulator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Another spelling of 'device'.",
+          "title": "Emulator"
+        },
+        "platform": {
+          "anyOf": [
+            {
+              "enum": [
+                "android",
+                "ios"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Platform"
+        },
+        "headless": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Headless"
+        },
+        "app": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "App binary, relative to this file.",
+          "title": "App"
+        },
+        "app_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Another spelling of 'app'.",
+          "title": "App Path"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "fast_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cheaper model for per-step planning.",
+          "title": "Fast Model"
+        },
+        "grounding": {
+          "anyOf": [
+            {
+              "enum": [
+                "coordinates",
+                "marks"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How the planner names a target.",
+          "title": "Grounding"
+        },
+        "max_steps": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Steps"
+        },
+        "settle_time": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Settle Time"
+        },
+        "output_dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Dir"
+        },
+        "record": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Record the screen during the run.",
+          "title": "Record"
+        },
+        "record_session": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Another spelling of 'record'.",
+          "title": "Record Session"
+        },
+        "use_multimodal_vision": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Use Multimodal Vision"
+        },
+        "env": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SecretValue"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "title": "Env",
+          "type": "object"
+        },
+        "secrets": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "Names in 'env' to treat as sensitive.",
+          "title": "Secrets"
+        },
+        "journeys": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/JourneySpec"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Journeys"
+        },
+        "journey": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Journey"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "security_rules": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Security Rules",
+          "type": "array"
+        }
+      },
+      "title": "WorkflowSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A ronin.yaml: settings for every workflow, and the workflows.",
+  "properties": {
+    "device": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DeviceSpec"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The target, as a name or a block.",
+      "title": "Device"
+    },
+    "emulator": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Another spelling of 'device'.",
+      "title": "Emulator"
+    },
+    "platform": {
+      "anyOf": [
+        {
+          "enum": [
+            "android",
+            "ios"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Platform"
+    },
+    "headless": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Headless"
+    },
+    "app": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "App binary, relative to this file.",
+      "title": "App"
+    },
+    "app_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Another spelling of 'app'.",
+      "title": "App Path"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Model"
+    },
+    "fast_model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Cheaper model for per-step planning.",
+      "title": "Fast Model"
+    },
+    "grounding": {
+      "anyOf": [
+        {
+          "enum": [
+            "coordinates",
+            "marks"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "How the planner names a target.",
+      "title": "Grounding"
+    },
+    "max_steps": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Max Steps"
+    },
+    "settle_time": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Settle Time"
+    },
+    "output_dir": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Output Dir"
+    },
+    "record": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Record the screen during the run.",
+      "title": "Record"
+    },
+    "record_session": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Another spelling of 'record'.",
+      "title": "Record Session"
+    },
+    "use_multimodal_vision": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Use Multimodal Vision"
+    },
+    "env": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/SecretValue"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
+      },
+      "title": "Env",
+      "type": "object"
+    },
+    "secrets": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "title": "Secrets"
+    },
+    "workflows": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/WorkflowSpec"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Named workflows. Each owns an app and its tests.",
+      "title": "Workflows"
+    },
+    "journeys": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/JourneySpec"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Journeys"
+    },
+    "journey": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Journey"
+    },
+    "id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Id"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Name"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "security_rules": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Security Rules",
+      "type": "array"
+    }
+  },
+  "title": "Ronin configuration",
+  "type": "object"
+}

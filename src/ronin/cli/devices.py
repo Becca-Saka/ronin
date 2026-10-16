@@ -5,7 +5,6 @@ import json
 from dataclasses import asdict
 
 from ronin.cli.console import FAIL, INFO, OK, SKIP, WARN, Console
-from ronin.cli.scope import add_scope_argument
 from ronin.config import Config, set_value
 from ronin.devices.android import (
     AndroidToolingError,
@@ -46,7 +45,6 @@ def register(subcommands: argparse._SubParsersAction) -> None:
 
     default_parser = actions.add_parser("default", help="Make a device the default target")
     default_parser.add_argument("name", help="Device name to target by default")
-    add_scope_argument(default_parser)
 
 
 def show(devices, config: Config, console: Console) -> int:
@@ -135,14 +133,14 @@ def create(name: str, api, profile_request, assume_yes: bool, config: Config, co
     return 0
 
 
-def set_default(name: str, scope: str, config: Config, console: Console) -> int:
+def set_default(name: str, config: Config, console: Console) -> int:
     known = {device.name for device in list_devices()}
     if name not in known:
         console.result(
             FAIL, "device", f"'{name}' not found", "See what is available with: ronin devices"
         )
         return 1
-    path = set_value("device", name, scope=scope)
+    path = set_value("device", name)
     console.result(OK, "device", f"{name} saved to {path}")
     return 0
 
@@ -162,7 +160,7 @@ def run(args: argparse.Namespace, config: Config) -> int:
             console,
         )
     if action == "default":
-        return set_default(args.name, args.scope, config, console)
+        return set_default(args.name, config, console)
 
     platforms = config.platforms(args.platform) if args.platform else ("android", "ios")
     devices = list_devices(platforms, include_wearables=args.all)

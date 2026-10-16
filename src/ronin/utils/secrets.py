@@ -12,11 +12,8 @@ must never be shown in plain text" can only be audited by an agent allowed to
 see a card number.
 """
 
-import re
-from typing import Iterable, Optional
+from typing import Optional
 
-QUOTED = re.compile(r"'([^']{3,})'|\"([^\"]{3,})\"")
-MASK = "[REDACTED]"
 MIN_LENGTH = 3
 
 
@@ -30,7 +27,6 @@ class SecretScrubber:
 
     def __init__(self):
         self._named: dict[str, str] = {}
-        self._unnamed: set[str] = set()
 
     def learn_secrets(self, secrets: Optional[dict]) -> None:
         """Takes the name-to-value pairs a journey declared sensitive."""
@@ -38,22 +34,8 @@ class SecretScrubber:
             if value and len(value) >= MIN_LENGTH:
                 self._named[value] = name
 
-    def learn(self, value: Optional[str]) -> None:
-        """Takes a value seen at runtime, which has no declared name."""
-        if value and len(value) >= MIN_LENGTH and value not in self._named:
-            self._unnamed.add(value)
-
-    def learn_from_instructions(self, instructions: Optional[Iterable[str] | str]) -> None:
-        """Deprecated: inferred secrets from quoted literals and masked UI labels.
-
-        Kept as a no-op so callers that have not moved to a journey's declared
-        `secrets` block cannot silently reintroduce the guessing.
-        """
-        return
-
     def _masks(self) -> list[tuple[str, str]]:
         pairs = [(value, "{{" + name + "}}") for value, name in self._named.items()]
-        pairs += [(value, MASK) for value in self._unnamed]
         return sorted(pairs, key=lambda pair: len(pair[0]), reverse=True)
 
     def scrub(self, text: Optional[str]) -> str:
@@ -68,4 +50,4 @@ class SecretScrubber:
         """Whether any declared secret appears in the text, for image masking."""
         if not text:
             return False
-        return any(value in text for value in (*self._named, *self._unnamed))
+        return any(value in text for value in self._named)
