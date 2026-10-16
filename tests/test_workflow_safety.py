@@ -8,6 +8,16 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 
+def _solid_png(fill: str, size=(200, 400)) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", size, fill).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 class VerdictTests(unittest.TestCase):
     def _agent(self):
         from ronin.testing.qa_agent import QAAgent
@@ -306,6 +316,68 @@ class ArtifactSafetyTests(unittest.TestCase):
             self.assertEqual(root.attrib["failures"], "1")
             self.assertEqual(len(root.findall(".//error")), 1)
             self.assertEqual(len(root.findall(".//failure")), 1)
+
+    def test_the_report_records_what_produced_it(self):
+        """A run that behaves differently must be attributable to what changed."""
+        from ronin.testing.models import JourneyReport, RunEnvironment
+        from ronin.testing.reports import save_markdown_report
+
+        report = JourneyReport(
+            journey_id="j",
+            journey_name="Journey",
+            description="d",
+            status="PASSED",
+            passed_count=1,
+            environment=RunEnvironment(
+                ronin_version="0.1.0",
+                model="openrouter/some/model",
+                fast_model="openrouter/some/fast",
+                platform="android",
+                grounding="marks",
+                detector="orasul/deki-yolo@287f12d1",
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = save_markdown_report(report, Path(directory))
+            payload = path.read_text()
+
+        self.assertIn("openrouter/some/model", payload)
+        self.assertIn("openrouter/some/fast", payload)
+        self.assertIn("orasul/deki-yolo@287f12d1", payload)
+        self.assertIn("marks", payload)
+
+    def test_a_report_without_an_environment_still_writes(self):
+        from ronin.testing.models import JourneyReport
+        from ronin.testing.reports import save_markdown_report
+
+        report = JourneyReport(
+            journey_id="j", journey_name="Journey", description="d", status="PASSED"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            payload = save_markdown_report(report, Path(directory)).read_text()
+
+        self.assertIn("Journey", payload)
+        self.assertNotIn("**Detector**", payload)
+
+    def test_the_runner_records_the_pinned_detector(self):
+        from ronin.agent.device.platform import Platform
+        from ronin.agent.perception.image_descriptor import YOLO_REVISION
+        from ronin.testing.runner import RoninTestRunner
+
+        runner = RoninTestRunner(
+            device_name="emulator-5554",
+            app_path="app.apk",
+            platform=Platform.ANDROID,
+            model="openrouter/some/model",
+            grounding="marks",
+        )
+
+        environment = runner._environment()
+
+        self.assertEqual(environment.platform, "android")
+        self.assertIn(YOLO_REVISION, environment.detector)
 
     def test_report_write_failure_makes_the_run_fail(self):
         from ronin.testing.models import JourneyReport
@@ -980,7 +1052,7 @@ class ScanDumpSafetyTests(unittest.TestCase):
     """A scan dump is a file, so detected text in it outlives the run."""
 
     def _element(self, text):
-        from ronin.agent.perception.image_descriptor import BoundingBox, GUIElement
+        from ronin.agent.perception.elements import BoundingBox, GUIElement
 
         return GUIElement(
             element="Text",
@@ -1049,6 +1121,36 @@ class CapabilityMatchingTests(unittest.TestCase):
         self.assertIn("contrast", self._reason("Text meets WCAG AA"))
 
 
+class ConfigFileTests(unittest.TestCase):
+    """A setting that does nothing must not look like one that was applied."""
+
+    def _write(self, text):
+        path = Path(tempfile.mkdtemp()) / "ronin.yaml"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_a_misspelled_setting_is_named_and_the_rest_still_load(self):
+        from ronin.config import read_file
+
+        path = self._write("platfrom: ios\nmodel: a/model\n")
+
+        with self.assertLogs("ronin.config", level="WARNING") as captured:
+            settings = read_file(path)
+
+        self.assertEqual(settings, {"model": "a/model"})
+        self.assertIn("platfrom", captured.output[0])
+
+    def test_a_file_of_known_settings_warns_about_nothing(self):
+        from ronin.config import read_file
+
+        path = self._write("platform: ios\nmax_steps: 7\n")
+
+        with self.assertNoLogs("ronin.config", level="WARNING"):
+            settings = read_file(path)
+
+        self.assertEqual(settings, {"platform": "ios", "max_steps": 7})
+
+
 class StalenessTests(unittest.TestCase):
     """Seconds pass between reading the screen and tapping it."""
 
@@ -1081,7 +1183,7 @@ class StalenessTests(unittest.TestCase):
         return buffer.getvalue()
 
     def _element(self, box=(10, 10, 60, 60)):
-        from ronin.agent.perception.image_descriptor import BoundingBox, GUIElement
+        from ronin.agent.perception.elements import BoundingBox, GUIElement
 
         return GUIElement(
             element="Button",
@@ -1156,11 +1258,42 @@ class StalenessTests(unittest.TestCase):
         )
 
 
+class VisionWeightsTests(unittest.TestCase):
+    """The weights decide what the agent can see, so which weights must be fixed."""
+
+    def test_the_detector_is_pinned_to_a_commit(self):
+        from ronin.agent.perception.image_descriptor import YOLO_REVISION
+
+        self.assertRegex(YOLO_REVISION, r"^[0-9a-f]{40}$")
+
+    def test_setup_prefetches_exactly_what_a_run_loads(self):
+        """Otherwise setup warms one set of weights and the run downloads another."""
+        from ronin.agent.perception.image_descriptor import (
+            YOLO_FILENAME,
+            YOLO_REPO_ID,
+            YOLO_REVISION,
+        )
+        from ronin.setup.steps import PREFETCH_SCRIPT
+
+        for value in (YOLO_REPO_ID, YOLO_FILENAME, YOLO_REVISION):
+            self.assertIn(repr(value), PREFETCH_SCRIPT)
+
+    def test_the_reported_box_keeps_its_model_facing_meaning(self):
+        """The model answers in this schema, so its description is prompt text."""
+        from ronin.testing.models import QAIssue
+
+        description = QAIssue.model_json_schema()["$defs"]["BoundingBox"]["description"]
+
+        self.assertEqual(
+            description, "Represents coordinates highlighting a visual issue."
+        )
+
+
 class MarkTests(unittest.TestCase):
     """The number drawn on the screenshot and the number in the prompt must agree."""
 
     def _el(self, name, text, box):
-        from ronin.agent.perception.image_descriptor import BoundingBox, GUIElement
+        from ronin.agent.perception.elements import BoundingBox, GUIElement
 
         return GUIElement(
             element=name,
@@ -1257,16 +1390,24 @@ class MarkTests(unittest.TestCase):
 class TargetDecisionTests(unittest.TestCase):
     """Nothing guesses: an unusable target stops the step and is recorded."""
 
-    def _snapshot(self, marks=(), png=b""):
+    def _snapshot(self, marks=(), png=None):
         return SimpleNamespace(
-            marks=list(marks), gui_elements=[], raw_img_bytes=png, current_phash="p"
+            marks=list(marks),
+            gui_elements=[],
+            raw_img_bytes=_solid_png("white") if png is None else png,
+            current_phash="p",
         )
 
-    def _device(self, png=b""):
-        return SimpleNamespace(get_screenshot=Mock(return_value=png))
+    def _device(self, png=None):
+        """Re-reads the same screen the snapshot was taken from, so nothing is stale."""
+        return SimpleNamespace(
+            get_screenshot=Mock(
+                return_value=_solid_png("white") if png is None else png
+            )
+        )
 
     def _marks(self):
-        from ronin.agent.perception.image_descriptor import BoundingBox, GUIElement
+        from ronin.agent.perception.elements import BoundingBox, GUIElement
         from ronin.agent.perception.marks import Mark
 
         element = GUIElement(
@@ -1331,6 +1472,78 @@ class TargetDecisionTests(unittest.TestCase):
 
         self.assertTrue(evaluate(action, self._snapshot(), self._device()).ok)
 
+    def test_an_untargeted_action_does_not_re_read_the_screen(self):
+        """A key event is aimed at no point, so there is nothing to re-check."""
+        from ronin.agent.actuation.actions import KeyEventAction
+        from ronin.agent.targeting import evaluate
+
+        device = self._device()
+
+        decision = evaluate(
+            KeyEventAction(key=4, reason="back"), self._snapshot(), device
+        )
+
+        self.assertTrue(decision.ok)
+        device.get_screenshot.assert_not_called()
+
+    def test_a_target_that_moved_stops_the_step(self):
+        """The number resolved to a point, but the screen moved under it."""
+        from ronin.agent.actuation.actions import TapMarkAction
+        from ronin.agent.targeting import evaluate
+
+        decision = evaluate(
+            TapMarkAction(mark=1, reason="continue"),
+            self._snapshot(self._marks()),
+            self._device(png=_solid_png("black")),
+        )
+
+        self.assertFalse(decision.ok)
+        self.assertIn("screen changed", decision.observation)
+
+    def test_a_screen_that_cannot_be_read_again_stops_the_step(self):
+        """No current screen is no evidence that the target survived."""
+        from ronin.agent.actuation.actions import TapMarkAction
+        from ronin.agent.targeting import evaluate
+
+        device = SimpleNamespace(
+            get_screenshot=Mock(side_effect=RuntimeError("session gone"))
+        )
+
+        decision = evaluate(
+            TapMarkAction(mark=1, reason="continue"),
+            self._snapshot(self._marks()),
+            device,
+        )
+
+        self.assertFalse(decision.ok)
+        self.assertIn("could not be read", decision.observation)
+
+    def test_an_empty_screenshot_stops_the_step(self):
+        from ronin.agent.actuation.actions import TapMarkAction
+        from ronin.agent.targeting import evaluate
+
+        decision = evaluate(
+            TapMarkAction(mark=1, reason="continue"),
+            self._snapshot(self._marks()),
+            self._device(png=b""),
+        )
+
+        self.assertFalse(decision.ok)
+        self.assertIn("could not be read", decision.observation)
+
+    def test_resolving_a_number_leaves_the_proposed_action_untouched(self):
+        """A proposed action is parsed once, never edited into a resolved one."""
+        from ronin.agent.actuation.actions import TapMarkAction
+        from ronin.agent.targeting import evaluate
+
+        proposed = TapMarkAction(mark=1, reason="continue")
+
+        decision = evaluate(proposed, self._snapshot(self._marks()), self._device())
+
+        self.assertIsNot(decision.action, proposed)
+        self.assertFalse(hasattr(proposed, "coordinates"))
+        self.assertEqual(proposed.mark, 1)
+
 
 class MarkLegibilityTests(unittest.TestCase):
     """A number the model cannot read is worse than no number at all."""
@@ -1358,7 +1571,7 @@ class KeyboardMarkTests(unittest.TestCase):
     """An open keyboard is most of the screen; numbering it buries the app."""
 
     def _el(self, text, y):
-        from ronin.agent.perception.image_descriptor import BoundingBox, GUIElement
+        from ronin.agent.perception.elements import BoundingBox, GUIElement
 
         return GUIElement(
             element="Text",
@@ -1441,7 +1654,7 @@ class NestCollapseTests(unittest.TestCase):
     """A field is a container holding an icon and a value — one control, not three."""
 
     def _el(self, kind, text, box):
-        from ronin.agent.perception.image_descriptor import BoundingBox, GUIElement
+        from ronin.agent.perception.elements import BoundingBox, GUIElement
 
         return GUIElement(
             element=kind,
@@ -1494,7 +1707,7 @@ class KeyboardBandTests(unittest.TestCase):
     """The strip with no numbers has to say why it has no numbers."""
 
     def _key(self, text, y):
-        from ronin.agent.perception.image_descriptor import BoundingBox, GUIElement
+        from ronin.agent.perception.elements import BoundingBox, GUIElement
 
         return GUIElement(
             element="Text",

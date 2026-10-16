@@ -4,7 +4,7 @@ from numbers import Integral, Real
 from pathlib import Path
 from typing import Any, Optional
 
-from ronin.agent.perception.image_descriptor import GUIElement
+from ronin.agent.perception.elements import GUIElement
 
 
 def _to_json_serializable(value: Any) -> Any:

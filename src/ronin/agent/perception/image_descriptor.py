@@ -13,39 +13,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from pydantic import BaseModel
 
+from ronin.agent.perception.elements import BoundingBox, GUIElement
 from ronin.utils.vision_deps import require_vision
 
 logger = logging.getLogger(__name__)
-
-
-
-class BoundingBox(BaseModel):
-    x_min: int
-    y_min: int
-    x_max: int
-    y_max: int
-
-    def __iter__(self):
-        yield self.x_min
-        yield self.y_min
-        yield self.x_max
-        yield self.y_max
-
-
-class GUIElement(BaseModel):
-    element: str
-    bounding_box: BoundingBox
-    confidence: float
-    type: str
-    text: str = ""
 
 
 OCR_RELEVANT_TYPES = {"Text", "Button", "EditText"}
 
 YOLO_REPO_ID = "orasul/deki-yolo"
 YOLO_FILENAME = "best.pt"
+YOLO_REVISION = "287f12d1ee2413bbe217fc321483a9931e0e5317"
 OCR_LANGUAGES = ["en"]
 
 
@@ -58,7 +37,9 @@ class ImageDescriptor:
         from ultralytics import YOLO
 
         logger.info("Loading deki-yolo model...")
-        model_path = hf_hub_download(repo_id=YOLO_REPO_ID, filename=YOLO_FILENAME)
+        model_path = hf_hub_download(
+            repo_id=YOLO_REPO_ID, filename=YOLO_FILENAME, revision=YOLO_REVISION
+        )
         self.yolo = YOLO(model_path)
         self.names = self.yolo.names
         logger.info("✓ Model loaded")

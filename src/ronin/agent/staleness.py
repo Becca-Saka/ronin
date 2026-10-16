@@ -32,6 +32,15 @@ def _point(action) -> Optional[Tuple[int, int]]:
     return coordinates.x, coordinates.y
 
 
+def has_target(action) -> bool:
+    """Whether the action is aimed at one point, and so has something to go stale.
+
+    Gestures, key events and waits are aimed at no single place: there is
+    nothing about them for a changing screen to invalidate.
+    """
+    return _point(action) is not None
+
+
 def target_region(action, gui_elements, screen: Tuple[int, int]) -> Optional[Box]:
     """The area to re-check: the element being targeted, or a patch around the point.
 

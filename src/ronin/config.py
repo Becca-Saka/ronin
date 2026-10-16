@@ -6,6 +6,7 @@ variable, ./ronin.yaml in the working directory or any parent, the global
 it came from so `ronin config` can explain itself.
 """
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,8 @@ GLOBAL_CONFIG_PATH = Path.home() / ".ronin" / "config.yaml"
 ENV_PREFIX = "RONIN_"
 
 DEFAULT_ORIGIN = "built-in default"
+
+logger = logging.getLogger(__name__)
 
 
 def _as_bool(raw: Any) -> bool:
@@ -110,7 +113,11 @@ def coerce(name: str, raw: Any) -> Any:
 
 
 def read_file(path: Path) -> dict[str, Any]:
-    """Reads one config file, ignoring unknown keys so a newer file stays usable."""
+    """Reads one config file, ignoring unknown keys so a newer file stays usable.
+
+    Unknown keys are named rather than dropped in silence: a misspelled setting
+    that quietly does nothing looks exactly like one that was applied.
+    """
     if not path.is_file():
         return {}
     try:
@@ -119,7 +126,16 @@ def read_file(path: Path) -> dict[str, Any]:
         raise ConfigError(f"Could not parse {path}: {exc}") from exc
     if not isinstance(loaded, dict):
         raise ConfigError(f"{path} must contain a mapping of settings")
-    return {key: value for key, value in loaded.items() if key in SETTINGS}
+    known = {key: value for key, value in loaded.items() if key in SETTINGS}
+    unknown = sorted(key for key in loaded if key not in SETTINGS)
+    if unknown:
+        logger.warning(
+            "Ignoring unknown setting(s) in %s: %s. Known settings: %s",
+            path,
+            ", ".join(str(key) for key in unknown),
+            ", ".join(sorted(SETTINGS)),
+        )
+    return known
 
 
 def find_project_config(start: Optional[Path] = None) -> Optional[Path]:

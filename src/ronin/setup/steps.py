@@ -15,6 +15,7 @@ from ronin.agent.perception.image_descriptor import (
     OCR_LANGUAGES,
     YOLO_FILENAME,
     YOLO_REPO_ID,
+    YOLO_REVISION,
 )
 from ronin.cli.console import FAIL, INFO, OK, SKIP, WARN
 from ronin.defaults import DEFAULT_MODEL
@@ -38,7 +39,9 @@ PREFETCH_SCRIPT = f"""\
 from huggingface_hub import hf_hub_download
 import easyocr
 
-hf_hub_download(repo_id={YOLO_REPO_ID!r}, filename={YOLO_FILENAME!r})
+hf_hub_download(
+    repo_id={YOLO_REPO_ID!r}, filename={YOLO_FILENAME!r}, revision={YOLO_REVISION!r}
+)
 easyocr.Reader({OCR_LANGUAGES!r}, gpu=False)
 """
 

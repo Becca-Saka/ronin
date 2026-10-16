@@ -3,9 +3,11 @@ import time
 from pathlib import Path
 from typing import List
 
+from ronin import __version__
 from ronin.agent.trail import SessionTrail
 from ronin.agent.device.device_session import DeviceSession
 from ronin.agent.device.platform import Platform
+from ronin.agent.perception.image_descriptor import YOLO_REPO_ID, YOLO_REVISION
 from ronin.agent.perception.perception import ScreenPerception
 from ronin.agent.device_planner import GROUNDING_COORDINATES
 from ronin.agent.perception.marks import DETAIL_NUMBERS
@@ -13,7 +15,13 @@ from ronin.agent.replay import ReplayLedger
 from .coverage import unevidenced_security_rules
 from .generator import ScenarioGenerator
 from .progress import ScenarioProgress
-from .models import GeneratedTestCase, JourneyReport, ScenarioReport, UserJourney
+from .models import (
+    GeneratedTestCase,
+    JourneyReport,
+    RunEnvironment,
+    ScenarioReport,
+    UserJourney,
+)
 from .qa_agent import QAAgent
 from .usage_tracker import LLMUsageTracker
 from ronin.utils.secrets import SecretScrubber
@@ -87,6 +95,17 @@ class RoninTestRunner:
         self.headless = headless
         self.fast_model = fast_model
         self.record_session = record_session
+
+    def _environment(self) -> RunEnvironment:
+        """What was in play, so a result that differs can be attributed."""
+        return RunEnvironment(
+            ronin_version=__version__,
+            model=self.model,
+            fast_model=self.fast_model,
+            platform=self.platform.value,
+            grounding=self.grounding,
+            detector=f"{YOLO_REPO_ID}@{YOLO_REVISION}",
+        )
 
     async def run_journey(self, journey: UserJourney) -> JourneyReport:
         """Generates scenarios from the journey, executes them, and builds reports & LLM usage metrics."""
@@ -295,6 +314,7 @@ class RoninTestRunner:
                 failed_count=failed_count,
                 skipped_count=skipped_count,
                 unevidenced_security_rules=unevidenced,
+                environment=self._environment(),
             )
             try:
                 self._save_markdown_report(
@@ -392,6 +412,7 @@ class RoninTestRunner:
             passed_count=passed,
             failed_count=failed,
             skipped_count=skipped,
+            environment=self._environment(),
         )
         try:
             save_markdown_report(

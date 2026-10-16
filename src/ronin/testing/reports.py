@@ -30,6 +30,23 @@ def _write_atomic(path: Path, content: str | bytes) -> None:
     temporary.replace(path)
 
 
+def _environment_lines(environment) -> list[str]:
+    """What produced this report, so a result that differs can be attributed."""
+    if environment is None:
+        return []
+    model = f"`{environment.model}`"
+    if environment.fast_model:
+        model += f" (fast: `{environment.fast_model}`)"
+    lines = [
+        f"* **Ronin**: `{environment.ronin_version}` on `{environment.platform}`",
+        f"* **Model**: {model}",
+        f"* **Targeting**: `{environment.grounding}`",
+    ]
+    if environment.detector:
+        lines.append(f"* **Detector**: `{environment.detector}`")
+    return lines
+
+
 def save_markdown_report(
     report: JourneyReport,
     output_dir: Path,
@@ -56,6 +73,7 @@ def save_markdown_report(
         f"{report.skipped_count} skipped)",
         f"* **Duration**: {report.total_duration}s",
     ]
+    lines.extend(_environment_lines(report.environment))
     if session:
         lines.extend(
             [

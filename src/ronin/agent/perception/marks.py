@@ -17,7 +17,7 @@ from typing import List, Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
-from ronin.agent.perception.image_descriptor import GUIElement
+from ronin.agent.perception.elements import GUIElement
 
 logger = logging.getLogger(__name__)
 

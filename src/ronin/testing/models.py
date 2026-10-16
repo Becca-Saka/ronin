@@ -37,8 +37,12 @@ class GeneratedTestCase(BaseModel):
     expected_outcomes: List[str] = Field(default_factory=list)
 
 
+# Written by the model to point at what it is reporting, so kept separate from
+# the detector's perception.BoundingBox: neither schema should move when the
+# other changes.
 class BoundingBox(BaseModel):
     """Represents coordinates highlighting a visual issue."""
+
     x_min: int
     y_min: int
     x_max: int
@@ -106,6 +110,18 @@ class ScenarioReport(BaseModel):
     failure_reason: Optional[str] = None
 
 
+class RunEnvironment(BaseModel):
+    """What produced a report, for when the same journey behaves differently."""
+    ronin_version: str
+    model: str
+    fast_model: Optional[str] = None
+    platform: str
+    grounding: str
+    detector: Optional[str] = Field(
+        default=None, description="Detection weights, as repository@revision."
+    )
+
+
 class JourneyReport(BaseModel):
     """Represents the aggregated results of all scenarios generated for a journey."""
     journey_id: str
@@ -124,3 +140,4 @@ class JourneyReport(BaseModel):
     passed_count: int = 0
     failed_count: int = 0
     skipped_count: int = 0
+    environment: Optional[RunEnvironment] = None

@@ -18,7 +18,7 @@ from ronin.agent.actuation.actions import TARGETED_ACTIONS, ActionType, Coordina
 from ronin.agent.history import ActionEntry, ActionResult
 from ronin.agent.device_planner import GROUNDING_MARKS
 from ronin.agent.perception import marks
-from ronin.agent.staleness import target_moved
+from ronin.agent.staleness import has_target, target_moved
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +73,8 @@ def resolve_mark(action, element_marks, grounding: str = "") -> tuple:
         ), None
 
     x, y = mark.center
-    coordinate_form = getattr(type(action), "coordinate_form", None)
-    if coordinate_form is None:
-        action.coordinates = Coordinates(x=x, y=y)
-        return None, None
-
-    resolved = coordinate_form(
+    # Every marks variant carries this, set by actions._marks_variant.
+    resolved = type(action).coordinate_form(
         coordinates=Coordinates(x=x, y=y), **action.model_dump(exclude={"mark", "type"})
     )
     logger.info("Element %s resolves to (%d, %d).", index, x, y)
@@ -103,17 +99,42 @@ def save_unmatched_screen(media_manager, path: Path, snapshot) -> None:
         logger.warning("Could not save the unmatched screen: %s", exc)
 
 
-def target_is_stale(device_control, snapshot, action) -> bool:
-    """Whether the screen moved under the plan while the model was thinking.
+SCREEN_MOVED = (
+    "Not executed — the screen changed while this action was being chosen, so "
+    "its target was already out of date. Read the current elements and choose "
+    "again."
+)
 
-    Acting anyway would touch whatever has taken the target's place. Saying yes
-    costs a step and re-perceives, which is the cheaper mistake.
+SCREEN_UNREADABLE = (
+    "Not executed — the screen could not be read again to confirm the target is "
+    "still there. Look at the screen again before choosing."
+)
+
+
+def stale_target_reason(device_control, snapshot, action) -> Optional[str]:
+    """Why the target can no longer be trusted, or None while it still can be.
+
+    Refusing costs a step and re-perceives, which is cheaper than touching
+    whatever has taken the target's place. A screen that cannot be read at all
+    is no evidence the target survived, so it counts too.
+
+    The catch is broad because a lost session surfaces in several shapes, and
+    every one of them leaves the target unverified.
     """
+    if not has_target(action):
+        return None
+
     try:
         fresh = device_control.get_screenshot()
-    except Exception:
-        return False
-    return target_moved(snapshot.raw_img_bytes, fresh, action, snapshot.gui_elements)
+    except Exception as exc:
+        logger.warning("Could not re-read the screen before acting: %s", exc)
+        return SCREEN_UNREADABLE
+    if not fresh:
+        logger.warning("The screen re-read before acting came back empty.")
+        return SCREEN_UNREADABLE
+    if target_moved(snapshot.raw_img_bytes, fresh, action, snapshot.gui_elements):
+        return SCREEN_MOVED
+    return None
 
 
 @dataclass(frozen=True)
@@ -153,14 +174,8 @@ def evaluate(action, snapshot, device_control, grounding: str = "") -> Decision:
         return Decision(ok=False, observation=unresolved)
     action = resolved or action
 
-    if target_is_stale(device_control, snapshot, action):
-        return Decision(
-            ok=False,
-            observation=(
-                "Not executed — the screen changed while this action was being "
-                "chosen, so its target was already out of date. Read the current "
-                "elements and choose again."
-            ),
-        )
+    stale = stale_target_reason(device_control, snapshot, action)
+    if stale:
+        return Decision(ok=False, observation=stale)
 
     return Decision(action=action)

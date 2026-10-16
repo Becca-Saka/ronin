@@ -6,9 +6,9 @@ import numpy as np
 from PIL import Image
 
 from ronin.agent.device.device_session import DeviceSession
+from ronin.agent.perception.elements import GUIElement
 from ronin.agent.perception.image_descriptor import (
     OCR_RELEVANT_TYPES,
-    GUIElement,
     ImageDescriptor,
 )
 from ronin.agent.perception.scan_dump import ScanInfo

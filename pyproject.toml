@@ -93,4 +93,4 @@ source = ["src/ronin"]
 show_missing = true
 # The measured baseline for the offline suite. Raise it as coverage improves;
 # it is a floor against regression, not a target.
-fail_under = 34
+fail_under = 38
