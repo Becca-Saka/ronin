@@ -148,9 +148,9 @@ class TargetDecisionTests(unittest.TestCase):
     def test_an_undetected_target_is_reported_without_ending_the_scenario(self):
         """Only what is on screen is numbered, so looking again may find it.
 
-        Ending here cost two scenarios in a recorded run, where the field was
-        simply behind the keyboard. Whether a second refusal ends the run is
-        the loop's call, because only the loop knows if the screen changed.
+        A field simply behind the keyboard is found by looking again. Whether
+        a second refusal ends the run is the loop's call, because only the loop
+        knows if the screen changed.
         """
         from ronin.agent.actuation.actions import TargetNotListedAction
         from ronin.agent.step.targeting import evaluate

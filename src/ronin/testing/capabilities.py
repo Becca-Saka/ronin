@@ -23,7 +23,10 @@ _UNSUPPORTED_REQUIREMENTS = {
 def unsupported_reason(test_case: GeneratedTestCase) -> str | None:
     """Return why a scenario cannot be evidenced by the current runtime."""
     text = "\n".join(
-        [*test_case.steps_instructions, *test_case.expected_outcomes]
+        [
+            *test_case.steps_instructions,
+            *(outcome.statement for outcome in test_case.expected_outcomes),
+        ]
     ).lower()
     reasons = {
         reason for phrase, reason in _UNSUPPORTED_REQUIREMENTS.items() if phrase in text

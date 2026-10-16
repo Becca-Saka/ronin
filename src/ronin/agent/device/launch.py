@@ -128,11 +128,8 @@ def _clear_task_restart(device_control, package_id: str) -> bool:
 class SetupMode(str, Enum):
     """The state a scenario needs before its first step.
 
-    Required state is part of what a test is. Left unstated, it becomes an
-    assumption in a prompt, and an assumption cannot be enforced: one run told
-    the planner the app always opens on a login screen, restarted the app
-    without clearing it, and skipped the scenario when it found the screen the
-    last one had navigated to.
+    Required state is part of what a test is. Stated in a prompt instead, it
+    is an assumption, and a prompt enforces nothing.
     """
 
     CLEAR_DATA = "clear_data"

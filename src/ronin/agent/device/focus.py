@@ -123,9 +123,8 @@ class Focus:
         """What went wrong, in terms of the next thing to try.
 
         The planner reads this and chooses again, so it has to name a different
-        move. Told only that coordinates went stale, one run retried the same
-        target five times: in marks mode the planner never sees a coordinate,
-        so it could do nothing with that.
+        move. In marks mode the planner never sees a coordinate, so a message
+        about stale coordinates names nothing it can act on.
         """
         if before is not None and rect == before:
             return (

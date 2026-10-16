@@ -44,7 +44,10 @@ class ScenarioProgress:
                 "status": "pending",
                 "steps_planned": len(scenario.steps_instructions),
                 "steps_instructions": [self._scrub(value) for value in scenario.steps_instructions],
-                "expected_outcomes": [self._scrub(value) for value in scenario.expected_outcomes],
+                "expected_outcomes": [
+                    self._scrub(outcome.statement)
+                    for outcome in scenario.expected_outcomes
+                ],
             }
             for index, scenario in enumerate(scenarios)
         }

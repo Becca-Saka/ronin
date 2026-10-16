@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+from enum import Enum
+
+from pydantic import BaseModel, Field, model_validator
 from typing import Dict, List, Literal, Optional
 
 # Trail models live in agent/trail.py — re-exported here for backward compatibility.
@@ -21,6 +23,51 @@ class UserJourney(BaseModel):
     )
 
 
+class AssertionScope(str, Enum):
+    """What kind of evidence an expected outcome needs.
+
+    The auditor is handed one screenshot. Asked whether an app hung, or
+    whether it navigated somewhere, it answers from pixels that cannot carry
+    either fact. Both a false pass and a false missing-evidence follow. The
+    scope says which evidence settles the claim, so a claim nothing can settle
+    is visible instead of silently wrong.
+    """
+
+    CURRENT_SCREEN = "current_screen"
+    """True or false about what is on one screen. The auditor can see this."""
+
+    TRANSITION = "transition"
+    """The run reached a screen, or moved between two. The screens visited
+    carry this; a single screenshot does not."""
+
+    RUN_TIMING = "run_timing"
+    """How long the app took, or whether it stayed responsive. Nothing Ronin
+    records measures this today, so an outcome scoped here is reported as
+    unproven rather than counted either way."""
+
+
+class ExpectedOutcome(BaseModel):
+    """One thing a scenario must show, and what could show it."""
+
+    statement: str
+    scope: AssertionScope = Field(
+        default=AssertionScope.CURRENT_SCREEN,
+        description=(
+            "Which evidence settles this. 'current_screen' for anything visible "
+            "on a single screen. 'transition' for having reached or moved "
+            "between screens. 'run_timing' for speed or responsiveness."
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_a_bare_statement(cls, value):
+        """A plain string is a claim about one screen, which is the common case."""
+        if isinstance(value, str):
+            return {"statement": value}
+        return value
+
+
 class GeneratedTestCase(BaseModel):
     """Represents a generated test scenario targeting a specific classification."""
     test_id: str
@@ -35,7 +82,7 @@ class GeneratedTestCase(BaseModel):
         "performance_bottleneck"
     ]
     steps_instructions: List[str]
-    expected_outcomes: List[str] = Field(default_factory=list)
+    expected_outcomes: List[ExpectedOutcome] = Field(default_factory=list)
     setup: SetupMode = Field(
         default=SetupMode.CLEAR_DATA,
         description=(

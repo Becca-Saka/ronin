@@ -9,10 +9,8 @@ from unittest.mock import Mock, patch
 class SetupModeTests(unittest.TestCase):
     """Required state is part of what a test is.
 
-    Left unstated it becomes a sentence in a prompt, and a prompt cannot
-    enforce anything: one run asserted the app always opens on a login screen,
-    restarted without clearing data, and skipped the scenario on finding the
-    screen the previous one had navigated to.
+    Stated in a prompt instead, it is an assumption, and a prompt enforces
+    nothing.
     """
 
     def test_the_default_is_the_one_that_makes_scenarios_independent(self):

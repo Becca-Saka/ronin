@@ -9,8 +9,7 @@ class RefusedMarkTests(unittest.TestCase):
 
     Nothing visible separates a field from a picture of one. The only evidence
     is having typed there and watched the cursor stay put, so that evidence has
-    to survive the step it was gathered in. Without it one run chose the same
-    decorative card twelve times.
+    to survive the step it was gathered in.
     """
 
     def _marks(self, refuses_text=False):

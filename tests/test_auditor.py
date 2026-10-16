@@ -202,8 +202,8 @@ class CacheAliasingTests(unittest.TestCase):
 class ScreenWatchTests(unittest.TestCase):
     """When a screen is worth auditing, rather than auditing every step.
 
-    The fingerprint alone decides nothing: every keystroke moves it, so a cache
-    keyed on it reused nothing across 122 audits in one recorded run.
+    The fingerprint alone decides nothing: every keystroke moves it, so a
+    cache keyed on it reuses nothing while a form is filled in.
     """
 
     def _watch(self):

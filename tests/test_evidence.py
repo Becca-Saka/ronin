@@ -8,7 +8,7 @@ class AuditorOwnershipTests(unittest.TestCase):
     """Which half of the loop owns which answer."""
 
     def test_the_planner_is_not_asked_for_verdicts(self):
-        """It used to grade the work it had just decided to do."""
+        """A planner grading the work it just chose is not a second opinion."""
         from ronin.testing.qa_planner import QAStepResponse
 
         fields = QAStepResponse.model_fields
@@ -146,9 +146,8 @@ class DurableOutcomeEvidenceTests(unittest.TestCase):
 class ContradictedExposureTests(unittest.TestCase):
     """The auditor reports rules and defects together, and they can disagree.
 
-    One recorded run passed every masking rule on the checkout screen, quoting
-    "only 'CVV:' is visible", and in the same answer called that label a
-    plain-text CVV. The scenario failed on the defect.
+    They can disagree about one screen: every masking rule passed, and the
+    same answer called a bare "CVV:" label a plain-text CVV.
     """
 
     def _issue(self, kind="sensitive_data_exposure", screen="Checkout Details"):

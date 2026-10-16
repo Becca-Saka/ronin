@@ -130,9 +130,8 @@ class ScreenWatch:
     scenario to stop. The parting look is what catches a value that appeared
     while the screen was being filled in, which is where a secret leaks.
 
-    The steps between are the same screen being worked. One recorded run paid
-    for 122 audits and reused none of them, because every keystroke moved the
-    fingerprint the cache was keyed on.
+    The steps between are the same screen being worked. A cache keyed on the
+    fingerprint reuses nothing there, because every keystroke moves it.
 
     A defect that appears and is gone again before the screen is left goes
     unseen. That is the trade: a transient is worth less than the six-fold
@@ -205,7 +204,11 @@ class QAAuditor:
 
     def __init__(self, llm_client: LLMClient, expected_outcomes, security_rules, scrubber=None):
         self._llm = llm_client
-        self._rules = rules.every_rule(expected_outcomes, security_rules)
+        # Outcomes keep the index they were given, so a verdict still names the
+        # rule it answers even though only some of them are asked about.
+        self._rules = rules.every_rule(
+            rules.on_screen_only(expected_outcomes), security_rules
+        )
         self._scrubber = scrubber
         self._by_screen: dict[str, Assessment] = {}
 
@@ -218,7 +221,7 @@ class QAAuditor:
         auditor exists to catch — a value appearing in a field that was empty.
 
         Expect few hits. Typing changes the fingerprint, so a form pays per
-        step. One recorded run of 122 audits reused nothing.
+        step.
         """
         if screen_id and screen_id in self._by_screen:
             logger.debug("Screen %s was audited already. Reusing it.", screen_id[:12])

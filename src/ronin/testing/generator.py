@@ -45,19 +45,30 @@ Generate a list of scenarios covering:
 6. **accessibility_audit**: Visible clipping, touch-target clarity, and text alternatives present in detected UI text.
 7. **performance_bottleneck**: Visible hangs, long-lived spinners, or unresponsive screens.
 
-Ronin can observe screenshots, detected UI text, action outcomes, and elapsed
-scenario time. It cannot inspect network traffic, HTTP headers, logs from the
-app, semantic accessibility trees, screen readers, focus order, or measured
-contrast ratios. Never generate an instruction or expected outcome that needs
-one of those unavailable evidence sources.
+Ronin can observe screenshots, detected UI text, and action outcomes. It cannot
+inspect network traffic, HTTP headers, logs from the app, semantic
+accessibility trees, screen readers, focus order, or measured contrast ratios.
+Never generate an instruction or expected outcome that needs one of those
+unavailable evidence sources.
+
+Every expected outcome carries the scope of evidence that settles it:
+- "current_screen" — true or false from one screenshot. Prefer this always.
+- "transition" — the run reached a screen, or moved between two.
+- "run_timing" — how fast the app was, or whether it stayed responsive.
+
+Nothing Ronin records measures timing, so a "run_timing" outcome cannot be
+settled and the scenario reports it as unproven. Write one only when the
+scenario is genuinely about speed, and give that scenario a "current_screen"
+outcome as well, so something about it can be decided.
 
 Generate at most {MAX_GENERATED_SCENARIOS} scenarios. Prefer a small suite with
 distinct evidence over several near-duplicates that repeat the full journey.
 
 ### How Scenarios Are Executed:
-Each scenario runs on its own, starting from a **freshly launched app** — the
-agent sees the app's first screen and nothing else. It has no memory of other
-scenarios and cannot resume from where another left off.
+Each scenario runs on its own. The app's data is cleared first, so it opens
+exactly as it would after a fresh install: no sign-in, no permissions, no saved
+data from any other scenario. The agent has no memory of other scenarios and
+cannot resume from where another left off.
 
 So every scenario's instructions MUST start at app launch and include the full
 navigation needed to reach the screen it cares about. A scenario about the
