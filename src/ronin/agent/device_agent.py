@@ -14,7 +14,7 @@ from typing import Callable, Literal, Optional
 import imagehash
 from PIL import Image
 
-from ronin.agent.actuation.actions import ActionType, Coordinates
+from ronin.agent.actuation.actions import ActionType
 from ronin.agent.actuation.orchestrator import ActionOrchestrator
 from ronin.agent.device.device_session import DeviceSession
 from ronin.agent.device.platform import Platform

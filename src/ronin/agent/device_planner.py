@@ -12,7 +12,6 @@ from pydantic import BaseModel, Field
 from ronin.agent.actuation.actions import (
     CAPABILITY_SCHEMAS,
     Action,
-    ActionType,
     CapabilityType,
     MarksAction,
 )

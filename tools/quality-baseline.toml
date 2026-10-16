@@ -1,0 +1,10 @@
+# Existing files above the normal 499-line ceiling. Values are maximum physical
+# line counts, not targets. Lower a value whenever the corresponding file gets
+# smaller, and do not add new entries.
+[oversized_files]
+"src/ronin/agent/device_agent.py" = 903
+"src/ronin/agent/device/device_control.py" = 511
+
+[complex_functions]
+"src/ronin/testing/runner.py:run_journey" = 23
+"src/ronin/utils/subprocess_runner.py:run_command" = 30

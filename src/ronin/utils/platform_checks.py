@@ -1,7 +1,6 @@
 import logging
 import platform
 import shutil
-import sys
 from pathlib import Path
 
 from ronin.utils.subprocess_runner import run_command

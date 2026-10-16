@@ -1,0 +1,23 @@
+# Files with recorded Pyright errors. Values are maximum error counts,
+# not targets. Lower a value whenever a file improves, delete the entry
+# when it reaches zero, and do not add new entries.
+[files]
+"src/ronin/agent/actuation/actions.py" = 7
+"src/ronin/agent/device/adb_control.py" = 2
+"src/ronin/agent/device/capability_controller.py" = 2
+"src/ronin/agent/device/device_control.py" = 12
+"src/ronin/agent/device/device_session.py" = 3
+"src/ronin/agent/device_agent.py" = 2
+"src/ronin/agent/device_planner.py" = 2
+"src/ronin/agent/launch.py" = 1
+"src/ronin/agent/perception/image_descriptor.py" = 2
+"src/ronin/agent/perception/perception.py" = 4
+"src/ronin/llm/credentials.py" = 1
+"src/ronin/llm/llm_client.py" = 6
+"src/ronin/setup/steps.py" = 4
+"src/ronin/testing/cli.py" = 1
+"src/ronin/testing/generator.py" = 1
+"src/ronin/testing/qa_agent.py" = 1
+"src/ronin/testing/qa_planner.py" = 3
+"src/ronin/testing/runner.py" = 4
+"src/ronin/utils/platform_checks.py" = 1

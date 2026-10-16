@@ -386,7 +386,6 @@ class ReplayTests(unittest.TestCase):
         )
 
     def _agent(self, ledger, phashes):
-        from ronin.agent.device_agent import DeviceAgent
 
         from ronin.utils.secrets import SecretScrubber
 

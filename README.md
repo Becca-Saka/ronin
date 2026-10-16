@@ -156,3 +156,23 @@ Configuration is resolved in this order: CLI flags, `RONIN_*` environment variab
 | `ronin run <goal>` | Drive an app toward a single goal |
 
 Run `uv run ronin <command> --help` for all options. Add `--log-level DEBUG` before the command for detailed logs.
+
+## Development
+
+Install the tooling, then run the checks that CI runs:
+
+```bash
+uv sync --group dev
+uv run pytest
+uv run ruff check
+uv run python tools/quality_gate.py
+uv run python tools/type_gate.py
+uv run coverage run -m pytest && uv run coverage report
+```
+
+`tools/quality_gate.py` enforces the complexity and file-size limits with no
+dependencies, and `tools/type_gate.py` runs Pyright and compares per-file error
+counts against its baseline. Existing debt is recorded in
+`tools/quality-baseline.toml`, `tools/type-baseline.toml`, and
+`[tool.ruff.lint.per-file-ignores]`. All three are ratchets: lower an entry when
+a file improves, and do not add new ones.

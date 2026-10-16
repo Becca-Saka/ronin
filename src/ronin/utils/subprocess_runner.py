@@ -130,7 +130,7 @@ def run_command(
 
         return result
 
-    except subprocess.TimeoutExpired as e:
+    except subprocess.TimeoutExpired:
         logger.error("Subprocess command timed out: %s", cmd_str)
         raise
     except Exception as e:

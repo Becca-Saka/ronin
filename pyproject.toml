@@ -41,3 +41,56 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ronin"]
+
+[dependency-groups]
+dev = [
+    "coverage>=7.16.2",
+    "pyright>=1.1.414",
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "SIM", "C90"]
+# The formatter owns code width. The lines still over the limit are prompt text
+# and model-facing field descriptions, which must not be rewrapped to suit it.
+ignore = ["E501"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 21  # The project requirement is strictly less than 22.
+
+# Recorded lint debt, read like tools/quality-baseline.toml: a ratchet.
+# Remove an entry when the file is fixed. Never add one to make a check pass.
+[tool.ruff.lint.per-file-ignores]
+"src/ronin/agent/device/adb_control.py" = ["B904"]
+"src/ronin/agent/device/capability_controller.py" = ["B904"]
+"src/ronin/agent/device_planner.py" = ["SIM108"]
+"src/ronin/agent/perception/image_descriptor.py" = ["B905"]
+"src/ronin/cli/devices.py" = ["B905"]
+"src/ronin/llm/llm_client.py" = ["SIM105"]
+"src/ronin/testing/qa_agent.py" = ["E402"]
+"src/ronin/testing/qa_planner.py" = ["SIM108"]
+"src/ronin/utils/subprocess_runner.py" = ["C901", "SIM108"]
+
+[tool.pyright]
+include = ["src/ronin"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["src/ronin"]
+
+[tool.coverage.report]
+show_missing = true
+# The measured baseline for the offline suite. Raise it as coverage improves;
+# it is a floor against regression, not a target.
+fail_under = 34

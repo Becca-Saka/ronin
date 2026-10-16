@@ -1,7 +1,5 @@
 import logging
 import os
-import subprocess
-import re
 from ronin.agent.device.platform import Platform
 from ronin.agent.actuation.actions import CapabilityType
 from ronin.utils.subprocess_runner import run_command

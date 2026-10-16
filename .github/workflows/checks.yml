@@ -1,0 +1,36 @@
+name: checks
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --group dev
+      - run: uv run ruff check
+      - run: uv run python tools/quality_gate.py
+      - run: uv run coverage run -m pytest
+      - run: uv run coverage report
+
+  types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # Pyright reads the perception module's deferred torch imports, so the
+      # vision extra has to resolve here even though no job runs a model.
+      - run: uv sync --group dev --extra vision
+      - run: uv run python tools/type_gate.py
