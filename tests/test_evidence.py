@@ -143,11 +143,13 @@ class DurableOutcomeEvidenceTests(unittest.TestCase):
         self.assertEqual(missing, [])
 
 
-class ContradictedExposureTests(unittest.TestCase):
-    """The auditor reports rules and defects together, and they can disagree.
+class ExposureEvidenceTests(unittest.TestCase):
+    """An exposure claim is weighed against a reading of the same screen.
 
-    They can disagree about one screen: every masking rule passed, and the
-    same answer called a bare "CVV:" label a plain-text CVV.
+    The auditor answers twice: in prose, where a bare "CVV:" caption can be
+    called a plain-text CVV, and as a reading of each sensitive field, where it
+    must choose between a legible value, a mask, a caption and nothing. The
+    reading is the evidence.
     """
 
     def _issue(self, kind="sensitive_data_exposure", screen="Checkout Details"):
@@ -161,58 +163,79 @@ class ContradictedExposureTests(unittest.TestCase):
         issue.current_screen = screen
         return issue
 
-    def _verification(self, status, screen="Checkout Details", rule_id="security:2"):
-        from ronin.testing.models import RuleVerification
+    def _finding(self, rendering, screen="Checkout Details"):
+        from ronin.testing.models import SensitiveFinding
 
-        verification = RuleVerification(
-            rule="The CVV must never be displayed in plain text",
-            rule_id=rule_id,
-            status=status,
-            applicable=True,
-            reasoning="only 'CVV:' is visible",
-        )
-        verification.screen_name = screen
-        return verification
+        finding = SensitiveFinding(field="CVV", rendering=rendering)
+        finding.screen_name = screen
+        return finding
 
-    def _verdict_for(self, issues, verifications):
-        from ronin.testing.qa_agent import _terminal_outcome
+    def _verdict_for(self, issues, findings):
+        from ronin.testing.verdicts import _terminal_outcome
 
         return _terminal_outcome(
             run_result=SimpleNamespace(status="goal_reached", failure_reason=None),
             stop_reason=None,
-            verifications=verifications,
+            verifications=[],
             issues=issues,
             outputs=[],
+            findings=findings,
         )
 
-    def test_an_exposure_claim_the_rules_deny_does_not_fail_the_scenario(self):
-        outcome = self._verdict_for([self._issue()], [self._verification("passed")])
+    def test_a_caption_is_not_an_exposure(self):
+        outcome = self._verdict_for([self._issue()], [self._finding("label_only")])
 
         self.assertIsNone(outcome)
 
-    def test_an_exposure_claim_the_rules_confirm_still_fails(self):
-        outcome = self._verdict_for([self._issue()], [self._verification("failed")])
+    def test_a_mask_is_not_an_exposure(self):
+        outcome = self._verdict_for([self._issue()], [self._finding("masked")])
+
+        self.assertIsNone(outcome)
+
+    def test_a_legible_value_is_an_exposure(self):
+        outcome = self._verdict_for([self._issue()], [self._finding("value")])
 
         self.assertEqual(outcome[0], "FAILED")
 
-    def test_an_exposure_claim_on_a_screen_with_no_rules_still_fails(self):
-        """Nothing checked it, so there is no verdict to weigh against."""
+    def test_a_claim_with_no_reading_behind_it_still_stands(self):
+        """Nothing was examined, so there is nothing to weigh against."""
         outcome = self._verdict_for([self._issue()], [])
 
         self.assertEqual(outcome[0], "FAILED")
 
-    def test_rules_from_another_screen_do_not_excuse_it(self):
+    def test_a_reading_of_another_screen_does_not_excuse_it(self):
         outcome = self._verdict_for(
             [self._issue(screen="Checkout Details")],
-            [self._verification("passed", screen="Login Screen")],
+            [self._finding("masked", screen="Login Screen")],
         )
 
         self.assertEqual(outcome[0], "FAILED")
 
-    def test_a_crash_is_never_excused_this_way(self):
-        """Only exposure claims are weighed against masking rules."""
+    def test_a_crash_is_never_weighed_this_way(self):
         outcome = self._verdict_for(
-            [self._issue(kind="crash_screen")], [self._verification("passed")]
+            [self._issue(kind="crash_screen")], [self._finding("masked")]
         )
 
         self.assertEqual(outcome[0], "FAILED")
+
+
+class RenderingTests(unittest.TestCase):
+    """Only one of the four readings is a leak."""
+
+    def test_which_readings_are_exposures(self):
+        from ronin.testing.models import Rendering, SensitiveFinding
+
+        leaks = {
+            rendering: SensitiveFinding(field="CVV", rendering=rendering).is_exposure()
+            for rendering in Rendering
+        }
+
+        self.assertEqual(
+            leaks,
+            {
+                Rendering.VALUE: True,
+                Rendering.MASKED: False,
+                Rendering.LABEL_ONLY: False,
+                Rendering.ABSENT: False,
+            },
+        )

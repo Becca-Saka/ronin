@@ -30,12 +30,12 @@ from ronin.testing.models import (
     QAIssue,
     RuleVerification,
     ScenarioReport,
+    SensitiveFinding,
 )
 from ronin.testing.capabilities import unsupported_reason
 from ronin.agent.device_planner import GROUNDING_COORDINATES
 from ronin.testing import rules
 from ronin.testing.verdicts import (
-    _contradicted,  # noqa: F401
     _missing_required_ids,
     _terminal_outcome,
 )
@@ -296,6 +296,7 @@ class QAAgent:
     ) -> ScenarioReport:
         all_verifications: List[RuleVerification] = []
         all_issues: List[QAIssue] = []
+        all_findings: List[SensitiveFinding] = []
 
         scrub = self._device_agent.scrubber.scrub
 
@@ -308,6 +309,11 @@ class QAAgent:
                 verify.rule = scrub(verify.rule)
                 verify.reasoning = scrub(verify.reasoning)
                 all_verifications.append(verify)
+
+            for finding in assessment.sensitive_findings:
+                finding.screen_name = assessment.screen_name
+                finding.quoted = scrub(finding.quoted)
+                all_findings.append(finding)
 
             for issue in assessment.detected_issues:
                 issue.current_screen = assessment.screen_name
@@ -352,11 +358,17 @@ class QAAgent:
         assessments: List[Assessment],
         required_outcomes: List[str],
         security_rules: List[str],
+        all_findings: Optional[List[SensitiveFinding]] = None,
     ):
         # Feasibility stays the planner's call: it is a statement about whether
         # the agent can proceed, not about whether the app is correct.
         terminal = _terminal_outcome(
-            run_result, stop_reason, all_verifications, all_issues, qa_outputs
+            run_result,
+            stop_reason,
+            all_verifications,
+            all_issues,
+            qa_outputs,
+            all_findings,
         )
         if terminal:
             return terminal

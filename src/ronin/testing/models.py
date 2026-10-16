@@ -106,6 +106,54 @@ class BoundingBox(BaseModel):
     y_max: int
 
 
+class Rendering(str, Enum):
+    """How a sensitive value appears on screen.
+
+    An exposure claim is only as good as what was seen. Asked for a sentence,
+    a model can call a bare "CVV:" label a plain-text CVV and pass the rule
+    forbidding one in the same answer. Asked which of these it saw, it has to
+    pick, and the three are not confusable.
+    """
+
+    VALUE = "value"
+    """The real characters are legible. This is the exposure."""
+
+    MASKED = "masked"
+    """Dots, asterisks or bullets stand in for the characters."""
+
+    LABEL_ONLY = "label_only"
+    """A caption such as "CVV:" with no value beside it."""
+
+    ABSENT = "absent"
+    """Nothing of the kind is on this screen."""
+
+
+class SensitiveFinding(BaseModel):
+    """What was seen where a sensitive value could be, and what it looked like."""
+
+    field: str = Field(..., description="What the value is, e.g. 'CVV' or 'card number'.")
+    rendering: Rendering = Field(
+        ...,
+        description=(
+            "Exactly what is on screen. 'value' only when the real characters "
+            "are legible. A caption with nothing beside it is 'label_only'. "
+            "Dots or bullets are 'masked'."
+        ),
+    )
+    quoted: str = Field(
+        default="",
+        description="The characters on screen, copied exactly. Empty unless rendering is 'value'.",
+    )
+    screen_name: Optional[str] = Field(
+        default=None,
+        description="Filled in by Ronin, not by the model, from the screen audited.",
+    )
+
+    def is_exposure(self) -> bool:
+        """Whether this is a leak, decided by the rendering rather than by prose."""
+        return self.rendering is Rendering.VALUE
+
+
 class QAIssue(BaseModel):
     """Represents a visual, security, or logical issue found during testing."""
     issue_type: str = Field(

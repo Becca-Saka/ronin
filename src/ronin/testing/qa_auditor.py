@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field, model_validator
 from ronin.llm.llm_client import LLMClient
 from ronin.llm.messages import MultiPartMessage
 from ronin.testing import rules
-from ronin.testing.models import QAIssue, RuleVerification
+from ronin.testing.models import QAIssue, RuleVerification, SensitiveFinding
 from functools import partial
 
 from ronin.utils.redactor import safe_text
@@ -45,6 +45,13 @@ class Assessment(BaseModel):
     detected_issues: List[QAIssue] = Field(
         default_factory=list,
         description="Visual defects visible on this screen.",
+    )
+    sensitive_findings: List[SensitiveFinding] = Field(
+        default_factory=list,
+        description=(
+            "One entry for each place a password, card number, CVV or similar "
+            "value could appear on this screen, saying what is actually there."
+        ),
     )
 
     @model_validator(mode="before")
@@ -107,8 +114,17 @@ only what this screen shows.
      pixels in front of you.
    - `reasoning`: what you saw, not what you infer.
 3. `detected_issues`: visual defects on this screen — clipped or overlapping
-   text, layout overflow stripes, a blank or crashed screen, or sensitive data
-   shown in plain text. Each needs a `severity`.
+   text, layout overflow stripes, or a blank or crashed screen. Each needs a
+   `severity`.
+4. `sensitive_findings`: one entry for every place a password, card number,
+   CVV or similar value could be on this screen. Say what is there, not what
+   could be there:
+   - "value" only when you can read the real characters. Copy them into
+     `quoted`.
+   - "masked" when dots, bullets or asterisks stand in for them.
+   - "label_only" when there is a caption such as "CVV:" and nothing beside it.
+   - "absent" when the screen holds no such field at all.
+   A caption is not a value. An empty field is not a value.
 """
 
 

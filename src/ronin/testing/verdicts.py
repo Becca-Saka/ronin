@@ -23,6 +23,7 @@ def _terminal_outcome(
     verifications: List[RuleVerification],
     issues: List[QAIssue],
     outputs: List[QAStepResponse],
+    findings: Optional[List] = None,
 ):
     """Classify outcomes that cannot become a successful verification."""
 
@@ -41,7 +42,8 @@ def _terminal_outcome(
         (
             issue
             for issue in issues
-            if issue.severity == "critical" and not _contradicted(issue, verifications)
+            if issue.severity == "critical"
+            and not _unsupported_exposure(issue, findings)
         ),
         None,
     )
@@ -68,32 +70,21 @@ def _terminal_outcome(
 EXPOSURE = "sensitive_data_exposure"
 
 
-def _contradicted(issue, verifications: List[RuleVerification]) -> bool:
-    """Whether the auditor's own verdicts disagree with this issue.
+def _unsupported_exposure(issue, findings) -> bool:
+    """Whether an exposure claim has no reading of the screen behind it.
 
-    It reports rules and defects in one answer, and the two can disagree about
-    one screen. One recorded run passed every masking rule on the checkout
-    screen, quoting "only 'CVV:' is visible", and in the same answer called
-    that label a plain-text CVV. The scenario failed on the defect.
+    The auditor answers twice about a screen: in prose, where it may call a
+    bare "CVV:" caption a plain-text CVV, and as a reading of each sensitive
+    field, where it must choose between a legible value, a mask, a caption and
+    nothing. The reading is the evidence. A claim the reading does not support
+    is reported and does not fail the scenario.
 
-    Rules name what to look for, and a defect is whatever the model decides to
-    mention, so the rules are the better evidence. Where every masking rule
-    that could apply to a screen passed, an exposure claim about that screen is
-    not grounds to fail the scenario. It is still reported.
+    With no reading at all there is nothing to weigh, so the claim stands.
     """
     if issue.issue_type != EXPOSURE:
         return False
-
-    here = [
-        verification
-        for verification in verifications
-        if verification.screen_name == issue.current_screen
-        and verification.applicable
-        and rules.is_kind(verification.rule_id or "", rules.SECURITY)
-    ]
-    return bool(here) and all(
-        verification.status == "passed" for verification in here
-    )
+    here = [finding for finding in (findings or []) if finding.screen_name == issue.current_screen]
+    return bool(here) and not any(finding.is_exposure() for finding in here)
 
 
 def _last_applicable(verifications: List[RuleVerification]) -> dict:
