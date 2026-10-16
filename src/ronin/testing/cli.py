@@ -56,6 +56,13 @@ class RoninCLI:
             "detected set before anything is executed",
         )
         parser.add_argument(
+            "--reuse-app",
+            action="store_true",
+            help="Skip reinstalling the app, using whatever build is on the device. "
+            "Only correct when that build is the one under test: a rebuilt debug APK "
+            "keeps its version, so a stale one is used without warning",
+        )
+        parser.add_argument(
             "--replay",
             action="store_true",
             help="Re-execute navigation already worked out in an earlier scenario instead of "
@@ -254,6 +261,7 @@ class RoninCLI:
             fast_model=setting("fast_model", args.fast_model),
             record_session=record_val,
             replay=bool(args.replay),
+            reuse_app=bool(args.reuse_app),
             grounding=setting("grounding", args.grounding) or GROUNDING_COORDINATES,
         )
 

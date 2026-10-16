@@ -80,6 +80,7 @@ class RoninTestRunner:
         assets_dir: Path = Path("assets"),
         max_steps: int = 40,
         replay: bool = False,
+        reuse_app: bool = False,
         settle_time: float = 2.0,
         use_multimodal_vision: bool = False,
         headless: bool = True,
@@ -88,6 +89,7 @@ class RoninTestRunner:
         grounding: str = GROUNDING_COORDINATES,
     ):
         self.grounding = grounding
+        self.reuse_app = reuse_app
         self.platform = platform
         self.device_name = device_name
         self.app_path = app_path
@@ -122,6 +124,7 @@ class RoninTestRunner:
             platform=self.platform,
             record_session=self.record_session,
             session_dir=self.assets_dir,
+            reuse_app=self.reuse_app,
         )
 
         agent = QAAgent(
@@ -227,6 +230,7 @@ class RoninTestRunner:
                         record_session=self.record_session,
                         session_dir=self.assets_dir,
                         session_id=session.session_id,
+                        reuse_app=self.reuse_app,
                     )
                     logger.info(
                         "Starting a new driver connection for session %s...",

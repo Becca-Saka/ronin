@@ -129,3 +129,36 @@ class ConfigFileTests(unittest.TestCase):
             settings = read_file(path)
 
         self.assertEqual(settings, {"platform": "ios", "max_steps": 7})
+
+
+class ReuseAppFlagTests(unittest.TestCase):
+    """Skipping the reinstall, which only `ronin run` could do before."""
+
+    def _runner_kwargs(self, argv):
+        from ronin.testing.cli import RoninCLI
+        from ronin.testing.models import JourneyReport
+
+        cli = RoninCLI()
+        report = JourneyReport(
+            journey_id="j", journey_name="J", description="d", status="PASSED"
+        )
+        with (
+            patch.object(
+                RoninCLI,
+                "load_journeys",
+                return_value=[SimpleNamespace(id="j", name="J")],
+            ),
+            patch.object(RoninCLI, "_resolve_journey_file", return_value=Path("j.yaml")),
+            patch("ronin.testing.cli.resolve_app_path", return_value=Path("app.apk")),
+            patch("ronin.testing.cli.RoninTestRunner") as runner_class,
+        ):
+            runner_class.return_value.run_journey.return_value = report
+            cli.run(argv)
+        return runner_class.call_args.kwargs
+
+    def test_the_app_is_reinstalled_by_default(self):
+        """A stale build would be tested silently, so this is opt-in."""
+        self.assertFalse(self._runner_kwargs(["j.yaml"])["reuse_app"])
+
+    def test_the_flag_reaches_the_runner(self):
+        self.assertTrue(self._runner_kwargs(["j.yaml", "--reuse-app"])["reuse_app"])
