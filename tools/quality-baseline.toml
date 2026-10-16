@@ -1,9 +1,7 @@
-# Existing files above the normal 499-line ceiling. Values are maximum physical
-# line counts, not targets. Lower a value whenever the corresponding file gets
-# smaller, and do not add new entries.
+# Recorded exceptions to the complexity and file-size limits. There are none:
+# every file is under 499 lines and every function under complexity 22. Add an
+# entry only to record debt you are deliberately deferring, never to make a
+# check pass, and delete it when the file or function is fixed.
 [oversized_files]
-"src/ronin/agent/device_agent.py" = 903
-"src/ronin/agent/device/device_control.py" = 511
 
 [complex_functions]
-"src/ronin/testing/runner.py:run_journey" = 23

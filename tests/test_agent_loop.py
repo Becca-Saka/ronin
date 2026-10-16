@@ -4,44 +4,40 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from ronin.agent import observation, outcomes
 from ronin.agent.device_agent import (
     AgentHistory,
-    DeviceAgent,
     RollingLoopDetector,
     _RunContext,
 )
 
 
 class SettleTests(unittest.TestCase):
-    def _agent(self, hashes):
-        agent = DeviceAgent.__new__(DeviceAgent)
-        agent.settle_time = 2.0
-        agent._quick_phash = Mock(side_effect=hashes)
-        return agent
+    """Waiting only as long as the screen keeps changing."""
 
-    @patch("ronin.agent.device_agent.time.sleep")
+    @patch("ronin.agent.observation.time.sleep")
     def test_settle_returns_as_soon_as_the_screen_repeats(self, _sleep):
-        agent = self._agent(["a", "a", "should-not-be-read"])
+        reads = Mock(side_effect=["a", "a", "should-not-be-read"])
 
-        self.assertEqual(agent._settle(object()), "a")
-        self.assertEqual(agent._quick_phash.call_count, 2)
+        with patch("ronin.agent.observation.quick_phash", reads):
+            settled = observation.settle(object(), settle_time=2.0)
 
-    @patch("ronin.agent.device_agent.time.sleep")
+        self.assertEqual(settled, "a")
+        self.assertEqual(reads.call_count, 2)
+
+    @patch("ronin.agent.observation.time.sleep")
     def test_settle_gives_up_at_the_settle_budget(self, _sleep):
-        agent = self._agent(["a", "b", "c", "d", "e", "f", "g"])
+        reads = Mock(side_effect=["a", "b", "c", "d", "e", "f", "g"])
 
-        agent._settle(object())
+        with patch("ronin.agent.observation.quick_phash", reads):
+            observation.settle(object(), settle_time=2.0)
 
         # settle_time 2.0 / 0.35 poll = 5 polls after the first reading
-        self.assertEqual(agent._quick_phash.call_count, 6)
+        self.assertEqual(reads.call_count, 6)
 
 
 class EarlyStopTests(unittest.TestCase):
-    def _agent(self, stop_when_satisfied):
-        agent = DeviceAgent.__new__(DeviceAgent)
-        agent.stop_when_satisfied = stop_when_satisfied
-        agent._flush_trail = Mock()
-        return agent
+    """A goal already met ends a single run, but never a journey's scenario."""
 
     def _response(self, **kwargs):
         return SimpleNamespace(action=SimpleNamespace(type="tap"), **kwargs)
@@ -52,19 +48,19 @@ class EarlyStopTests(unittest.TestCase):
         )
 
     def test_stops_when_the_goal_is_already_visible(self):
-        agent = self._agent(True)
         response = self._response(goal_satisfied=True, goal_evidence="restaurant list shown")
 
-        result = agent._check_done_action(response, None, "phash", self._context())
+        result = outcomes.goal_reached(True, response, None, "phash", self._context())
 
         self.assertIsNotNone(result)
         self.assertEqual(result.status, "goal_reached")
 
     def test_keeps_going_for_journeys(self):
-        agent = self._agent(False)
         response = self._response(goal_satisfied=True, goal_evidence="restaurant list shown")
 
-        self.assertIsNone(agent._check_done_action(response, None, "phash", self._context()))
+        self.assertIsNone(
+            outcomes.goal_reached(False, response, None, "phash", self._context())
+        )
 
 
 class ReplayTests(unittest.TestCase):
@@ -150,7 +146,7 @@ class ReplayTests(unittest.TestCase):
 
     @patch("ronin.agent.replay.ActionOrchestrator")
     def test_gestures_are_never_replayed(self, orchestrator):
-        """Destructive scenarios are built from gestures; they must not be inherited."""
+        """Destructive scenarios are built from gestures, which must not carry over."""
         from ronin.agent.actuation.actions import ActionType, Coordinates, LongPressAction
         from ronin.agent.replay import ReplayLedger
 

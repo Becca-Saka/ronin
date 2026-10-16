@@ -57,6 +57,13 @@ def is_session_responsive(device_control) -> bool:
         return False
 
 
+def tally(reports: List[ScenarioReport]) -> tuple[int, int, int]:
+    """Passed, failed and skipped, where anything else that ran counts as failed."""
+    passed = sum(1 for report in reports if report.status == "PASSED")
+    skipped = sum(1 for report in reports if report.status == "SKIPPED")
+    return passed, len(reports) - passed - skipped, skipped
+
+
 def aggregate_journey_status(passed_count: int, failed_count: int) -> str:
     """A suite passes only when at least one scenario has verified evidence."""
     return "PASSED" if passed_count > 0 and failed_count == 0 else "FAILED"
@@ -150,9 +157,6 @@ class RoninTestRunner:
         scenarios = []
         scenario_reports: List[ScenarioReport] = []
         progress = None
-        passed_count = 0
-        failed_count = 0
-        skipped_count = 0
         artifact_scrubber = SecretScrubber()
         artifact_scrubber.learn_secrets(journey.secrets)
         device_agent.scrubber.learn_secrets(journey.secrets)
@@ -247,18 +251,10 @@ class RoninTestRunner:
                 progress.record(scenario.test_id, scen_report)
 
                 scenario_reports.append(scen_report)
-                if scen_report.status == "PASSED":
-                    passed_count += 1
-                elif scen_report.status == "SKIPPED":
-                    skipped_count += 1
-                else:
-                    failed_count += 1
                 self._save_checkpoint(
                     journey,
                     scenario_reports,
-                    passed_count,
-                    failed_count,
-                    skipped_count,
+                    *tally(scenario_reports),
                     start_time,
                     session,
                     artifact_scrubber,
@@ -271,7 +267,7 @@ class RoninTestRunner:
             )
             if progress is not None:
                 progress.abort(f"Aborted due to run failure/interrupt: {safe_error}")
-            failed_count += self._record_aborted(scenarios, scenario_reports, e)
+            self._record_aborted(scenarios, scenario_reports, e)
             if isinstance(e, KeyboardInterrupt):
                 raise e
         finally:
@@ -294,7 +290,6 @@ class RoninTestRunner:
                         failure_reason=f"Failed to serialize LLM usage: {usage_err}",
                     )
                 )
-                failed_count += 1
 
             # persist reports even on Ctrl+C or mid-run crash
             duration = time.time() - start_time
@@ -303,6 +298,7 @@ class RoninTestRunner:
             )
             for rule in unevidenced:
                 logger.warning("No scenario evidenced security rule: %s", rule)
+            passed_count, failed_count, skipped_count = tally(scenario_reports)
             journey_status = aggregate_journey_status(passed_count, failed_count)
             report = JourneyReport(
                 journey_id=journey.id,
@@ -358,9 +354,9 @@ class RoninTestRunner:
     ) -> int:
         """Records a failure for everything that never produced a result.
 
-        A run that dies before any scenario exists — generation returning
-        nothing, for instance — would otherwise report zero tests and zero
-        failures, which CI reads as a pass.
+        A run can die before any scenario exists, if generation returns
+        nothing. It would otherwise report zero tests and zero failures, which
+        CI reads as a pass.
         """
         error_text = str(error) or type(error).__name__
         reason = f"Aborted due to run failure/interrupt: {error_text}"

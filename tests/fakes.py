@@ -9,7 +9,7 @@ import io
 
 from PIL import Image
 
-from ronin.agent.device_agent import _PerceptionSnapshot
+from ronin.agent.observation import PerceptionSnapshot
 from ronin.agent.perception.elements import BoundingBox, GUIElement
 from ronin.agent.perception.marks import Mark
 
@@ -47,10 +47,10 @@ def numbered(*elements: GUIElement) -> list[Mark]:
     return [Mark(index=index, element=item) for index, item in enumerate(elements, 1)]
 
 
-def snapshot(marks=(), gui_elements=(), png=None, phash="p") -> _PerceptionSnapshot:
+def snapshot(marks=(), gui_elements=(), png=None, phash="p") -> PerceptionSnapshot:
     """What perception hands the step loop."""
     screen = solid_png() if png is None else png
-    return _PerceptionSnapshot(
+    return PerceptionSnapshot(
         gui_elements=list(gui_elements),
         marks=list(marks),
         raw_img_bytes=screen,

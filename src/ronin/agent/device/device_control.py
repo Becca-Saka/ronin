@@ -17,14 +17,13 @@ from selenium.webdriver.common.actions.action_builder import ActionBuilder
 from selenium.webdriver.common.actions.pointer_input import PointerInput
 
 from ronin.agent.device.adb_control import AdbControl
+from ronin.agent.device import focus
 from ronin.agent.device.diagnostics import diagnose_avd_launch
 from ronin.agent.device.platform import Platform
 from ronin.defaults import (
     AVD_LAUNCH_TIMEOUT_MS,
-    FOCUS_POLL_INTERVAL,
-    FOCUS_POLL_TIMEOUT,
 )
-from ronin.errors import ActionRejected, DeviceUnavailable, ObservationUnavailable
+from ronin.errors import DeviceUnavailable, ObservationUnavailable
 from ronin.utils.subprocess_runner import run_command
 
 logger = logging.getLogger(__name__)
@@ -166,6 +165,9 @@ class DeviceControl:
             self.serial,
         )
 
+    def _screen_area(self) -> int:
+        return getattr(self, "screen_width", 0) * getattr(self, "screen_height", 0)
+
     def get_screenshot(self):
         """The screen as PNG bytes, or ObservationUnavailable if unreadable.
 
@@ -193,86 +195,9 @@ class DeviceControl:
         else:
             self.driver.tap([(x, y)])
 
-    def _focused_element(self):
-        try:
-            return self.driver.switch_to.active_element
-        except Exception as exc:
-            logger.debug("Could not read the focused element: %s", exc)
-            return None
 
-    def _assert_focus_at(self, x, y, action: str) -> None:
-        """Raises unless focus is on the element at (x, y).
 
-        Text goes to whatever holds focus, so a tap that misses — because the
-        keyboard shifted the layout, or the coordinates are stale — would
-        otherwise write into the previously focused field without any sign.
 
-        Focus merely *changing* is not evidence the right field was hit: any
-        text field opens the keyboard, so a tap landing on the wrong one looks
-        identical to the layout reflowing. The planner re-reads the screen and
-        tries again, which costs a step and cannot type into the wrong field.
-        """
-        element = self._focused_element()
-        if element is None:
-            return
-        try:
-            rect = element.rect
-        except Exception as exc:
-            logger.debug("Could not read focused element bounds: %s", exc)
-            return
-
-        width, height = rect.get("width", 0), rect.get("height", 0)
-        logger.debug("Focused element after tap: %s at %s", element.id, rect)
-
-        screen_area = getattr(self, "screen_width", 0) * getattr(self, "screen_height", 0)
-        if screen_area and width * height >= 0.8 * screen_area:
-            # A single full-screen surface (Flutter, WebView) tells us nothing.
-            logger.debug("Focused element covers the screen; skipping the focus check.")
-            return
-
-        inside = (
-            rect.get("x", 0) <= x <= rect.get("x", 0) + width
-            and rect.get("y", 0) <= y <= rect.get("y", 0) + height
-        )
-        if not inside:
-            raise ActionRejected(
-                f"{action} at ({x}, {y}) did not focus anything there — focus is on the "
-                f"element at x={rect.get('x')},y={rect.get('y')} "
-                f"({width}x{height}). Nothing was entered. The layout has probably moved "
-                "since these coordinates were read; re-check the field's current position."
-            )
-
-    def _focus_contains(self, x, y) -> bool:
-        """Whether the active element contains the requested coordinates.
-
-        A focused element covering the screen (Flutter, WebView) answers for
-        every point, so it cannot stand in for a real field.
-        """
-        element = self._focused_element()
-        if element is None:
-            return False
-        try:
-            rect = element.rect
-        except Exception as exc:
-            logger.debug("Could not read focused element bounds: %s", exc)
-            return False
-
-        width, height = rect.get("width", 0), rect.get("height", 0)
-        screen_area = getattr(self, "screen_width", 0) * getattr(self, "screen_height", 0)
-        if screen_area and width * height >= 0.8 * screen_area:
-            return False
-
-        return (
-            rect.get("x", 0) <= x <= rect.get("x", 0) + width
-            and rect.get("y", 0) <= y <= rect.get("y", 0) + height
-        )
-
-    def _await_focus(self, x, y) -> None:
-        """Polls until focus lands on (x, y), instead of sleeping a flat second."""
-        for _ in range(max(1, int(FOCUS_POLL_TIMEOUT / FOCUS_POLL_INTERVAL))):
-            if self._focus_contains(x, y):
-                return
-            time.sleep(FOCUS_POLL_INTERVAL)
 
     def type(self, text, x, y):
         if self.platform == Platform.IOS:
@@ -283,18 +208,18 @@ class DeviceControl:
             # The planner focuses a field in the preceding step. Avoid tapping it
             # again after the keyboard has reflowed the layout when it is already
             # the active element at the current coordinates.
-            if not self._focus_contains(x, y):
+            if not focus.contains(self.driver, self._screen_area(), x, y):
                 self.tap(x, y)
-                self._await_focus(x, y)
-            self._assert_focus_at(x, y, "TYPE")
+                focus.await_focus(self.driver, self._screen_area(), x, y)
+            focus.assert_at(self.driver, self._screen_area(), x, y, "TYPE")
             self.driver.switch_to.active_element.send_keys(text)
 
     def clear(self, x, y):
         try:
             self.tap(x, y)
-            self._await_focus(x, y)
+            focus.await_focus(self.driver, self._screen_area(), x, y)
             if self.platform != Platform.IOS:
-                self._assert_focus_at(x, y, "CLEAR")
+                focus.assert_at(self.driver, self._screen_area(), x, y, "CLEAR")
             if self.platform == Platform.IOS:
                 self.driver.switch_to.active_element.clear()
             else:
