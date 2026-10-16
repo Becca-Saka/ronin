@@ -84,7 +84,6 @@ max-complexity = 21  # The project requirement is strictly less than 22.
 "src/ronin/testing/qa_agent.py" = ["E402"]
 "src/ronin/testing/qa_planner.py" = ["SIM108"]
 "src/ronin/testing/runner.py" = ["BLE001"]
-"test_latency.py" = ["BLE001"]
 
 [tool.pyright]
 include = ["src/ronin"]

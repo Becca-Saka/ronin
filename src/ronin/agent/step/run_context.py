@@ -20,7 +20,6 @@ from ronin.agent.step.stall import Stall
 class RunContext:
     history: AgentHistory
     loop_detector: RollingLoopDetector
-    visual_history: list[bytes] = field(default_factory=list)
     prev_phash: Optional[str] = None
     last_external_nav: bool = False
     drift_warning: Optional[str] = None

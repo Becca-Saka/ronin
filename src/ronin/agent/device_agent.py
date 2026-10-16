@@ -72,7 +72,6 @@ class DeviceAgent:
         max_steps: int = 40,
         settle_time: float = 2.0,
         use_multimodal_vision: bool = False,
-        visual_history_limit: int = 3,
         headless: bool = True,
         fast_model: str = None,
         planner: Optional[DevicePlanner] = None,
@@ -88,7 +87,6 @@ class DeviceAgent:
         self.assets_dir = assets_dir
         self.max_steps = max_steps
         self.settle_time = settle_time
-        self.visual_history_limit = visual_history_limit
         self.headless = headless
         self.use_multimodal_vision = use_multimodal_vision
         self.grounding = grounding
@@ -395,7 +393,6 @@ class DeviceAgent:
             current_image_bytes=snapshot.planner_img_bytes,
             marks=snapshot.marks,
             screen_height=ctx.screen_height or 0,
-            visual_history=list(ctx.visual_history),
             keyboard_open=ctx.keyboard_open,
         )
 
@@ -489,9 +486,6 @@ class DeviceAgent:
         if session_trail:
             session_trail.record_action(action_desc)
 
-        ctx.visual_history.append(snapshot.raw_img_bytes)
-        if len(ctx.visual_history) > self.visual_history_limit:
-            ctx.visual_history.pop(0)
 
         ctx.last_action_type = getattr(action, "type", None)
         return last_external_nav

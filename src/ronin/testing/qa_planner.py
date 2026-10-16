@@ -95,7 +95,6 @@ class QAPlanner(DevicePlanner):
         drift_warning: Optional[str] = None,
         loop_nudge: Optional[str] = None,
         current_image_bytes: bytes = b"",
-        visual_history: List[bytes] = None,
         keyboard_open: Optional[bool] = None,
         marks: Optional[list] = None,
         screen_height: int = 0,
@@ -123,11 +122,6 @@ class QAPlanner(DevicePlanner):
         )
 
         message = MultiPartMessage()
-        # EXPERIMENT: visual history disabled — testing whether stale screenshot coordinates
-        # cause LLM hallucination. Rich REACTION lines in action history replace visual context.
-        # for idx, img_bytes in enumerate(visual_history or []):
-        #     message.add_text(f"Screenshot from step {idx + 1}:")
-        #     message.add_image(img_bytes)
         message.add_text("Current screenshot (newest):")
         message.add_image(current_image_bytes)
         message.add_text(prompt)
