@@ -302,36 +302,20 @@ def _region(element, height: int) -> str:
     return "lower"
 
 
-DETAIL_TEXT = "text"
-DETAIL_NUMBERS = "numbers"
-DETAIL_NONE = "none"
-
-
-def describe(marks: List[Mark], height: int, detail: str = DETAIL_NUMBERS) -> str:
+def describe(marks: List[Mark], height: int) -> str:
     """The list offered to the planner alongside the numbered screenshot.
 
-    Never coordinates, which is the point. A coordinate in the prompt is one
+    Each line carries a number and a coarse vertical region, which is what the
+    keyboard rules need. Never coordinates: a coordinate in the prompt is one
     the model can echo back, and an echoed coordinate cannot be told from a
-    guessed one. Vertical position survives as a coarse region, which is all
-    the keyboard rules need.
+    guessed one.
 
-    The detected text is off by default. The model already sees the screen the
-    words are printed on, and our OCR reads English only. A confident wrong
-    label is worse than no label, because it gets reasoned about. The numbers
-    are still listed, because they bound what the model may answer.
+    Never the detected text either. The model already sees the screen the words
+    are printed on, and our OCR reads English only, so a label here can be
+    confidently wrong in a way the screenshot is not. The numbers are listed
+    because the planner may answer only with a number from this list.
     """
-    if detail == DETAIL_NONE:
-        return ""
-
-    lines = []
-    for mark in marks:
-        parts = [f"{mark.index}"]
-        if detail == DETAIL_TEXT:
-            parts.append(mark.element.element)
-            if mark.element.text:
-                parts.append(f"'{mark.element.text}'")
-        parts.append(_region(mark.element, height))
-        lines.append(" | ".join(parts))
+    lines = [f"{mark.index} | {_region(mark.element, height)}" for mark in marks]
     return "\n".join(lines) or "None detected."
 
 

@@ -7,7 +7,6 @@ from typing import Any, List, Optional
 
 from ronin.agent.device.platform import Platform
 from ronin.agent.device_planner import GROUNDING_COORDINATES, GROUNDING_MARKS
-from ronin.agent.perception.marks import DETAIL_NONE, DETAIL_NUMBERS, DETAIL_TEXT
 from ronin.app_discovery import find_journey_files, resolve_app_path
 from ronin.config import SETTINGS, Config, load_config
 from ronin.errors import UsageError
@@ -55,13 +54,6 @@ class RoninCLI:
             "'marks', where every detected element is numbered on the screenshot "
             "and the planner selects a number, which Ronin validates against the "
             "detected set before anything is executed",
-        )
-        parser.add_argument(
-            "--mark-detail",
-            choices=[DETAIL_NUMBERS, DETAIL_TEXT, DETAIL_NONE],
-            help="What accompanies the numbered screenshot in marks mode: "
-            "'numbers' (default) lists the valid numbers only, 'text' adds the "
-            "detected text, 'none' sends the picture alone",
         )
         parser.add_argument(
             "--replay",
@@ -228,8 +220,8 @@ class RoninCLI:
             for key in journey_keys or (name,):
                 if key in device_cfg:
                     return device_cfg[key]
-            # grounding and mark_detail are flags and journey keys only, so the
-            # caller supplies the default rather than ronin.config.
+            # grounding is a flag and a journey key only, so the caller
+            # supplies the default rather than ronin.config.
             return self.config.get(name) if name in SETTINGS else None
 
         platform_str = setting("platform", args.platform)
@@ -263,7 +255,6 @@ class RoninCLI:
             record_session=record_val,
             replay=bool(args.replay),
             grounding=setting("grounding", args.grounding) or GROUNDING_COORDINATES,
-            mark_detail=setting("mark_detail", args.mark_detail) or DETAIL_NUMBERS,
         )
 
         logger.info("==================================================")

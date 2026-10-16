@@ -10,7 +10,6 @@ from ronin.agent.device.platform import Platform
 from ronin.agent.perception.image_descriptor import YOLO_REPO_ID, YOLO_REVISION
 from ronin.agent.perception.perception import ScreenPerception
 from ronin.agent.device_planner import GROUNDING_COORDINATES
-from ronin.agent.perception.marks import DETAIL_NUMBERS
 from ronin.agent.replay import ReplayLedger
 from ronin.errors import ArtifactWriteFailed
 from .coverage import unevidenced_security_rules
@@ -87,10 +86,8 @@ class RoninTestRunner:
         fast_model: str = None,
         record_session: bool = True,
         grounding: str = GROUNDING_COORDINATES,
-        mark_detail: str = DETAIL_NUMBERS,
     ):
         self.grounding = grounding
-        self.mark_detail = mark_detail
         self.platform = platform
         self.device_name = device_name
         self.app_path = app_path
@@ -140,7 +137,6 @@ class RoninTestRunner:
             fast_model=self.fast_model,
             replay_ledger=ReplayLedger() if self.replay else None,
             grounding=self.grounding,
-            mark_detail=self.mark_detail,
         )
 
         artifact_scrubber = SecretScrubber()

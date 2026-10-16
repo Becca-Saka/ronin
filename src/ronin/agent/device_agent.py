@@ -32,7 +32,6 @@ from ronin.agent.replay import ReplayLedger, replay_known_path, target_label
 from ronin.agent.step import targeting
 from ronin.utils.secrets import SecretScrubber
 from ronin.agent.perception import marks
-from ronin.agent.perception.marks import DETAIL_NUMBERS
 from ronin.agent.perception.media_manager import MediaManager
 from ronin.agent.perception.perception import ScreenPerception
 from ronin.agent.trail import SessionTrail
@@ -96,7 +95,6 @@ class DeviceAgent:
         reuse_app: bool = False,
         replay_ledger: Optional[ReplayLedger] = None,
         grounding: str = GROUNDING_COORDINATES,
-        mark_detail: str = DETAIL_NUMBERS,
     ):
         self.device_name = device_name
         self.app_path = app_path
@@ -108,7 +106,6 @@ class DeviceAgent:
         self.headless = headless
         self.use_multimodal_vision = use_multimodal_vision
         self.grounding = grounding
-        self.mark_detail = mark_detail
         self.stop_when_satisfied = stop_when_satisfied
         self.keep_device = keep_device
         self.reuse_app = reuse_app
@@ -127,10 +124,10 @@ class DeviceAgent:
             self._default_fast_planner = planner
         else:
             self._default_planner = DevicePlanner(
-                self.llm, use_multimodal_vision, grounding, mark_detail
+                self.llm, use_multimodal_vision, grounding
             )
             self._default_fast_planner = DevicePlanner(
-                self.fast_llm, use_multimodal_vision, grounding, mark_detail
+                self.fast_llm, use_multimodal_vision, grounding
             )
 
         self.media_manager = MediaManager(self.scrubber)

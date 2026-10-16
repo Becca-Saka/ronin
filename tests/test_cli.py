@@ -49,9 +49,8 @@ class ExitCodeTests(unittest.TestCase):
             cli._resolve_journey_file(None)
 
     def test_a_setting_ronin_config_does_not_know_is_not_looked_up_there(self):
-        """grounding and mark_detail come from a flag or the journey, or default."""
+        """grounding comes from a flag or the journey, or falls back to the default."""
         from ronin.agent.device_planner import GROUNDING_COORDINATES
-        from ronin.agent.perception.marks import DETAIL_NUMBERS
         from ronin.testing.cli import RoninCLI
         from ronin.testing.models import JourneyReport
 
@@ -76,7 +75,6 @@ class ExitCodeTests(unittest.TestCase):
         self.assertEqual(
             runner_class.call_args.kwargs["grounding"], GROUNDING_COORDINATES
         )
-        self.assertEqual(runner_class.call_args.kwargs["mark_detail"], DETAIL_NUMBERS)
 
     def test_the_suite_result_decides_the_code(self):
         from ronin.testing.cli import RoninCLI

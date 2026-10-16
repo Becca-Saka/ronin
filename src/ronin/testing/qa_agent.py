@@ -33,7 +33,6 @@ from ronin.testing.models import (
 )
 from ronin.testing.capabilities import unsupported_reason
 from ronin.agent.device_planner import GROUNDING_COORDINATES
-from ronin.agent.perception.marks import DETAIL_NUMBERS
 from ronin.testing import rules
 from ronin.testing.qa_auditor import Assessment, QAAuditor
 from ronin.testing.qa_planner import QAPlanner, QAStepResponse
@@ -201,7 +200,6 @@ def _missing_required_ids(
 class QAAgent:
     # Class-level so an agent built without __init__ still answers sensibly.
     _grounding = GROUNDING_COORDINATES
-    _mark_detail = DETAIL_NUMBERS
 
     """
     Orchestrates a single QA test scenario using DeviceAgent + QAPlanner.
@@ -225,11 +223,9 @@ class QAAgent:
         fast_model: str = None,
         replay_ledger: Optional[ReplayLedger] = None,
         grounding: str = GROUNDING_COORDINATES,
-        mark_detail: str = DETAIL_NUMBERS,
     ):
         self._use_multimodal_vision = use_multimodal_vision
         self._grounding = grounding
-        self._mark_detail = mark_detail
 
         self._device_agent = DeviceAgent(
             device_name=device_name,
@@ -244,7 +240,6 @@ class QAAgent:
             fast_model=fast_model,
             replay_ledger=replay_ledger,
             grounding=grounding,
-            mark_detail=mark_detail,
         )
         self._fast_llm: LLMClient = self._device_agent.fast_llm
 
@@ -338,7 +333,6 @@ class QAAgent:
             security_rules=security_rules,
             scrubber=self._device_agent.scrubber,
             grounding=self._grounding,
-            mark_detail=self._mark_detail,
         )
 
         replay = self._device_agent.replay_ledger

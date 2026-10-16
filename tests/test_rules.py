@@ -63,7 +63,6 @@ class PromptAgreementTests(unittest.TestCase):
         planner = QAPlanner.__new__(QAPlanner)
         planner.grounding = GROUNDING_COORDINATES
         planner.use_multimodal_vision = False
-        planner.mark_detail = "numbers"
         planner._test_case = SimpleNamespace(expected_outcomes=self.OUTCOMES)
         planner._security_rules = self.SECURITY
         return planner._build_qa_prompt(

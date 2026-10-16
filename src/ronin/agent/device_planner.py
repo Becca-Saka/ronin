@@ -15,7 +15,6 @@ from ronin.agent.actuation.actions import (
     CapabilityType,
     MarksAction,
 )
-from ronin.agent.perception.marks import DETAIL_NUMBERS
 from ronin.llm.llm_client import LLMClient
 from ronin.llm.messages import MultiPartMessage
 
@@ -99,7 +98,6 @@ class MarksStepResponse(DeviceStepResponse):
 class DevicePlanner:
     # Class-level so a planner built without __init__ still answers sensibly.
     grounding = GROUNDING_COORDINATES
-    mark_detail = DETAIL_NUMBERS
 
     """Builds prompts and calls the LLM to determine the next device action."""
 
@@ -108,15 +106,12 @@ class DevicePlanner:
         llm_client: LLMClient,
         use_multimodal_vision: bool = False,
         grounding: str = GROUNDING_COORDINATES,
-        mark_detail: str = DETAIL_NUMBERS,
     ):
         self.llm = llm_client
         self.use_multimodal_vision = use_multimodal_vision
         # "marks" offers numbered elements and no coordinates, so a target the
         # planner cannot find becomes a refusal rather than an invented point.
         self.grounding = grounding
-        # What accompanies the numbered screenshot. See marks.describe.
-        self.mark_detail = mark_detail
 
     def plan_step(
         self,
@@ -383,7 +378,7 @@ Your job is to execute the steps below by interacting with the app one action at
         if self.grounding == GROUNDING_MARKS:
             from ronin.agent.perception import marks as marks_module
 
-            return marks_module.describe(marks or [], screen_height, self.mark_detail)
+            return marks_module.describe(marks or [], screen_height)
         return self._format_elements(elements)
 
     def _format_elements(self, elements) -> str:

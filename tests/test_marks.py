@@ -45,39 +45,33 @@ class MarkTests(unittest.TestCase):
         self.assertEqual(len(build(doubled)), len(build(self._screen())))
 
     def test_the_offered_list_carries_no_coordinates(self):
-        from ronin.agent.perception.marks import DETAIL_TEXT, build, describe
+        """A coordinate here is one the model can echo back as if it saw it."""
+        from ronin.agent.perception.marks import build, describe
 
-        listing = describe(build(self._screen()), height=2400, detail=DETAIL_TEXT)
+        listing = describe(build(self._screen()), height=2400)
 
-        self.assertIn("'Continue'", listing)
         self.assertNotIn("2201", listing)
         self.assertNotIn("center", listing)
         self.assertIn("lower", listing)
 
-    def test_detected_text_is_left_out_by_default(self):
+    def test_the_detected_text_is_never_listed(self):
         """The model is looking at the screen those words are printed on."""
         from ronin.agent.perception.marks import build, describe
 
         listing = describe(build(self._screen()), height=2400)
 
         self.assertNotIn("Continue", listing)
-        self.assertIn("1 |", listing)
-        self.assertIn("lower", listing)
+        self.assertNotIn("Credit", listing)
 
-    def test_the_numbers_are_always_listed(self):
-        """They bound what the model may answer, whatever else is left out."""
-        from ronin.agent.perception.marks import DETAIL_NUMBERS, build, describe
+    def test_every_mark_is_listed(self):
+        """The planner may answer only with a number from this list."""
+        from ronin.agent.perception.marks import build, describe
 
         marks = build(self._screen())
-        listing = describe(marks, height=2400, detail=DETAIL_NUMBERS)
+        listing = describe(marks, height=2400)
 
         for mark in marks:
             self.assertIn(f"{mark.index} |", listing)
-
-    def test_the_picture_can_be_sent_alone(self):
-        from ronin.agent.perception.marks import DETAIL_NONE, build, describe
-
-        self.assertEqual(describe(build(self._screen()), 2400, DETAIL_NONE), "")
 
     def test_a_number_resolves_to_its_element(self):
         from ronin.agent.perception.marks import build, find
