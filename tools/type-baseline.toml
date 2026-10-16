@@ -1,6 +1,6 @@
 # Files with recorded Pyright errors. Values are maximum error counts,
-# not targets. Lower a value whenever a file improves, delete the entry
-# when it reaches zero, and do not add new entries.
+# not targets. Lower a value when a file improves. Delete the entry when
+# it reaches zero. Do not add new entries.
 [files]
 "src/ronin/agent/actuation/actions.py" = 7
 "src/ronin/agent/device/adb_control.py" = 2

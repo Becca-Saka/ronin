@@ -115,8 +115,8 @@ def coerce(name: str, raw: Any) -> Any:
 def read_file(path: Path) -> dict[str, Any]:
     """Reads one config file, ignoring unknown keys so a newer file stays usable.
 
-    Unknown keys are named rather than dropped in silence: a misspelled setting
-    that quietly does nothing looks exactly like one that was applied.
+    Ronin names the unknown keys instead of dropping them in silence. A
+    misspelled setting that does nothing looks exactly like one Ronin applied.
     """
     if not path.is_file():
         return {}

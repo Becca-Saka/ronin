@@ -113,11 +113,11 @@ SCREEN_UNREADABLE = (
 
 
 def stale_target_reason(device_control, snapshot, action) -> Optional[str]:
-    """Why the target can no longer be trusted, or None while it still can be.
+    """Why the target is no longer trustworthy, or None while it still is.
 
-    Refusing costs a step and re-perceives, which is cheaper than touching
-    whatever has taken the target's place. A screen that cannot be read at all
-    is no evidence the target survived, so it counts too.
+    A refusal costs one step and one more look at the screen. That is cheaper
+    than touching whatever took the target's place. A screen Ronin cannot read
+    is no evidence that the target survived, so it counts too.
     """
     if not has_target(action):
         return None

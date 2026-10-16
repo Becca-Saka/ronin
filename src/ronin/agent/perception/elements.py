@@ -1,7 +1,6 @@
-"""What perception hands the rest of the agent: where things are, and what they are.
+"""What perception gives the rest of the agent: where things are, and what they are.
 
-The contract lives here rather than in `image_descriptor` so that it is not
-owned by one of its producers.
+The contract lives here, not in `image_descriptor`, so that no producer owns it.
 """
 
 from pydantic import BaseModel
@@ -16,7 +15,7 @@ class BoundingBox(BaseModel):
     y_max: int
 
     def __iter__(self):
-        """Unpacks in PIL's crop order, which is where these boxes mostly end up."""
+        """Unpacks in the order that PIL's crop expects."""
         yield self.x_min
         yield self.y_min
         yield self.x_max

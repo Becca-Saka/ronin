@@ -36,7 +36,7 @@ def _write_atomic(path: Path, content: str | bytes) -> None:
 
 
 def _environment_lines(environment) -> list[str]:
-    """What produced this report, so a result that differs can be attributed."""
+    """Renders the run environment as report bullets."""
     if environment is None:
         return []
     model = f"`{environment.model}`"

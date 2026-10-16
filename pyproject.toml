@@ -55,17 +55,17 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "B", "SIM", "C90", "BLE"]
-# The formatter owns code width. The lines still over the limit are prompt text
-# and model-facing field descriptions, which must not be rewrapped to suit it.
+# The formatter owns code width. The long lines that remain are prompt text and
+# model-facing field descriptions, and nothing may rewrap them.
 ignore = ["E501"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 21  # The project requirement is strictly less than 22.
 
 # Recorded lint debt, read like tools/quality-baseline.toml: a ratchet.
-# Remove an entry when the file is fixed. Never add one to make a check pass.
+# Remove an entry when the file is clean. Never add one to make a check pass.
 #
-# BLE001 is `except Exception`: these are the handlers still to be narrowed.
+# BLE001 is `except Exception`. These handlers still need narrowing.
 [tool.ruff.lint.per-file-ignores]
 "src/ronin/agent/device/device_control.py" = ["BLE001"]
 "src/ronin/agent/device/device_session.py" = ["BLE001"]
@@ -103,6 +103,6 @@ source = ["src/ronin"]
 
 [tool.coverage.report]
 show_missing = true
-# The measured baseline for the offline suite. Raise it as coverage improves;
-# it is a floor against regression, not a target.
+# The measured baseline for the offline suite. Raise it as coverage improves.
+# It is a floor against regression, not a target.
 fail_under = 44

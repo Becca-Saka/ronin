@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Enforce Ronin's type-checking ratchet on top of Pyright.
+"""Enforce Ronin's type-checking ratchet with Pyright.
 
-Pyright has no baseline of its own, so every file stays checked and the count
-of recorded errors per file is what may not grow. Suppressing whole files would
-hide new mistakes in exactly the modules that already have the most.
+Pyright has no baseline of its own. Every file stays checked, and the recorded
+error count per file must not grow. If the gate suppressed whole files, it
+would hide new mistakes in the modules that already carry the most.
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ class Violation:
 
     def render(self) -> str:
         if self.allowed:
-            return f"{self.path}: {self.found} type errors exceeds baseline of {self.allowed}"
-        return f"{self.path}: {self.found} type errors; no baseline allowance"
+            return f"{self.path}: {self.found} type errors, above its baseline of {self.allowed}"
+        return f"{self.path}: {self.found} type errors, and no baseline allowance"
 
 
 def _load_baseline() -> dict[str, int]:
@@ -76,8 +76,8 @@ def _errors_per_file(report: dict) -> Counter[str]:
 def _render_baseline(counts: Counter[str]) -> str:
     lines = [
         "# Files with recorded Pyright errors. Values are maximum error counts,",
-        "# not targets. Lower a value whenever a file improves, delete the entry",
-        "# when it reaches zero, and do not add new entries.",
+        "# not targets. Lower a value when a file improves. Delete the entry when",
+        "# it reaches zero. Do not add new entries.",
         "[files]",
     ]
     lines += [f'"{path}" = {count}' for path, count in sorted(counts.items())]
@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         if counts.get(path, 0) < allowed
     }
     for path, allowed in sorted(improved.items()):
-        print(f"{path} is now at {counts.get(path, 0)} errors; lower its baseline of {allowed}.")
+        print(f"{path} is now at {counts.get(path, 0)} errors. Lower its baseline of {allowed}.")
 
     print(f"Type gate passed with {sum(counts.values())} baselined errors.")
     return 0

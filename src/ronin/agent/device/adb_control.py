@@ -22,14 +22,14 @@ class AdbControl:
 
         Args:
             command: A list of command-line arguments to execute.
-            doing: What the command was for, named in the failure message
-                because the argv alone does not say why it was run.
+            doing: What the command was for. The failure message includes it,
+                because the argv does not say why Ronin ran the command.
 
         Returns:
             The CompletedProcess result from the run command.
 
         Raises:
-            DeviceUnavailable: If the command could not be run or failed.
+            DeviceUnavailable: If the command failed, or Ronin could not run it.
         """
         try:
             return run_command(command, check=True)

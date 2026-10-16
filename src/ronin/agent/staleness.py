@@ -33,10 +33,10 @@ def _point(action) -> Optional[Tuple[int, int]]:
 
 
 def has_target(action) -> bool:
-    """Whether the action is aimed at one point, and so has something to go stale.
+    """Whether the action has one target point, and so something that can go stale.
 
-    Gestures, key events and waits are aimed at no single place: there is
-    nothing about them for a changing screen to invalidate.
+    Gestures, key events and waits have no target point. A changing screen
+    cannot invalidate them.
     """
     return _point(action) is not None
 

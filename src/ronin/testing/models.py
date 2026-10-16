@@ -37,9 +37,9 @@ class GeneratedTestCase(BaseModel):
     expected_outcomes: List[str] = Field(default_factory=list)
 
 
-# Written by the model to point at what it is reporting, so kept separate from
-# the detector's perception.BoundingBox: neither schema should move when the
-# other changes.
+# The model writes this one to point at what it reports. The detector's
+# perception.BoundingBox stays separate, so neither schema moves when the other
+# changes.
 class BoundingBox(BaseModel):
     """Represents coordinates highlighting a visual issue."""
 

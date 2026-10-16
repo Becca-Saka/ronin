@@ -196,10 +196,13 @@ class RoninCLI:
         return data
 
     def run(self, args_list: Optional[List[str]] = None) -> int:
-        """Executes all loaded journeys, prints a summary, and returns an exit code.
+        """Executes all loaded journeys, prints a summary, and returns a code.
 
-        Returns 0 when every journey passed, 1 when any failed, and 2 when the
-        suite could not be loaded. The caller owns the process.
+        The caller owns the process. The code is:
+
+        - 0 when every journey passed
+        - 1 when any journey failed
+        - 2 when Ronin could not load the suite
         """
         args = self.parser.parse_args(args_list)
 

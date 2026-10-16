@@ -98,7 +98,7 @@ class RoninTestRunner:
         self.record_session = record_session
 
     def _environment(self) -> RunEnvironment:
-        """What was in play, so a result that differs can be attributed."""
+        """What was in play for this run, so a reader can explain a difference."""
         return RunEnvironment(
             ronin_version=__version__,
             model=self.model,

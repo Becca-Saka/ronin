@@ -169,7 +169,7 @@ class DeviceControl:
     def get_screenshot(self):
         """The screen as PNG bytes, or ObservationUnavailable if unreadable.
 
-        A lost session arrives as whatever the driver chose to raise.
+        The driver can raise almost anything for a lost session.
         """
         try:
             return self.driver.get_screenshot_as_png()
