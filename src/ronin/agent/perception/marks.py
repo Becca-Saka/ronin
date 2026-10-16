@@ -12,6 +12,8 @@ so the two cannot drift apart.
 import logging
 from copy import copy
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import List, Optional
 
 from PIL import Image, ImageDraw, ImageFont
@@ -319,30 +321,21 @@ def describe(marks: List[Mark], height: int) -> str:
     return "\n".join(lines) or "None detected."
 
 
-# A bare family name resolves on almost no machine. The numbers have to be
-# legible to the model at the resolution it is shown the screenshot, so a
-# scalable face matters more here than the choice of face.
-FONT_CANDIDATES = (
-    "/System/Library/Fonts/Supplemental/Arial.ttf",
-    "/System/Library/Fonts/Helvetica.ttc",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-    "DejaVuSans-Bold.ttf",
-    "arial.ttf",
-)
+FONT_PATH = Path(__file__).parent / "fonts" / "Aileron-Bold.otf"
+"""Aileron Bold, shipped with the package. Public domain, so it carries no notice.
+
+The badge numbers are the only way the planner can name a target, so they have
+to be legible at screenshot resolution on every machine. A system font cannot
+promise that: the path differs per platform and a slim container image often
+carries none.
+"""
 
 
-def _font(scale_ref: int):
+@lru_cache(maxsize=8)
+def _font(scale_ref: int) -> ImageFont.FreeTypeFont:
+    """The badge face, sized for this screen."""
     size = max(10, int(15 * (scale_ref / 1200.0)))
-    for candidate in FONT_CANDIDATES:
-        try:
-            return ImageFont.truetype(candidate, size)
-        except OSError:
-            continue
-    try:
-        return ImageFont.load_default(size=size)
-    except TypeError:  # Pillow < 10 cannot scale the built-in face
-        return ImageFont.load_default()
+    return ImageFont.truetype(FONT_PATH, size)
 
 
 def _free_slot(box, text_w, text_h, placed, screen):

@@ -1,7 +1,6 @@
 """Numbering what is on the screen, and collapsing what is not a target."""
 
 import unittest
-from unittest.mock import patch
 
 
 class MarkTests(unittest.TestCase):
@@ -97,25 +96,40 @@ class MarkTests(unittest.TestCase):
 
 
 class MarkLegibilityTests(unittest.TestCase):
-    """A number the model cannot read is worse than no number at all."""
+    """A number the model cannot read is worse than no number at all.
+
+    The planner answers with an index, so an unreadable badge does not fail. It
+    comes back as a wrong element, which reads as an app defect.
+    """
+
+    def test_the_font_ships_with_the_package(self):
+        """A system font path differs per platform, and containers carry none."""
+        from ronin.agent.perception.marks import FONT_PATH
+
+        self.assertTrue(FONT_PATH.is_file(), f"{FONT_PATH} is not in the package")
 
     def test_the_badge_font_scales_with_the_screenshot(self):
+        """A bitmap face ignores the size and leaves the numbers illegible."""
         from ronin.agent.perception.marks import _font
 
         small, large = _font(800), _font(2400)
 
-        self.assertGreater(getattr(large, "size", 0), getattr(small, "size", 0))
-        self.assertGreaterEqual(getattr(large, "size", 0), 30)
+        self.assertGreater(large.size, small.size)
+        self.assertGreaterEqual(large.size, 30)
 
-    def test_a_missing_font_file_does_not_crash_rendering(self):
-        from PIL import Image
 
-        from ronin.agent.perception import marks
+    def test_every_glyph_the_badges_use_is_in_the_font(self):
+        """A glyph the face lacks draws as an empty box, which names nothing."""
+        from PIL import Image, ImageDraw
 
-        with patch.object(marks, "FONT_CANDIDATES", ("no-such-font.ttf",)):
-            rendered = marks.render(Image.new("RGB", (100, 200), "white"), [])
+        from ronin.agent.perception.marks import _font
 
-        self.assertEqual(rendered.size, (100, 200))
+        font = _font(2400)
+        draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+
+        for label in [str(number) for number in range(10)] + ["KEYBOARD"]:
+            left, _, right, _ = draw.textbbox((0, 0), label, font=font)
+            self.assertGreater(right - left, 0, f"{label!r} drew no pixels")
 
 
 class KeyboardMarkTests(unittest.TestCase):
