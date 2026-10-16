@@ -84,9 +84,29 @@ class TypeAction(BaseModel):
     reason: str = Field(..., description="How the action helps achieve the goal.")
 
 
+MAX_TAP_COUNT = 20
+"""Taps one action may make. A scenario asking for more wants a different test."""
+
+
 class TapAction(BaseModel):
     type: Literal[ActionType.TAP] = ActionType.TAP
     coordinates: Coordinates = Field(..., description="The screen coordinates to tap.")
+    count: int = Field(
+        default=1,
+        ge=1,
+        le=MAX_TAP_COUNT,
+        description=(
+            "How many times to tap, in one action. Use this when a scenario asks "
+            "for repeated or rapid taps. Do not count the taps yourself across "
+            "several steps."
+        ),
+    )
+    interval_ms: int = Field(
+        default=0,
+        ge=0,
+        le=5000,
+        description="Milliseconds to wait between taps. 0 taps as fast as it can.",
+    )
     reason: str = Field(..., description="How the action helps achieve the goal.")
 
 

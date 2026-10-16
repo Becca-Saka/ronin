@@ -179,7 +179,7 @@ class DevicePlanner:
             targeting = """
 ### Allowed Action Types
 Each action must have a `type` field set to one of:
-- "tap": Tap an element. Fields: `type`, `mark` (int), `reason`.
+- "tap": Tap an element. Fields: `type`, `mark` (int), `reason`, and optional `count` (int) and `interval_ms` (int).
 - "type": Type text into an element. Fields: `type`, `text`, `mark` (int), `reason`.
 - "clear": Clear a text field. Fields: `type`, `mark` (int), `reason`.
 - "double_tap": Double-tap an element. Fields: `type`, `mark` (int), `reason`.
@@ -189,7 +189,7 @@ Each action must have a `type` field set to one of:
             targeting = """
 ### Allowed Action Types
 Each action must have a `type` field set to one of:
-- "tap": Tap at coordinates. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
+- "tap": Tap at coordinates. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`, and optional `count` (int) and `interval_ms` (int).
 - "type": Type text into a field. Fields: `type`, `text`, `coordinates` as {"x": int, "y": int}, `reason`.
 - "clear": Clear a text field. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
 - "double_tap": Double-tap. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
@@ -222,6 +222,7 @@ CRITICAL CONSTRAINTS:
 4. Choose only a number that appears in the list below. If what you need is not numbered, use "target_not_listed" and describe it. Do not pick the nearest number instead, and do not guess.
 5. The soft keyboard blocks taps on anything behind it. If your next target is in the lower region (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app.
 6. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
+8. When a step asks for a number of taps, send one tap action with `count` set to that number. Never count taps yourself across several steps: the screen may not show how many have landed.
 7. The numbers are redrawn every step. Use the numbers from the CURRENT screenshot and list, never one you remember from an earlier step.
 """
 
@@ -235,6 +236,7 @@ CRITICAL CONSTRAINTS:
 6. When the keyboard is visible and you need to TYPE into a field, use text_field/input elements from the CURRENT scan in the upper portion of the screen (above the keyboard). Ignore bottom-portion detections — those are keyboard keys.
 7. You MUST use center coordinates from the Current UI Elements list. If a target you need is missing because the keyboard obscures it, do not guess coordinates from older screenshots — dismiss the keyboard (rule 4) and plan from the next scan. Older screenshots in the message are context only; they are not a coordinate source unless multimodal override is enabled.
 8. After any event that changes the layout — keyboard opening or closing, navigation, a modal, a scroll — treat the next element list as a new layout and re-read every coordinate from it.
+9. When a step asks for a number of taps, send one tap action with `count` set to that number. Never count taps yourself across several steps: the screen may not show how many have landed.
 """
 
     def _build_prompt(

@@ -94,10 +94,19 @@ class ActionOrchestrator:
             case ActionType.TAP:
                 coordinates = action.coordinates
                 logger.info(
-                    "Executing action: %s at (%d, %d) — %s",
-                    action.type, coordinates.x, coordinates.y, self._reason(action),
+                    "Executing action: %s x%d at (%d, %d) — %s",
+                    action.type, action.count, coordinates.x, coordinates.y,
+                    self._reason(action),
                 )
-                self.device_control.tap(coordinates.x, coordinates.y, with_feedback=True)
+                # Counted here, where counting is arithmetic. Asked of a planner
+                # across steps, it becomes a judgement about how many have
+                # happened so far, from a screen that may not show it.
+                for tap in range(action.count):
+                    if tap and action.interval_ms:
+                        time.sleep(action.interval_ms / 1000)
+                    self.device_control.tap(
+                        coordinates.x, coordinates.y, with_feedback=True
+                    )
             case ActionType.DOUBLE_TAP:
                 coordinates = action.coordinates
                 logger.info(

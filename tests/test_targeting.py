@@ -309,7 +309,8 @@ class GroundingContractTests(unittest.TestCase):
         schema = MarksStepResponse.model_json_schema()
         tap = next(d for n, d in schema["$defs"].items() if n.startswith("Tap"))
 
-        self.assertEqual(sorted(tap["properties"]), ["mark", "reason", "type"])
+        self.assertNotIn("coordinates", tap["properties"])
+        self.assertIn("mark", tap["properties"])
         self.assertIn("mark", tap["required"])
 
     def test_an_untargeted_action_needs_neither(self):
