@@ -9,6 +9,7 @@ import logging
 import litellm
 from pydantic import BaseModel, ValidationError
 
+from . import usage
 from .messages import Message, TextMessage
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ class LLMClient:
 
         Args:
             model: The API model identifier to use for requests.
-            usage_callback: Optional callable receiving usage dictionary records.
+            usage_callback: Optional callable receiving a usage.CallRecord per call.
         """
         self._model = model
         self.usage_callback = usage_callback
@@ -52,7 +53,7 @@ class LLMClient:
         # than losing the scenario the call belongs to.
         for attempt in range(STRUCTURED_ATTEMPTS if response_model else 1):
             try:
-                return self._complete(attempts, response_model)
+                return self._complete(attempts, response_model, attempt + 1)
             except ValidationError as exc:
                 last_error = exc
                 logger.warning(
@@ -79,6 +80,7 @@ class LLMClient:
         self,
         messages: list[Message],
         response_model: type[BaseModel] | None = None,
+        attempt: int = 1,
     ) -> str | BaseModel:
         kwargs: dict = {
             "model": self._model,
@@ -98,14 +100,7 @@ class LLMClient:
         response = litellm.completion(**kwargs)
 
         if self.usage_callback:
-            usage = getattr(response, "usage", None)
-            if usage:
-                cost = None
-                try:
-                    cost = litellm.completion_cost(completion_response=response)
-                except Exception:
-                    pass
-                self.usage_callback(self._model, cost, usage)
+            self.usage_callback(usage.record(response, self._model, attempt))
 
         content = response.choices[0].message.content
 

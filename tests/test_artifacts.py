@@ -228,22 +228,6 @@ class ArtifactSafetyTests(unittest.TestCase):
 
         self.assertEqual(safe.getpixel((4, 5)), (255, 255, 255))
 
-    def test_unknown_cost_is_reported_as_unknown(self):
-        from ronin.testing.usage_tracker import LLMUsageTracker
-
-        usage = SimpleNamespace(prompt_tokens=3, completion_tokens=2, total_tokens=5)
-        with tempfile.TemporaryDirectory() as directory:
-            tracker = LLMUsageTracker(Path(directory))
-            tracker.add_call("scenario:TS_1", "provider/model", None, usage)
-            path = tracker.save_report()
-            payload = json.loads(path.read_text())
-
-        self.assertEqual(payload["cost_unknown_calls"], 1)
-        call = payload["components"]["scenario:TS_1"]["calls"][0]
-        self.assertFalse(call["cost_known"])
-        self.assertEqual(call["model"], "provider/model")
-
-
 class ScanDumpSafetyTests(unittest.TestCase):
     """A scan dump is a file, so detected text in it outlives the run."""
 

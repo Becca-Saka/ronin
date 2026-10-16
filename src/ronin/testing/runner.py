@@ -143,21 +143,23 @@ class RoninTestRunner:
             mark_detail=self.mark_detail,
         )
 
-        usage_tracker = LLMUsageTracker(output_dir=session.telemetry_dir)
+        artifact_scrubber = SecretScrubber()
+        usage_tracker = LLMUsageTracker(
+            output_dir=session.telemetry_dir, scrubber=artifact_scrubber
+        )
         current_component = "scenario_generator"
         device_agent = agent._device_agent
-        device_agent.llm.usage_callback = lambda model, cost, usage: usage_tracker.add_call(
-            current_component, model, cost, usage
+        device_agent.llm.usage_callback = lambda call: usage_tracker.add_call(
+            current_component, call
         )
         if device_agent.fast_llm is not device_agent.llm:
-            device_agent.fast_llm.usage_callback = lambda model, cost, usage: (
-                usage_tracker.add_call(current_component, model, cost, usage)
+            device_agent.fast_llm.usage_callback = lambda call: usage_tracker.add_call(
+                current_component, call
             )
 
         scenarios = []
         scenario_reports: List[ScenarioReport] = []
         progress = None
-        artifact_scrubber = SecretScrubber()
         artifact_scrubber.learn_secrets(journey.secrets)
         device_agent.scrubber.learn_secrets(journey.secrets)
 

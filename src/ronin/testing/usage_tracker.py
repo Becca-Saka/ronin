@@ -1,61 +1,114 @@
+"""What every model call cost, and what it spent that on.
+
+Totals answer "what did this run cost". The per-call rows answer the questions
+that come after: was the prompt cached, how much of it was the screenshot, did
+an answer get truncated rather than finished, was this a retry, and which model
+actually served it. Each row also carries the whole response, so a question
+nobody thought of tonight is still answerable from the file.
+
+Those responses carry the model's own words, which quote the values a journey
+declared secret, so the file is written through the scrubber like any other.
+"""
+
 import json
 import logging
 import time
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
+
+from ronin.llm.usage import CallRecord
+from ronin.utils.secrets import SecretScrubber
 
 logger = logging.getLogger(__name__)
+
+TRUNCATED = "length"
+
+
+@dataclass
+class Totals:
+    """What a run spent, accumulated one call at a time.
+
+    Field names are the ones written to the report, so telemetry already on
+    disk stays readable.
+    """
+
+    total_calls: int = 0
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_tokens: int = 0
+    total_estimated_cost_usd: float = 0.0
+    cost_unknown_calls: int = 0
+    total_cached_tokens: int = 0
+    total_reasoning_tokens: int = 0
+    total_latency_ms: float = 0.0
+
+    truncated_calls: int = 0
+    """Answers cut off at the token limit, which read as malformed rather than wrong."""
+
+    retried_calls: int = 0
+    """Questions asked twice because the first answer did not fit the schema."""
+
+    components: Dict[str, Any] = field(default_factory=dict)
+
+    def add(self, call: CallRecord) -> None:
+        self.total_calls += 1
+        self.total_prompt_tokens += call.prompt_tokens
+        self.total_completion_tokens += call.completion_tokens
+        self.total_tokens += call.total_tokens
+        self.total_cached_tokens += call.cached_tokens
+        self.total_reasoning_tokens += call.reasoning_tokens
+        self.total_latency_ms += call.latency_ms or 0.0
+
+        if call.cost is None:
+            self.cost_unknown_calls += 1
+        else:
+            self.total_estimated_cost_usd += call.cost
+
+        if call.finish_reason == TRUNCATED:
+            self.truncated_calls += 1
+        if call.attempt > 1:
+            self.retried_calls += 1
 
 
 class LLMUsageTracker:
     """Manages and serializes LLM token and cost telemetry during testing."""
 
-    def __init__(self, output_dir: Path = Path("assets")):
-        self.output_dir = output_dir
-        self.usage_records: Dict[str, Any] = {
-            "total_calls": 0,
-            "total_prompt_tokens": 0,
-            "total_completion_tokens": 0,
-            "total_tokens": 0,
-            "total_estimated_cost_usd": 0.0,
-            "cost_unknown_calls": 0,
-            "components": {}
-        }
-
-    def add_call(
-        self, component_name: str, model: str, cost: Optional[float], usage: Any
+    def __init__(
+        self, output_dir: Path = Path("assets"), scrubber: SecretScrubber | None = None
     ):
+        self.output_dir = output_dir
+        self._scrubber = scrubber
+        self.totals = Totals()
+
+    def add_call(self, component_name: str, call: CallRecord) -> None:
         """Callback to record a single LLM call for a specific component."""
-        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
-        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
-        total_tokens = getattr(usage, "total_tokens", 0) or 0
+        self.totals.add(call)
+        if call.finish_reason == TRUNCATED:
+            logger.warning(
+                "Answer truncated at the token limit (%s); it will read as malformed "
+                "rather than wrong, so raise the limit before rewording the schema.",
+                call.generation_id,
+            )
 
-        self.usage_records["total_calls"] += 1
-        self.usage_records["total_prompt_tokens"] += prompt_tokens
-        self.usage_records["total_completion_tokens"] += completion_tokens
-        self.usage_records["total_tokens"] += total_tokens
-        if cost is None:
-            self.usage_records["cost_unknown_calls"] += 1
-        else:
-            self.usage_records["total_estimated_cost_usd"] += cost
+        component = self.totals.components.setdefault(
+            component_name, {"models": [], "calls": []}
+        )
+        if call.model not in component["models"]:
+            component["models"].append(call.model)
+        component["calls"].append(asdict(call) | {"cost_known": call.cost is not None})
 
-        if component_name not in self.usage_records["components"]:
-            self.usage_records["components"][component_name] = {
-                "models": [],
-                "calls": []
-            }
-        models = self.usage_records["components"][component_name]["models"]
-        if model not in models:
-            models.append(model)
-
-        self.usage_records["components"][component_name]["calls"].append({
-            "model": model,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-            "estimated_cost_usd": cost,
-            "cost_known": cost is not None,
-        })
+    def _scrubbed(self, value):
+        """Masks declared secrets anywhere in the records before they are written."""
+        if self._scrubber is None:
+            return value
+        if isinstance(value, str):
+            return self._scrubber.scrub(value)
+        if isinstance(value, dict):
+            return {key: self._scrubbed(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._scrubbed(item) for item in value]
+        return value
 
     def save_report(self) -> Path:
         """Serializes usage records to a JSON file in the assets directory."""
@@ -64,7 +117,8 @@ class LLMUsageTracker:
         filepath = self.output_dir / f"llm_usage_{timestamp}.json"
 
         temporary = filepath.with_suffix(filepath.suffix + ".tmp")
-        temporary.write_text(json.dumps(self.usage_records, indent=2), encoding="utf-8")
+        payload = self._scrubbed(asdict(self.totals))
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         temporary.replace(filepath)
         logger.info("LLM usage telemetry successfully saved to %s", filepath)
         return filepath
