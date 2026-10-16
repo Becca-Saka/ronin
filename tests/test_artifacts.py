@@ -387,3 +387,56 @@ class SecretScrubbingTests(unittest.TestCase):
         self.assertEqual(
             self._scrubber().scrub("Tap the Login button"), "Tap the Login button"
         )
+
+
+class PlannerViewArtifactTests(unittest.TestCase):
+    """The numbered screenshot is the only image the planner is shown.
+
+    Saving it needs a snapshot whose numbering is done, which is why this runs
+    after planning rather than beside the raw screen and detector overlay.
+    """
+
+    def _artifacts(self, saved):
+        from ronin.agent.step.artifacts import StepArtifacts
+
+        media = SimpleNamespace(
+            save_redacted_bytes=lambda data, elements, path: saved.append((path, data))
+        )
+        return StepArtifacts.__new__(StepArtifacts).__class__(media, scrubber=None)
+
+    def _snapshot(self, planner_bytes, marks=(1,)):
+        return SimpleNamespace(
+            planner_img_bytes=planner_bytes,
+            raw_img_bytes=b"raw-png",
+            marks=list(marks),
+            gui_elements=[],
+            timestamp="20260101_000000",
+        )
+
+    def test_the_numbered_screenshot_is_written(self):
+        import tempfile
+        from pathlib import Path
+
+        saved = []
+        with tempfile.TemporaryDirectory() as directory:
+            self._artifacts(saved).save_planner_view(
+                Path(directory), 0, self._snapshot(b"numbered-png")
+            )
+
+        self.assertEqual(len(saved), 1)
+        path, data = saved[0]
+        self.assertTrue(path.name.endswith("_marks.png"))
+        self.assertEqual(data, b"numbered-png")
+
+    def test_nothing_is_written_when_the_screen_was_never_numbered(self):
+        """Coordinates mode numbers nothing, so there is no planner view."""
+        import tempfile
+        from pathlib import Path
+
+        saved = []
+        with tempfile.TemporaryDirectory() as directory:
+            self._artifacts(saved).save_planner_view(
+                Path(directory), 0, self._snapshot(b"raw-png", marks=())
+            )
+
+        self.assertEqual(saved, [])

@@ -9,7 +9,7 @@ same question: is this screen ready to act on.
 import io
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 import imagehash
@@ -91,7 +91,15 @@ def number_targets(snapshot: PerceptionSnapshot, ctx, grounding: str) -> None:
     )
     raw_img = Image.open(io.BytesIO(snapshot.raw_img_bytes))
     width, height = raw_img.size
-    snapshot.marks = marks.build(targets, screen_area=width * height)
+    built = marks.build(targets, screen_area=width * height)
+
+    refused = ctx.refused_marks.get(snapshot.current_phash) or []
+    snapshot.marks = [
+        replace(mark, refuses_text=True)
+        if any(marks.is_same_element(mark.element, box) for box in refused)
+        else mark
+        for mark in built
+    ]
 
     marked = io.BytesIO()
     marks.render(
@@ -103,6 +111,19 @@ def number_targets(snapshot: PerceptionSnapshot, ctx, grounding: str) -> None:
 def context_drift(
     device_control, last_external_nav: bool, settle_time: float
 ) -> Optional[str]:
+    # Asked before anything else. On Android the prompt reads as lost focus and
+    # recovery would press back, which answers it as "deny"; on iOS the app
+    # stays in the foreground and nothing below would see the prompt at all.
+    # The planner reads it off the screenshot like any other screen.
+    if device_control.showing_system_prompt():
+        logger.info("A system prompt is up; leaving it for the planner to answer.")
+        return (
+            "Info: the operating system is asking you something. Its prompt is on "
+            "screen now. The prompt belongs to the system, not to the app. Answer "
+            "it as the scenario requires. Do not leave the prompt. A dismissed "
+            "permission prompt denies the permission."
+        )
+
     if not device_control.is_still_in_sut():
         if not last_external_nav:
             logger.warning("Unexpected context drift. Attempting recovery...")

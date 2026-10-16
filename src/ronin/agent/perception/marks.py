@@ -14,7 +14,7 @@ from copy import copy
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -48,12 +48,50 @@ class Mark:
     element: GUIElement
     point: Optional[tuple[int, int]] = None
 
+    refuses_text: bool = False
+    """Typing here was tried and focus never moved, so it holds no text.
+
+    The fact rides on the mark so the planner's prompt and the guard before
+    dispatch read the same thing, without either being told separately.
+    """
+
     @property
     def center(self) -> tuple[int, int]:
         if self.point is not None:
             return self.point
         box = self.element.bounding_box
         return (box.x_min + box.x_max) // 2, (box.y_min + box.y_max) // 2
+
+
+Box = tuple[int, int, int, int]
+"""An element's place on screen, which outlives the number drawn on it."""
+
+
+def box_of(element: GUIElement) -> Box:
+    """The element's bounds, in the form a fact about it is remembered by."""
+    bounds = element.bounding_box
+    return (bounds.x_min, bounds.y_min, bounds.x_max, bounds.y_max)
+
+
+def is_same_element(element: GUIElement, remembered: Box) -> bool:
+    """Whether a freshly detected element is the one something was learned about.
+
+    Numbers run in reading order over whatever the detector returned, so one
+    box more or fewer renumbers everything below it. A clock ticking in the
+    status bar is enough to change what the detector finds, while the screen
+    fingerprint stays identical. A number is therefore no way to recognise an
+    element across two looks at one screen. Its place on screen is.
+    """
+    left, top, right, bottom = remembered
+    width = max(0, min(element.bounding_box.x_max, right) - max(element.bounding_box.x_min, left))
+    height = max(0, min(element.bounding_box.y_max, bottom) - max(element.bounding_box.y_min, top))
+    intersection = width * height
+    if not intersection:
+        return False
+    union = (
+        _area(element.bounding_box) + (right - left) * (bottom - top) - intersection
+    )
+    return intersection / float(union or 1) >= DUPLICATE_OVERLAP
 
 
 def _overlap(a, b) -> float:
@@ -284,7 +322,7 @@ def build(elements: List[GUIElement], screen_area: int = 0) -> List[Mark]:
     ]
 
 
-def find(marks: List[Mark], index: int) -> Optional[Mark]:
+def find(marks: Sequence[Mark], index: int) -> Optional[Mark]:
     """The mark with this number, or None if the model named one that isn't there."""
     for mark in marks:
         if mark.index == index:
@@ -316,8 +354,15 @@ def describe(marks: List[Mark], height: int) -> str:
     are printed on, and our OCR reads English only, so a label here can be
     confidently wrong in a way the screenshot is not. The numbers are listed
     because the planner may answer only with a number from this list.
+
+    A mark that already refused text says so. Nothing on screen separates a
+    field from a picture of one, so the only evidence is having tried.
     """
-    lines = [f"{mark.index} | {_region(mark.element, height)}" for mark in marks]
+    lines = [
+        f"{mark.index} | {_region(mark.element, height)}"
+        + (" | holds no text" if mark.refuses_text else "")
+        for mark in marks
+    ]
     return "\n".join(lines) or "None detected."
 
 

@@ -7,7 +7,7 @@ from ronin.agent.device_agent import (
     AgentHistory,
     DeviceAgent,
     RollingLoopDetector,
-    _RunContext,
+    RunContext,
 )
 
 
@@ -163,7 +163,7 @@ class KeyboardPlanningTests(unittest.TestCase):
             raw_img_bytes=b"image",
             planner_img_bytes=b"image",
         )
-        context = _RunContext(
+        context = RunContext(
             history=AgentHistory(),
             loop_detector=RollingLoopDetector(),
             keyboard_open=True,

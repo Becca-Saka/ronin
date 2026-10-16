@@ -32,6 +32,15 @@ class ActionRejected(RoninError):
     """The device did not do what the action asked. Nothing may assume it did."""
 
 
+class TargetNotInteractive(ActionRejected):
+    """The target took no text, so the element behind it is not an input.
+
+    Raised when focus stands where it stood before the tap. The screen alone
+    cannot tell a field from a picture of one, and this is the evidence that
+    settles it for that element.
+    """
+
+
 class ArtifactWriteFailed(RoninError):
     """Ronin could not write a report, a log or a screenshot."""
 

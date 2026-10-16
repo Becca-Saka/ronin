@@ -43,7 +43,6 @@ class StepArtifacts:
             annotated_path,
             raw_path,
         )
-        self._save_planner_view(session_dir / f"{base}_marks.png", snapshot)
 
         if snapshot.scan_info is None:
             return
@@ -64,18 +63,24 @@ class StepArtifacts:
         write_screen_scan_dump(scan_path, record)
         logger.debug("Perception scan dump saved to %s", scan_path)
 
-    def _save_planner_view(self, path: Path, snapshot: PerceptionSnapshot) -> None:
-        """The numbered screenshot, which is what the planner was actually shown.
+    def save_planner_view(
+        self, session_dir: Path, step: int, snapshot: PerceptionSnapshot
+    ) -> None:
+        """The numbered screenshot, which is the image the planner is shown.
 
-        The other two files are a raw screen and a detector overlay. Neither is
-        what the model saw in marks mode, so a mis-tap could not be read back
-        from any artifact: the badge it answered with was never written down.
+        Written only in marks mode, where `snapshot.marks` is what numbering
+        produced. The other two files are a raw screen and a detector overlay,
+        and the planner sees neither, so only this one explains the badge it
+        answered with.
         """
         planner_view = snapshot.planner_img_bytes
-        if not planner_view or planner_view is snapshot.raw_img_bytes:
+        if not snapshot.marks or not planner_view:
             return
+        session_dir.mkdir(parents=True, exist_ok=True)
         self.media_manager.save_redacted_bytes(
-            planner_view, snapshot.gui_elements, path
+            planner_view,
+            snapshot.gui_elements,
+            session_dir / f"step{step + 1}_{snapshot.timestamp}_marks.png",
         )
 
     def save_action(

@@ -197,3 +197,160 @@ class CacheAliasingTests(unittest.TestCase):
         auditor.audit(b"png", screen_id="same")
 
         self.assertEqual(llm.generate_response.call_count, 1)
+
+
+class ScreenWatchTests(unittest.TestCase):
+    """When a screen is worth auditing, rather than auditing every step.
+
+    The fingerprint alone decides nothing: every keystroke moves it, so a cache
+    keyed on it reused nothing across 122 audits in one recorded run.
+    """
+
+    def _watch(self):
+        from ronin.testing.qa_auditor import ScreenWatch
+
+        looked = []
+
+        class Recording:
+            def audit(self, screenshot, screen_id):
+                looked.append(screen_id)
+                return _assessment()
+
+        return ScreenWatch(Recording()), looked
+
+    def _snapshot(self, phash, reason):
+        return SimpleNamespace(
+            raw_img_bytes=b"png",
+            current_phash=phash,
+            scan_info=SimpleNamespace(reason=reason),
+        )
+
+    def test_a_layout_shift_counts_as_arriving(self):
+        """It means under half the elements still match: a crash or a modal.
+
+        Treating it as the same screen leaves that unaudited until departure,
+        and nothing ever departs a crash.
+        """
+        watch, looked = self._watch()
+        watch.look(self._snapshot("A", "first_pass"))
+
+        fresh = watch.look(self._snapshot("B", "layout_shift"))
+
+        self.assertTrue(fresh)
+        self.assertIn("B", looked)
+
+    def test_arriving_on_a_screen_is_audited(self):
+        """A crash or a blank screen has to be caught while it can be acted on."""
+        watch, looked = self._watch()
+
+        fresh = watch.look(self._snapshot("A", "first_pass"))
+
+        self.assertEqual(len(fresh), 1)
+        self.assertEqual(looked, ["A"])
+
+    def test_working_a_screen_is_not_audited(self):
+        watch, looked = self._watch()
+        watch.look(self._snapshot("A", "first_pass"))
+
+        self.assertEqual(watch.look(self._snapshot("A2", "stable")), [])
+        self.assertEqual(watch.look(self._snapshot("A3", "stable")), [])
+        self.assertEqual(looked, ["A"])
+
+    def test_leaving_a_screen_audits_the_state_it_was_left_in(self):
+        """Where a typed secret would be showing, if it is showing anywhere."""
+        watch, looked = self._watch()
+        watch.look(self._snapshot("A", "first_pass"))
+        watch.look(self._snapshot("A-filled", "stable"))
+
+        watch.look(self._snapshot("B", "navigation"))
+
+        self.assertEqual(looked, ["A", "A-filled", "B"])
+
+    def test_a_screen_left_as_it_was_found_is_reported_once(self):
+        """The cache spares the call, but a second answer double-counts the rules."""
+        watch, looked = self._watch()
+        first = watch.look(self._snapshot("A", "first_pass"))
+
+        leaving = watch.look(self._snapshot("B", "navigation"))
+
+        self.assertEqual(len(first), 1)
+        self.assertEqual(len(leaving), 1, "only the arrival on B")
+        self.assertEqual(looked, ["A", "B"])
+
+    def test_the_last_screen_is_read_when_the_scenario_ends(self):
+        watch, looked = self._watch()
+        watch.look(self._snapshot("A", "first_pass"))
+        watch.look(self._snapshot("A-filled", "stable"))
+
+        closing = watch.close()
+
+        self.assertEqual(len(closing), 1)
+        self.assertEqual(looked, ["A", "A-filled"])
+
+    def test_closing_twice_reads_nothing_again(self):
+        watch, looked = self._watch()
+        watch.look(self._snapshot("A", "first_pass"))
+
+        self.assertEqual(watch.close(), [], "the screen was not changed since arrival")
+        self.assertEqual(watch.close(), [])
+        self.assertEqual(looked, ["A"])
+
+    def test_a_snapshot_with_no_scan_is_treated_as_arrival(self):
+        """Not knowing why the screen changed is no reason to skip looking."""
+        watch, looked = self._watch()
+
+        fresh = watch.look(
+            SimpleNamespace(raw_img_bytes=b"png", current_phash="A", scan_info=None)
+        )
+
+        self.assertEqual(len(fresh), 1)
+
+    def test_a_changed_screen_is_reported_on_arrival_and_on_departure(self):
+        """Two states, two answers. Suppressing the second would lose the leak."""
+        watch, looked = self._watch()
+        watch.look(self._snapshot("A", "first_pass"))
+        watch.look(self._snapshot("A-filled", "stable"))
+
+        leaving = watch.look(self._snapshot("B", "navigation"))
+
+        self.assertEqual(len(leaving), 2, "the filled state, then arrival on B")
+        self.assertEqual(looked, ["A", "A-filled", "B"])
+
+    def test_returning_to_a_screen_is_judged_again(self):
+        """Deduping across the run leaves a rule looking untested.
+
+        A scenario that comes back to a screen is asking about it again. An
+        answer withheld because the same pixels were judged earlier never
+        reaches the report, and the outcome it evidenced goes missing.
+        """
+        watch, looked = self._watch()
+        watch.look(self._snapshot("A", "first_pass"))
+        watch.look(self._snapshot("B", "navigation"))
+
+        returning = watch.look(self._snapshot("A", "navigation"))
+
+        self.assertTrue(returning)
+        self.assertEqual(looked, ["A", "B", "A"])
+
+    def test_a_withdrawn_verdict_gets_the_second_look_it_was_promised(self):
+        """A crash dialog reports stable next step, so nothing would re-read it.
+
+        The first look withdraws a crash in case the app is still drawing. If
+        the second look never comes, the crash is not deferred — it is lost.
+        """
+        watch, looked = self._watch()
+        watch.look(self._snapshot("A", "first_pass"))
+
+        watch.look_again()
+        fresh = watch.look(self._snapshot("A", "stable"))
+
+        self.assertEqual(len(fresh), 1)
+        self.assertEqual(looked, ["A", "A"])
+
+    def test_the_second_look_is_only_taken_once(self):
+        watch, looked = self._watch()
+        watch.look(self._snapshot("A", "first_pass"))
+        watch.look_again()
+        watch.look(self._snapshot("A", "stable"))
+
+        self.assertEqual(watch.look(self._snapshot("A", "stable")), [])

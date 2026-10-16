@@ -166,21 +166,21 @@ class TargetDecisionTests(unittest.TestCase):
         self.assertIn("blue button at the bottom", decision.observation)
         self.assertIn("Scroll it into view", decision.observation)
 
-    def test_one_more_look_is_allowed_after_a_target_is_not_numbered(self):
-        """The field may be behind the keyboard, and scrolling changes the screen."""
-        from ronin.agent.step.targeting import unlisted_is_final
+    def test_a_missing_target_names_itself_in_the_reason(self):
+        """The report should say which wall the run hit, not only that it stopped."""
+        from ronin.agent.step.targeting import Decision, stalled_reason
 
-        self.assertIsNone(unlisted_is_final(None, "screenA", "the CVV field"))
-        self.assertIsNone(unlisted_is_final("screenA", "screenB", "the CVV field"))
+        reason = stalled_reason(Decision(ok=False, unmatched=True, target="the CVV field"))
 
-    def test_a_second_refusal_on_the_same_screen_ends_the_scenario(self):
-        """Looking again at identical pixels is not progress."""
-        from ronin.agent.step.targeting import unlisted_is_final
+        self.assertIn("already searched", reason)
+        self.assertIn("the CVV field", reason)
 
-        final = unlisted_is_final("screenA", "screenA", "the CVV field")
+    def test_any_other_refusal_carries_its_own_observation(self):
+        from ronin.agent.step.targeting import Decision, stalled_reason
 
-        self.assertIn("already searched", final)
-        self.assertIn("the CVV field", final)
+        reason = stalled_reason(Decision(ok=False, observation="element 17 takes no text"))
+
+        self.assertIn("element 17 takes no text", reason)
 
     def test_coordinates_still_work_when_marks_are_not_in_use(self):
         from ronin.agent.actuation.actions import Coordinates, TapAction

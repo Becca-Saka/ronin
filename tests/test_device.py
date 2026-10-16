@@ -396,7 +396,7 @@ class DeviceTypingTests(unittest.TestCase):
             {"x": 63, "y": 820, "width": 954, "height": 147}
         )
 
-        with self.assertRaisesRegex(ActionRejected, "cannot hold text"):
+        with self.assertRaisesRegex(ActionRejected, "holds no text"):
             control.type("test@email.com", 537, 1260)
 
         control.tap.assert_called_once_with(537, 1260)
@@ -422,7 +422,7 @@ class DeviceTypingTests(unittest.TestCase):
 
         control.tap = Mock(side_effect=tap)
 
-        with self.assertRaisesRegex(ActionRejected, "screen has moved"):
+        with self.assertRaisesRegex(ActionRejected, "screen moved"):
             control.type("password123", 537, 1444)
 
         email.send_keys.assert_not_called()
@@ -433,7 +433,7 @@ class DeviceTypingTests(unittest.TestCase):
             {"x": 63, "y": 820, "width": 954, "height": 147}
         )
 
-        with self.assertRaisesRegex(ActionRejected, "cannot hold text"):
+        with self.assertRaisesRegex(ActionRejected, "holds no text"):
             control.clear(537, 1260)
 
         control.tap.assert_called_once_with(537, 1260)

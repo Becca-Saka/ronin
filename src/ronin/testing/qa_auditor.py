@@ -112,6 +112,94 @@ only what this screen shows.
 """
 
 
+ENTERING = ("navigation", "first_pass", "layout_shift")
+"""Scan reasons that mean a different screen, rather than the same one working.
+
+A layout shift is fewer than half the previous elements still matching, which
+is how a crash screen or a modal arrives when it happens to resemble what it
+replaced. Typing reports stable or ocr_refresh: the fingerprint moves, the
+screen does not.
+"""
+
+
+class ScreenWatch:
+    """Decides when a screen is worth auditing, rather than auditing each step.
+
+    Twice per screen: once on arrival, and once on the state it is left in.
+    Arrival is what catches a crash or a blank screen while there is still a
+    scenario to stop. The parting look is what catches a value that appeared
+    while the screen was being filled in, which is where a secret leaks.
+
+    The steps between are the same screen being worked. One recorded run paid
+    for 122 audits and reused none of them, because every keystroke moved the
+    fingerprint the cache was keyed on.
+
+    A defect that appears and is gone again before the screen is left goes
+    unseen. That is the trade: a transient is worth less than the six-fold
+    saving, and the states that matter are both still covered.
+    """
+
+    def __init__(self, auditor: "QAAuditor"):
+        self._auditor = auditor
+        self._pending: Optional[tuple] = None
+        self._visit: set = set()
+        self._forced = False
+
+    def look_again(self) -> None:
+        """Audits the next step whatever the screen reports.
+
+        A verdict withdrawn as too early is promised a second look. The screen
+        it was withdrawn on usually reports stable next step, so without this
+        the promise is not kept and the verdict is simply lost.
+        """
+        self._forced = True
+
+    def look(self, snapshot) -> List[Assessment]:
+        """Assessments to act on now. Empty while a screen is merely worked."""
+        reason = snapshot.scan_info.reason if snapshot.scan_info else "navigation"
+        fresh: List[Assessment] = []
+
+        if self._forced:
+            self._forced = False
+            self._visit.discard(snapshot.current_phash)
+            fresh.extend(self._once(snapshot.raw_img_bytes, snapshot.current_phash))
+        elif reason in ENTERING:
+            if self._pending is not None:
+                fresh.extend(self._once(*self._pending))
+            # A visit ends here. Coming back to this screen later is a new one,
+            # and gets judged again rather than being answered from memory.
+            self._visit = set()
+            fresh.extend(self._once(snapshot.raw_img_bytes, snapshot.current_phash))
+
+        self._pending = (snapshot.raw_img_bytes, snapshot.current_phash)
+        return fresh
+
+    def close(self) -> List[Assessment]:
+        """The screen the scenario ended on, which nothing else will leave."""
+        if self._pending is None:
+            return []
+        last, self._pending = self._pending, None
+        return self._once(*last)
+
+    def _once(self, screenshot: bytes, screen_id: Optional[str]) -> List[Assessment]:
+        """One assessment per screen state, per visit to that screen.
+
+        A screen left exactly as it was found is read twice, on arrival and on
+        departure. The auditor's cache spares the second model call but still
+        answers, and reporting that answer would count every rule on that
+        screen twice.
+
+        Per visit, not per run. A scenario that comes back to a screen is
+        asking about it again, and a verdict withheld because the same screen
+        was judged earlier leaves the rule looking untested.
+        """
+        if screen_id is not None and screen_id in self._visit:
+            return []
+        if screen_id is not None:
+            self._visit.add(screen_id)
+        return [self._auditor.audit(screenshot, screen_id)]
+
+
 class QAAuditor:
     """Asks a model what one screen shows, with no knowledge of the plan."""
 
@@ -133,7 +221,7 @@ class QAAuditor:
         step. One recorded run of 122 audits reused nothing.
         """
         if screen_id and screen_id in self._by_screen:
-            logger.debug("Screen %s already audited; reusing it.", screen_id[:12])
+            logger.debug("Screen %s was audited already. Reusing it.", screen_id[:12])
             return self._kept(self._by_screen[screen_id])
 
         message = MultiPartMessage()

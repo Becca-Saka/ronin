@@ -12,9 +12,15 @@ and is recorded. A detection gap we count is worth more than one we hide.
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
-from ronin.agent.actuation.actions import TARGETED_ACTIONS, ActionType, Coordinates
+from ronin.agent.actuation.actions import (
+    TARGETED_ACTIONS,
+    Action,
+    TEXT_FIELD_ACTIONS,
+    ActionType,
+    Coordinates,
+)
 from ronin.agent.history import ActionEntry, ActionResult
 from ronin.agent.device_planner import GROUNDING_MARKS
 from ronin.agent.perception import marks
@@ -55,13 +61,13 @@ def resolve_mark(action, element_marks, grounding: str = "") -> tuple:
     if grounding == GROUNDING_MARKS:
         if index is None:
             return (
-                "Not executed — this action needs `mark`, the number of the element "
-                "on the screenshot. Coordinates are not accepted. If the element you "
-                "need has no number, use target_not_listed."
+                "Not executed. This action needs `mark`. `mark` is the number on "
+                "the screenshot. Do not send coordinates. If the element you need "
+                "has no number, answer target_not_listed."
             ), None
     elif index is None:
         if getattr(action, "coordinates", None) is None:
-            return "Not executed — this action needs `coordinates` of the target.", None
+            return "Not executed. This action needs `coordinates` of the target.", None
         return None, None
 
     mark = marks.find(element_marks, index)
@@ -69,8 +75,16 @@ def resolve_mark(action, element_marks, grounding: str = "") -> tuple:
         available = len(element_marks)
         logger.warning("Element %s was chosen but only 1-%d exist.", index, available)
         return (
-            f"Not executed — there is no element {index}. The numbered elements "
-            f"are 1 to {available}. Choose one of those."
+            f"Not executed. There is no element {index}. The numbers on this "
+            f"screen are 1 to {available}. Choose one of them."
+        ), None
+
+    if mark.refuses_text and action.type in TEXT_FIELD_ACTIONS:
+        return (
+            f"Not executed. Element {index} holds no text. Typing there did not "
+            "move the cursor, twice. Choose a different number. If no number is "
+            "the field you need, the field is off screen. Close the keyboard "
+            "with key_event 4, or scroll. Then look again."
         ), None
 
     x, y = mark.center
@@ -145,26 +159,64 @@ class Decision:
     """The planner asked for something no number names. The loop decides whether
     that ends the scenario, because only the loop knows if the screen changed
     since the last time it was asked."""
-    action: Optional[object] = None
+
+    target: Optional[str] = None
+    """What the planner said it was looking for, when no number named it."""
+    action: Optional[Action] = None
     """The action to run instead, once a number has been turned into a point."""
 
 
 USABLE = Decision()
 
 
-def unlisted_is_final(seen_phash, current_phash, description) -> Optional[str]:
-    """Why an unnumbered target ends the scenario, or None to allow another look.
+def refuse_mark(
+    strikes: dict[str, list[marks.Box]],
+    refused: dict[str, list[marks.Box]],
+    phash: Optional[str],
+    index: Optional[int],
+    element_marks: Sequence[marks.Mark],
+) -> None:
+    """Records a failure to put text somewhere, and bans the place on the second.
 
-    Only what is on screen carries a number, so the first refusal often means
-    the target is below the fold or behind the keyboard. Scrolling changes the
-    screen. A refusal on a screen that already refused means looking again did
-    not help, and nothing further will come of asking a third time.
+    Focus that did not move proves the tap reached nothing focusable. It does
+    not prove the element holds no text: a tap into the padding of a real field
+    does the same. Banning on one failure can make a genuine password field
+    untypable for the rest of the screen, so the first failure only leaves a
+    mark against the place.
+
+    Kept by place rather than by number. Numbers are handed out in reading
+    order over whatever the detector returned, so they do not survive a
+    detection appearing or disappearing between two looks at one screen.
     """
-    if seen_phash is None or seen_phash != current_phash:
-        return None
+    mark = marks.find(element_marks, index) if index is not None else None
+    if phash is None or mark is None:
+        return
+
+    box = marks.box_of(mark.element)
+    first = strikes.setdefault(phash, [])
+    if not any(marks.is_same_element(mark.element, seen) for seen in first):
+        first.append(box)
+        logger.info("Element %d took no text. Trying it once more.", index)
+        return
+
+    refused.setdefault(phash, []).append(box)
+    logger.info("Element %d took no text twice. Its place will be skipped.", index)
+
+
+def stalled_reason(decision) -> str:
+    """Why a screen that keeps refusing ends the scenario.
+
+    Named from what the last refusal was, so the report says which wall the
+    run hit rather than only that it stopped.
+    """
+    if decision.target:
+        return (
+            "Target was not among the detected elements, on a screen already "
+            f"searched for it: {decision.target}"
+        )
     return (
-        "Target was not among the detected elements, on a screen already "
-        f"searched for it: {description}"
+        "No action reached the screen after repeated attempts. Last refusal: "
+        f"{decision.observation}"
     )
 
 
@@ -179,13 +231,14 @@ def evaluate(action, snapshot, device_control, grounding: str = "") -> Decision:
         return Decision(
             ok=False,
             observation=(
-                f"Not executed — nothing on this screen is numbered as: "
-                f"{action.description}. Only what is visible gets a number, so a "
-                "target below the fold or behind the keyboard has none. Scroll it "
-                "into view, or dismiss the keyboard with key_event 4, then look "
-                "again. Say target_not_listed once more if it is still absent."
+                f"Not executed. No number names this: {action.description}. Only "
+                "what is on screen gets a number. A target below the fold has no "
+                "number. A target behind the keyboard has no number. Scroll it "
+                "into view, or close the keyboard with key_event 4. Then look "
+                "again. Answer target_not_listed again if it is still absent."
             ),
             unmatched=True,
+            target=action.description,
         )
 
     unresolved, resolved = resolve_mark(action, snapshot.marks, grounding)

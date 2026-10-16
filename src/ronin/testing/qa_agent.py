@@ -34,7 +34,7 @@ from ronin.testing.models import (
 from ronin.testing.capabilities import unsupported_reason
 from ronin.agent.device_planner import GROUNDING_COORDINATES
 from ronin.testing import rules
-from ronin.testing.qa_auditor import Assessment, QAAuditor
+from ronin.testing.qa_auditor import Assessment, QAAuditor, ScreenWatch
 from ronin.testing.qa_planner import QAPlanner, QAStepResponse
 
 from ronin.agent.actuation.actions import WaitAction
@@ -54,15 +54,25 @@ def _terminal_outcome(
     """Classify outcomes that cannot become a successful verification."""
     from ronin.utils.redactor import redact_text
 
+    # Ranked first: a crash is something the app did, and the rest are
+    # statements about the run. A scenario that crashed the app has found a
+    # defect, whatever else the planner concluded about being able to proceed.
+    if any(issue.issue_type == "crash_screen" for issue in issues):
+        return "FAILED", "App crashed: crash screen detected."
     if run_result.status == "hook_stop" and stop_reason and "infeasible" in stop_reason.lower():
         return "SKIPPED", stop_reason
     if run_result.status == "exception":
         return "ERROR", redact_text(run_result.failure_reason or "Execution exception")
     if run_result.status in ("loop_detected", "step_limit"):
         return "UNVERIFIED", run_result.failure_reason
-    if any(issue.issue_type == "crash_screen" for issue in issues):
-        return "FAILED", "App crashed: crash screen detected."
-    critical = next((issue for issue in issues if issue.severity == "critical"), None)
+    critical = next(
+        (
+            issue
+            for issue in issues
+            if issue.severity == "critical" and not _contradicted(issue, verifications)
+        ),
+        None,
+    )
     if critical:
         return "FAILED", f"Critical QA issue: {critical.description}"
     violated = _violated_security_rule(verifications)
@@ -71,7 +81,7 @@ def _terminal_outcome(
     failed = next(
         (
             verification
-            for verification in _latest_by_id(verifications).values()
+            for verification in _last_applicable(verifications).values()
             if verification.status == "failed"
         ),
         None,
@@ -81,6 +91,37 @@ def _terminal_outcome(
     if outputs and not outputs[-1].is_scenario_feasible:
         return "SKIPPED", outputs[-1].infeasibility_reason or "Scenario infeasible"
     return None
+
+
+EXPOSURE = "sensitive_data_exposure"
+
+
+def _contradicted(issue, verifications: List[RuleVerification]) -> bool:
+    """Whether the auditor's own verdicts disagree with this issue.
+
+    It reports rules and defects in one answer, and the two can disagree about
+    one screen. One recorded run passed every masking rule on the checkout
+    screen, quoting "only 'CVV:' is visible", and in the same answer called
+    that label a plain-text CVV. The scenario failed on the defect.
+
+    Rules name what to look for, and a defect is whatever the model decides to
+    mention, so the rules are the better evidence. Where every masking rule
+    that could apply to a screen passed, an exposure claim about that screen is
+    not grounds to fail the scenario. It is still reported.
+    """
+    if issue.issue_type != EXPOSURE:
+        return False
+
+    here = [
+        verification
+        for verification in verifications
+        if verification.screen_name == issue.current_screen
+        and verification.applicable
+        and rules.is_kind(verification.rule_id or "", rules.SECURITY)
+    ]
+    return bool(here) and all(
+        verification.status == "passed" for verification in here
+    )
 
 
 def _defer_first_look(step_response, assessment, first_look: bool) -> bool:
@@ -122,16 +163,17 @@ def _defer_first_look(step_response, assessment, first_look: bool) -> bool:
     return deferred
 
 
-def _latest_by_id(verifications: List[RuleVerification]) -> dict:
-    """The last answer recorded for each identified rule.
+def _last_applicable(verifications: List[RuleVerification]) -> dict:
+    """The last answer from a screen the rule could apply to, per rule.
 
     Every rule is evaluated on every screen, so a scenario accumulates many
-    answers per rule. Some are "not yet", from screens reached before the rule
-    could hold. The final answer is the one that describes the run.
+    answers per rule. Screens the rule cannot apply to answer "untested", and
+    those say nothing about the rule. Reading them as the verdict would let
+    walking away from a field decide whether the field worked.
     """
     latest = {}
     for verification in verifications:
-        if verification.rule_id:
+        if verification.rule_id and verification.applicable:
             latest[verification.rule_id] = verification
     return latest
 
@@ -162,9 +204,11 @@ def _missing_required_ids(
 
     The two kinds are judged differently because they mean different things.
 
-    An expected outcome describes where the scenario ends up, so the latest
-    answer decides it. An earlier "not yet" is an honest report from a screen
-    reached before the outcome could hold.
+    An expected outcome is evidenced once some screen showed it holding. Many
+    outcomes can only be seen in passing — a field accepts a long address, and
+    the next screen has no such field. Letting the newest answer decide would
+    let leaving that screen erase the proof that it worked. A later "failed"
+    still counts, because the outcome stopped holding where it could be seen.
 
     A security rule describes what must never happen. The planner reports on
     every rule on every screen, so a mention alone proves nothing. A rule
@@ -185,12 +229,11 @@ def _missing_required_ids(
         and verification.applicable
         and verification.status == "passed"
     }
-    latest = _latest_by_id(verifications)
+    latest = _last_applicable(verifications)
     settled = {
         rule_id
         for rule_id in expected_ids
         if (verification := latest.get(rule_id))
-        and verification.applicable
         and verification.status == "passed"
     }
     required_ids = expected_ids | (security_ids & applicable)
@@ -277,6 +320,8 @@ class QAAgent:
             scrubber=self._device_agent.scrubber,
         )
 
+        watch = ScreenWatch(auditor)
+
         def step_hook(step_response: DeviceStepResponse, snapshot) -> Optional[bool]:
             if not isinstance(step_response, QAStepResponse):
                 return None
@@ -284,14 +329,25 @@ class QAAgent:
             qa_outputs.append(step_response)
             # The screen is audited by something that was not told the plan, so
             # a verdict here is capable of contradicting the action above it.
-            assessment = auditor.audit(snapshot.raw_img_bytes, snapshot.current_phash)
-            assessment.screen_name = assessment.screen_name or step_response.current_screen
-            assessments.append(assessment)
+            fresh = watch.look(snapshot)
+            for assessment in fresh:
+                assessment.screen_name = (
+                    assessment.screen_name or step_response.current_screen
+                )
+            assessments.extend(fresh)
 
-            if _defer_first_look(step_response, assessment, len(qa_outputs) == 1):
+            if fresh and _defer_first_look(
+                step_response, fresh[-1], len(qa_outputs) == 1
+            ):
+                # The withdrawal promised another look; this is what keeps it.
+                watch.look_again()
                 return None
 
-            if any(i.issue_type == "crash_screen" for i in assessment.detected_issues):
+            if any(
+                issue.issue_type == "crash_screen"
+                for assessment in fresh
+                for issue in assessment.detected_issues
+            ):
                 logger.error("App crash screen detected — stopping scenario.")
                 stop_reason["value"] = "App crashed: crash screen detected."
                 return False
@@ -363,6 +419,9 @@ class QAAgent:
             )
         finally:
             self._device_agent.replay_ledger = replay
+
+        # Nothing ever leaves the screen a scenario ended on, so it is read here.
+        assessments.extend(watch.close())
 
         return self._build_report(
             test_case=test_case,

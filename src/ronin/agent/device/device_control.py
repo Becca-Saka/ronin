@@ -29,6 +29,16 @@ from ronin.utils.subprocess_runner import run_command
 logger = logging.getLogger(__name__)
 
 ANDROID_KEYCODE_BACK = 4
+
+# Android draws runtime permission prompts from its own package, so the app
+# under test is briefly not the foreground one.
+PERMISSION_DIALOG_PACKAGES = frozenset(
+    {
+        "com.google.android.permissioncontroller",
+        "com.android.permissioncontroller",
+        "com.android.packageinstaller",
+    }
+)
 IOS_APP_STATE_FOREGROUND = 4
 RECOVERY_SLEEP_AFTER_BACK = 1.5
 RECOVERY_SLEEP_AFTER_ACTIVATE = 2.0
@@ -100,7 +110,7 @@ class DeviceControl:
         packages = AdbControl.installed_packages(serial)
         required = {"io.appium.uiautomator2.server", "io.appium.uiautomator2.server.test"}
         if not required.issubset(packages):
-            logger.info("Appium server not yet on %s; doing a full device setup.", serial)
+            logger.info("No Appium server on %s yet. Doing a full device setup.", serial)
             return
         logger.info("Reusing the Appium server already installed on %s.", serial)
         options.set_capability("appium:skipServerInstallation", True)
@@ -291,6 +301,29 @@ class DeviceControl:
             self.execute_script("mobile: pressButton", {"name": key})
         time.sleep(0.5)
 
+    def dismiss_keyboard(self) -> bool:
+        """Closes the soft keyboard, which covers the lower half of the screen.
+
+        Back is the Android way and is what the planner is told to use, so the
+        two agree. iOS has no back key and Appium hides the keyboard directly.
+
+        Returns whether it closed, read back rather than assumed. A key press
+        that raised nothing is not a keyboard that went away, and the caller
+        spends the screen's one attempt on the answer.
+        """
+        try:
+            if self.platform == Platform.ANDROID:
+                self.key_event(ANDROID_KEYCODE_BACK)
+            else:
+                self.driver.hide_keyboard()
+        except Exception as exc:  # noqa: BLE001 - driver boundary
+            logger.warning("Could not close the keyboard: %s", exc)
+            return False
+
+        # None means no check could answer. Treated as closed, because the
+        # press was made and refusing to believe it would retry forever.
+        return self.is_keyboard_open() is not True
+
     def swipe(self, start_x, start_y, end_x, end_y, duration_ms: int = 400):
         """Performs a swipe gesture using W3C pointer actions.
 
@@ -370,6 +403,30 @@ class DeviceControl:
         except Exception as e:
             logger.warning("Failed to check SUT focus: %s", e)
         return True
+
+    def showing_system_prompt(self) -> bool:
+        """Whether the operating system is asking the user something over the app.
+
+        Android names the prompt: it is drawn from a package of its own, so the
+        foreground package stops matching and the check is exact. Saying so
+        matters there because drift recovery presses back, and back on a
+        permission prompt denies it, after which the journey fails several
+        steps later for a reason that looks nothing like a denial.
+
+        iOS answers False, and the alternative is worse. Appium reports an
+        alert for the app's own modals too, with nothing to tell the two apart,
+        so claiming a prompt there would tell the planner an app dialog belongs
+        to the system and must not be dismissed. Being wrong on iOS costs
+        little by comparison: recovery brings the app forward rather than
+        pressing back, so no permission is answered by accident.
+        """
+        if self.platform != Platform.ANDROID:
+            return False
+        try:
+            return self.driver.current_package in PERMISSION_DIALOG_PACKAGES
+        except Exception as exc:  # noqa: BLE001 - driver boundary
+            logger.debug("Could not read the foreground package: %s", exc)
+            return False
 
     def is_keyboard_open(self) -> Optional[bool]:
         """Detect whether the soft keyboard is currently visible on screen.

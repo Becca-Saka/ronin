@@ -8,7 +8,7 @@ from ronin.agent.step import observation, outcomes
 from ronin.agent.device_agent import (
     AgentHistory,
     RollingLoopDetector,
-    _RunContext,
+    RunContext,
 )
 
 
@@ -43,7 +43,7 @@ class EarlyStopTests(unittest.TestCase):
         return SimpleNamespace(action=SimpleNamespace(type="tap"), **kwargs)
 
     def _context(self):
-        return _RunContext(
+        return RunContext(
             history=AgentHistory(), loop_detector=RollingLoopDetector(), steps_executed=3
         )
 
@@ -108,7 +108,7 @@ class ReplayTests(unittest.TestCase):
         return ledger
 
     def _context(self):
-        return _RunContext(history=AgentHistory(), loop_detector=RollingLoopDetector())
+        return RunContext(history=AgentHistory(), loop_detector=RollingLoopDetector())
 
     @patch("ronin.agent.replay.ActionOrchestrator")
     def test_replays_a_known_transition(self, orchestrator):

@@ -218,6 +218,11 @@ TARGETED_ACTIONS = frozenset(
 )
 
 
+# Actions whose target must be a text field, and which therefore prove
+# whether it is one.
+TEXT_FIELD_ACTIONS = frozenset({ActionType.TYPE, ActionType.CLEAR})
+
+
 # --- The Union of All Actions ---
 Action = Annotated[
     TypeAction

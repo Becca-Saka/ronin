@@ -16,7 +16,7 @@ import logging
 import time
 
 from ronin.defaults import FOCUS_POLL_INTERVAL, FOCUS_POLL_TIMEOUT
-from ronin.errors import ActionRejected
+from ronin.errors import ActionRejected, TargetNotInteractive
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +95,8 @@ class Focus:
         identical to the layout reflowing.
 
         `before` is focus as it stood before the tap. Unchanged focus means the
-        tap landed on something that cannot hold text, which is a different
-        problem from a layout that moved, and needs a different answer.
+        tap landed on something that holds no text. That is a different problem
+        from a layout that moved, and it needs a different answer.
         """
         rect = self._rect()
         if rect is None:
@@ -114,7 +114,9 @@ class Focus:
         if self._holds(rect, x, y):
             return
 
-        raise ActionRejected(f"{action} {self._why(rect, before)} Nothing was entered.")
+        unmoved = before is not None and rect == before
+        fault = TargetNotInteractive if unmoved else ActionRejected
+        raise fault(f"{action} {self._why(rect, before)} Nothing was entered.")
 
     @staticmethod
     def _why(rect, before) -> str:
@@ -127,12 +129,12 @@ class Focus:
         """
         if before is not None and rect == before:
             return (
-                "did not reach the target you chose, which cannot hold text — a "
-                "label, or a picture of a field rather than the field itself. "
-                "Focus never moved. Choose the element that takes the typing, or "
-                "scroll if it is off screen or behind the keyboard."
+                "did not reach the target you chose. The cursor did not move, so "
+                "that element holds no text. It is a label, or a picture of a "
+                "field. Choose an element that holds text. If no element on "
+                "screen is the one you need, scroll or close the keyboard."
             )
         return (
-            "landed on a different element than the one you chose, so the screen "
-            "has moved since it was read. Read the screen again before choosing."
+            "landed on a different element. The screen moved after you read it. "
+            "Read the screen again. Then choose a target."
         )

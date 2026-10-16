@@ -5,7 +5,6 @@ can inject QAPlanner without re-implementing the loop.
 """
 
 import logging
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +27,9 @@ from ronin.agent.step.observation import PerceptionSnapshot
 from ronin.agent.step.artifacts import StepArtifacts
 from ronin.agent.step import narration
 from ronin.agent.step.loop_detector import RollingLoopDetector
+from ronin.agent.step import recovery
+from ronin.agent.step.run_context import RunContext
+from ronin.agent.step.stall import SPENT
 from ronin.agent.replay import ReplayLedger, replay_known_path, target_label
 from ronin.agent.step import targeting
 from ronin.utils.secrets import SecretScrubber
@@ -35,6 +37,7 @@ from ronin.agent.perception import marks
 from ronin.agent.perception.media_manager import MediaManager
 from ronin.agent.perception.perception import ScreenPerception
 from ronin.agent.trail import SessionTrail
+from ronin.errors import TargetNotInteractive
 from ronin.llm.llm_client import LLMClient
 from ronin.utils.redactor import redact_text
 
@@ -45,26 +48,6 @@ Called after each planning step, before action execution.
 Return False to request early loop termination (e.g. crash detected, infeasible scenario).
 Return None or True to continue normally.
 """
-
-
-@dataclass
-class _RunContext:
-    history: AgentHistory
-    loop_detector: RollingLoopDetector
-    visual_history: list[bytes] = field(default_factory=list)
-    prev_phash: Optional[str] = None
-    last_external_nav: bool = False
-    drift_warning: Optional[str] = None
-    steps_executed: int = 0
-    current_phash: Optional[str] = None
-    prev_element_count: Optional[int] = None
-    keyboard_open: Optional[bool] = None
-    last_action_type: Optional[str] = None
-    screen_height: Optional[int] = None
-    pending_loop_nudge: Optional[str] = None
-    unlisted_phash: Optional[str] = None
-    """Where the planner last said the target it needs carries no number. A
-    second refusal on that same screen means looking again did not help."""
 
 
 class DeviceAgent:
@@ -157,14 +140,14 @@ class DeviceAgent:
         """
         planner = planner_override or self._default_fast_planner
         session_dir.mkdir(parents=True, exist_ok=True)
-        ctx = _RunContext(
+        ctx = RunContext(
             history=AgentHistory(),
             loop_detector=RollingLoopDetector(),
             screen_height=getattr(device_control, "screen_height", None),
         )
 
         try:
-            self._restart_app(device_control)
+            restart_app(device_control)
             replay_known_path(
                 ledger=self.replay_ledger,
                 device_control=device_control,
@@ -188,8 +171,10 @@ class DeviceAgent:
                     ctx=ctx,
                 )
                 if result is not None:
+                    self._log_recovery_cost(ctx)
                     return result
 
+            self._log_recovery_cost(ctx)
             return outcomes.step_limit(
                 getattr(self, "_step_limit", self.max_steps), ctx, session_trail
             )
@@ -199,11 +184,22 @@ class DeviceAgent:
             logger.error(
                 "Device agent run failed (%s): %s", type(exc).__name__, safe_error
             )
+            self._log_recovery_cost(ctx)
             return DeviceRunResult(
                 status="exception",
                 steps_executed=ctx.steps_executed,
                 failure_reason=f"Execution exception: {safe_error}",
                 history=ctx.history,
+            )
+
+    @staticmethod
+    def _log_recovery_cost(ctx: RunContext) -> None:
+        """Says what rescuing the run cost, which the step count does not show."""
+        if ctx.recovery_looks:
+            logger.info(
+                "Recovery was used on %d screen(s), costing %d extra model call(s).",
+                len(ctx.recovered),
+                ctx.recovery_looks,
             )
 
     def _run_step(
@@ -216,7 +212,7 @@ class DeviceAgent:
         session_dir: Path,
         session_trail: Optional[SessionTrail],
         step_hook: Optional[StepHookFn],
-        ctx: _RunContext,
+        ctx: RunContext,
     ) -> Optional[DeviceRunResult]:
         ctx.steps_executed += 1
         logger.info(
@@ -256,6 +252,11 @@ class DeviceAgent:
             filter(None, [ctx.pending_loop_nudge, page_nudge])
         ) or None
         ctx.pending_loop_nudge = None
+
+        # Saved before the model is called, so a planning failure still leaves
+        # the image the planner was given.
+        observation.number_targets(snapshot, ctx, self.grounding)
+        self.artifacts.save_planner_view(session_dir, step, snapshot)
 
         step_response = self._plan_step(
             planner=planner,
@@ -309,14 +310,21 @@ class DeviceAgent:
                     session_dir / f"not_listed_step{step + 1}_{snapshot.timestamp}.png",
                     snapshot,
                 )
-                final = targeting.unlisted_is_final(
-                    ctx.unlisted_phash, snapshot.current_phash, action.description
+            if recovery.reveal_behind_keyboard(device_control, snapshot, ctx):
+                return None
+            ctx.stall.record_blocked(snapshot.current_phash)
+            if ctx.stall.spent and not self._unblock(
+                decision.target or narration.describe(action),
+                device_control,
+                perception,
+                ctx,
+            ):
+                return outcomes.loop_detected(
+                    ctx,
+                    session_trail,
+                    snapshot.current_phash,
+                    targeting.stalled_reason(decision),
                 )
-                if final:
-                    return outcomes.loop_detected(
-                        ctx, session_trail, snapshot.current_phash, final
-                    )
-                ctx.unlisted_phash = snapshot.current_phash
             return None
 
         action = decision.action or action
@@ -330,6 +338,19 @@ class DeviceAgent:
             session_trail=session_trail,
             ctx=ctx,
         )
+        if ctx.stall.stuck and recovery.reveal_behind_keyboard(
+            device_control, snapshot, ctx
+        ):
+            return None
+        # An action that runs and fails stalls a screen as surely as one refused
+        # before dispatch. Burning a mark pushes the planner to try a different
+        # one, so a fresh target each time is still a screen going nowhere.
+        if ctx.stall.spent and not self._unblock(
+            narration.describe(action), device_control, perception, ctx
+        ):
+            return outcomes.loop_detected(
+                ctx, session_trail, snapshot.current_phash, SPENT
+            )
 
         ctx.prev_phash = snapshot.current_phash
         return None
@@ -337,12 +358,25 @@ class DeviceAgent:
 
 
 
+    def _unblock(self, target: str, device_control, perception, ctx: RunContext) -> bool:
+        """Supplies recovery with the parts of this agent it needs."""
+        return recovery.hand_over(
+            target=target,
+            llm=self.fast_llm,
+            use_multimodal_vision=self.use_multimodal_vision,
+            grounding=self.grounding,
+            scrubber=self.scrubber,
+            device_control=device_control,
+            perception=perception,
+            ctx=ctx,
+        )
+
     def _plan_step(
         self,
         planner: DevicePlanner,
         goal: str | list[str],
         snapshot: PerceptionSnapshot,
-        ctx: _RunContext,
+        ctx: RunContext,
         session_trail: Optional[SessionTrail],
         loop_nudge: Optional[str],
     ) -> DeviceStepResponse:
@@ -351,7 +385,6 @@ class DeviceAgent:
         gui_elements = marks.annotate_keyboard_keys(
             snapshot.gui_elements, ctx.keyboard_open, ctx.screen_height
         )
-        observation.number_targets(snapshot, ctx, self.grounding)
         return planner.plan_step(
             goal=goal,
             gui_elements=gui_elements,
@@ -372,7 +405,7 @@ class DeviceAgent:
         step_response: DeviceStepResponse,
         snapshot: PerceptionSnapshot,
         session_trail: Optional[SessionTrail],
-        ctx: _RunContext,
+        ctx: RunContext,
     ) -> None:
         action_text = getattr(step_response.action, "text", None)
         self.scrubber.learn(action_text)
@@ -406,16 +439,30 @@ class DeviceAgent:
         device_control,
         snapshot: PerceptionSnapshot,
         session_trail: Optional[SessionTrail],
-        ctx: _RunContext,
+        ctx: RunContext,
     ) -> bool:
         error: Optional[str] = None
         last_external_nav = ctx.last_external_nav
         try:
             ActionOrchestrator(device_control, self.scrubber).execute(action)
             last_external_nav = step_response.external_navigation
+            ctx.stall.action_dispatched()
+        except TargetNotInteractive as exc:
+            error = str(exc)
+            targeting.refuse_mark(
+                ctx.text_strikes,
+                ctx.refused_marks,
+                snapshot.current_phash,
+                step_response.action.model_dump().get("mark"),
+                snapshot.marks,
+            )
+            logger.error("Action execution failed: %s", error)
         except Exception as exc:
             error = str(exc)
             logger.error("Action execution failed: %s", error)
+
+        if error is not None:
+            ctx.stall.record_blocked(snapshot.current_phash)
 
         post_phash = observation.settle(device_control, self.settle_time)
         action_result = narration.action_result(
@@ -453,10 +500,7 @@ class DeviceAgent:
 
 
     def run_standalone(self, goal: str, record_session: bool = True) -> DeviceRunResult:
-        """
-        Convenience method for running a simple goal with a self-managed device session.
-        Used by main.py and other non-testing callers.
-        """
+        """Runs one goal against a device session this method owns."""
         session = DeviceSession(
             device_name=self.device_name,
             app_path=self.app_path,
@@ -478,7 +522,3 @@ class DeviceAgent:
         finally:
             session.close()
         return result
-
-
-    def _restart_app(self, device_control) -> None:
-        restart_app(device_control)
