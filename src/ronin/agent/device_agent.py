@@ -27,8 +27,8 @@ from ronin.agent.step.observation import PerceptionSnapshot
 from ronin.agent.step.artifacts import StepArtifacts
 from ronin.agent.step import narration
 from ronin.agent.step.loop_detector import RollingLoopDetector
-from ronin.agent.step import recovery
 from ronin.agent.step.run_context import RunContext
+from ronin.agent.step import stall
 from ronin.agent.step.stall import SPENT
 from ronin.agent.replay import ReplayLedger, replay_known_path, target_label
 from ronin.agent.step import targeting
@@ -314,15 +314,10 @@ class DeviceAgent:
                     session_dir / f"not_listed_step{step + 1}_{snapshot.timestamp}.png",
                     snapshot,
                 )
-            if recovery.reveal_behind_keyboard(device_control, snapshot, ctx):
+            if stall.reveal_behind_keyboard(device_control, snapshot, ctx):
                 return None
             ctx.stall.record_blocked(snapshot.current_phash)
-            if ctx.stall.spent and not self._unblock(
-                decision.target or narration.describe(action),
-                device_control,
-                perception,
-                ctx,
-            ):
+            if ctx.stall.spent:
                 return outcomes.loop_detected(
                     ctx,
                     session_trail,
@@ -342,16 +337,14 @@ class DeviceAgent:
             session_trail=session_trail,
             ctx=ctx,
         )
-        if ctx.stall.stuck and recovery.reveal_behind_keyboard(
+        if ctx.stall.stuck and stall.reveal_behind_keyboard(
             device_control, snapshot, ctx
         ):
             return None
         # An action that runs and fails stalls a screen as surely as one refused
         # before dispatch. Burning a mark pushes the planner to try a different
         # one, so a fresh target each time is still a screen going nowhere.
-        if ctx.stall.spent and not self._unblock(
-            narration.describe(action), device_control, perception, ctx
-        ):
+        if ctx.stall.spent:
             return outcomes.loop_detected(
                 ctx, session_trail, snapshot.current_phash, SPENT
             )
@@ -359,21 +352,6 @@ class DeviceAgent:
         ctx.prev_phash = snapshot.current_phash
         return None
 
-
-
-
-    def _unblock(self, target: str, device_control, perception, ctx: RunContext) -> bool:
-        """Supplies recovery with the parts of this agent it needs."""
-        return recovery.hand_over(
-            target=target,
-            llm=self.fast_llm,
-            use_multimodal_vision=self.use_multimodal_vision,
-            grounding=self.grounding,
-            scrubber=self.scrubber,
-            device_control=device_control,
-            perception=perception,
-            ctx=ctx,
-        )
 
     def _plan_step(
         self,

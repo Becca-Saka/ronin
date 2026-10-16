@@ -1,4 +1,4 @@
-"""How many steps in a row left the screen untouched, and when to give up.
+"""How many steps in a row left the screen untouched, and the one way out.
 
 A step that never reaches the device costs a model call and changes nothing.
 Repeated, it spends a scenario's budget while reporting "steps exhausted",
@@ -9,8 +9,11 @@ so a planner that reacts to a refusal gets a fresh count, and only one that
 keeps asking the same screen runs out.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 STALL_LIMIT = 3
 """Blocked steps on one screen before the scenario stops.
@@ -59,3 +62,27 @@ class Stall:
     def spent(self) -> bool:
         """Whether this screen has used up its attempts."""
         return self.count >= STALL_LIMIT
+
+
+def reveal_behind_keyboard(device_control, snapshot, ctx) -> bool:
+    """Pulls the keyboard down once per screen when a step cannot proceed.
+
+    The keyboard hides the lower half, and only what is on screen gets a
+    number, so a target the planner cannot name is often underneath it.
+    Done rather than asked for, because a planner told to scroll does not
+    reliably do it.
+
+    Once per screen. If the keyboard returns and the step fails again,
+    something other than the keyboard is wrong.
+    """
+    screen = snapshot.current_phash
+    if not device_control.is_keyboard_open() or screen is None:
+        return False
+    if screen in ctx.keyboard_dismissed:
+        return False
+
+    logger.info("Step blocked with the keyboard open. Closing it to see the rest.")
+    if not device_control.dismiss_keyboard():
+        return False
+    ctx.keyboard_dismissed.add(screen)
+    return True

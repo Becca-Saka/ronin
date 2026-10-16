@@ -1,6 +1,7 @@
 """Giving up on a screen that will not take an action."""
 
 import unittest
+from types import SimpleNamespace
 
 
 class StallTests(unittest.TestCase):
@@ -79,3 +80,95 @@ class StallTests(unittest.TestCase):
 
         stall.record_blocked("screenA")
         self.assertFalse(stall.spent)
+
+
+class KeyboardRevealTests(unittest.TestCase):
+    """Looking behind the keyboard before deciding a screen is hopeless.
+
+    Only what is on screen carries a number, and the keyboard covers the lower
+    half. A field underneath it cannot be named, so the planner reaches for
+    whatever is visible.
+    """
+
+    def _ctx(self):
+        from ronin.agent.step.run_context import RunContext
+
+        return RunContext(history=None, loop_detector=None)
+
+    def _device(self, keyboard_open, closes=True):
+        pressed = []
+
+        def dismiss():
+            pressed.append("dismiss")
+            return closes
+
+        return SimpleNamespace(
+            is_keyboard_open=lambda: keyboard_open, dismiss_keyboard=dismiss
+        ), pressed
+
+    def _snapshot(self, phash="screenA"):
+        return SimpleNamespace(current_phash=phash)
+
+    def _reveal(self, device, snapshot, ctx):
+        from ronin.agent.step.stall import reveal_behind_keyboard
+
+        return reveal_behind_keyboard(device, snapshot, ctx)
+
+    def test_a_blocked_step_with_the_keyboard_up_closes_it(self):
+        device, pressed = self._device(keyboard_open=True)
+
+        self.assertTrue(self._reveal(device, self._snapshot(), self._ctx()))
+        self.assertEqual(pressed, ["dismiss"])
+
+    def test_nothing_happens_when_the_keyboard_is_already_down(self):
+        """The screen is fully visible, so the target is genuinely absent."""
+        device, pressed = self._device(keyboard_open=False)
+
+        self.assertFalse(self._reveal(device, self._snapshot(), self._ctx()))
+        self.assertEqual(pressed, [])
+
+    def test_one_screen_gets_one_look_behind_the_keyboard(self):
+        """A second failure on the same screen is not about the keyboard."""
+        device, pressed = self._device(keyboard_open=True)
+        ctx = self._ctx()
+
+        self._reveal(device, self._snapshot(), ctx)
+
+        self.assertFalse(self._reveal(device, self._snapshot(), ctx))
+        self.assertEqual(pressed, ["dismiss"])
+
+    def test_a_different_screen_gets_its_own_look(self):
+        device, pressed = self._device(keyboard_open=True)
+        ctx = self._ctx()
+
+        self._reveal(device, self._snapshot("screenA"), ctx)
+        self._reveal(device, self._snapshot("screenB"), ctx)
+
+        self.assertEqual(pressed, ["dismiss", "dismiss"])
+
+    def test_an_unknown_keyboard_state_is_not_treated_as_open(self):
+        """is_keyboard_open returns None when no check could answer."""
+        device, pressed = self._device(keyboard_open=None)
+
+        self.assertFalse(self._reveal(device, self._snapshot(), self._ctx()))
+        self.assertEqual(pressed, [])
+
+    def test_a_close_that_fails_does_not_spend_the_screens_one_attempt(self):
+        """iOS hide_keyboard can fail; the screen is no more visible for trying."""
+        broken, broken_presses = self._device(keyboard_open=True, closes=False)
+        ctx = self._ctx()
+
+        self.assertFalse(self._reveal(broken, self._snapshot(), ctx))
+
+        working, _ = self._device(keyboard_open=True)
+        self.assertTrue(self._reveal(working, self._snapshot(), ctx))
+        self.assertEqual(broken_presses, ["dismiss"])
+
+    def test_an_unidentified_screen_is_not_recorded_as_dismissed(self):
+        """Nothing can match it later, so it would consume every attempt."""
+        device, pressed = self._device(keyboard_open=True)
+        ctx = self._ctx()
+
+        self.assertFalse(self._reveal(device, self._snapshot(phash=None), ctx))
+        self.assertEqual(pressed, [])
+        self.assertEqual(ctx.keyboard_dismissed, set())
