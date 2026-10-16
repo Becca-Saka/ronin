@@ -180,13 +180,13 @@ class UnresolvedMarkTests(unittest.TestCase):
         return TapMarkAction(mark=47, reason="continue")
 
     def test_an_unresolved_mark_can_be_described(self):
-        from ronin.agent import narration
+        from ronin.agent.step import narration
 
         self.assertIn("element 47", narration.describe(self._action()))
 
     def test_an_unresolved_mark_can_be_hashed_for_loop_detection(self):
         from ronin.agent.actuation.actions import TapMarkAction
-        from ronin.agent.loop_detector import RollingLoopDetector
+        from ronin.agent.step.loop_detector import RollingLoopDetector
 
         same = RollingLoopDetector.hash_action(self._action())
         other = RollingLoopDetector.hash_action(TapMarkAction(mark=48, reason="continue"))
@@ -195,9 +195,9 @@ class UnresolvedMarkTests(unittest.TestCase):
         self.assertNotEqual(same, other)
 
     def test_a_not_listed_action_can_be_described_and_hashed(self):
-        from ronin.agent import narration
+        from ronin.agent.step import narration
         from ronin.agent.actuation.actions import TargetNotListedAction
-        from ronin.agent.loop_detector import RollingLoopDetector
+        from ronin.agent.step.loop_detector import RollingLoopDetector
 
         action = TargetNotListedAction(description="blue button", reason="r")
 

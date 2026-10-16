@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from ronin.agent import observation, outcomes
+from ronin.agent.step import observation, outcomes
 from ronin.agent.device_agent import (
     AgentHistory,
     RollingLoopDetector,
@@ -15,21 +15,21 @@ from ronin.agent.device_agent import (
 class SettleTests(unittest.TestCase):
     """Waiting only as long as the screen keeps changing."""
 
-    @patch("ronin.agent.observation.time.sleep")
+    @patch("ronin.agent.step.observation.time.sleep")
     def test_settle_returns_as_soon_as_the_screen_repeats(self, _sleep):
         reads = Mock(side_effect=["a", "a", "should-not-be-read"])
 
-        with patch("ronin.agent.observation.quick_phash", reads):
+        with patch("ronin.agent.step.observation.quick_phash", reads):
             settled = observation.settle(object(), settle_time=2.0)
 
         self.assertEqual(settled, "a")
         self.assertEqual(reads.call_count, 2)
 
-    @patch("ronin.agent.observation.time.sleep")
+    @patch("ronin.agent.step.observation.time.sleep")
     def test_settle_gives_up_at_the_settle_budget(self, _sleep):
         reads = Mock(side_effect=["a", "b", "c", "d", "e", "f", "g"])
 
-        with patch("ronin.agent.observation.quick_phash", reads):
+        with patch("ronin.agent.step.observation.quick_phash", reads):
             observation.settle(object(), settle_time=2.0)
 
         # settle_time 2.0 / 0.35 poll = 5 polls after the first reading

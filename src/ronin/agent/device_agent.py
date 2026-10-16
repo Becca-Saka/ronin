@@ -20,16 +20,16 @@ from ronin.agent.device_planner import (
     DeviceStepResponse,
 )
 from ronin.agent.history import ActionEntry, AgentHistory
-from ronin.agent.launch import restart_app
-from ronin.agent import outcomes
-from ronin.agent.outcomes import DeviceRunResult, StepHookFn
-from ronin.agent import observation
-from ronin.agent.observation import PerceptionSnapshot
-from ronin.agent import step_artifacts
-from ronin.agent import narration
-from ronin.agent.loop_detector import RollingLoopDetector
+from ronin.agent.device.launch import restart_app
+from ronin.agent.step import outcomes
+from ronin.agent.step.outcomes import DeviceRunResult, StepHookFn
+from ronin.agent.step import observation
+from ronin.agent.step.observation import PerceptionSnapshot
+from ronin.agent.step.artifacts import StepArtifacts
+from ronin.agent.step import narration
+from ronin.agent.step.loop_detector import RollingLoopDetector
 from ronin.agent.replay import ReplayLedger, replay_known_path, target_label
-from ronin.agent import targeting
+from ronin.agent.step import targeting
 from ronin.utils.secrets import SecretScrubber
 from ronin.agent.perception import marks
 from ronin.agent.perception.marks import DETAIL_NUMBERS
@@ -134,6 +134,7 @@ class DeviceAgent:
             )
 
         self.media_manager = MediaManager(self.scrubber)
+        self.artifacts = StepArtifacts(self.media_manager, self.scrubber)
 
     def run(
         self,
@@ -230,9 +231,7 @@ class DeviceAgent:
             perception, session_trail, ctx.prev_phash
         )
         ctx.current_phash = snapshot.current_phash
-        step_artifacts.save_step(
-            self.media_manager, self.scrubber, session_dir, step, snapshot
-        )
+        self.artifacts.save_step(session_dir, step, snapshot)
 
         needs_keyboard_check = (
             snapshot.scan_info and snapshot.scan_info.reason in ("navigation", "layout_shift")
@@ -317,9 +316,7 @@ class DeviceAgent:
             return None
 
         action = decision.action or action
-        step_artifacts.save_action(
-            self.media_manager, session_dir, step, snapshot, action
-        )
+        self.artifacts.save_action(session_dir, step, snapshot, action)
         ctx.last_external_nav = self._execute_and_record(
             step=step,
             action=action,

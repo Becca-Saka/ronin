@@ -17,7 +17,7 @@ from selenium.webdriver.common.actions.action_builder import ActionBuilder
 from selenium.webdriver.common.actions.pointer_input import PointerInput
 
 from ronin.agent.device.adb_control import AdbControl
-from ronin.agent.device import focus
+from ronin.agent.device.focus import Focus
 from ronin.agent.device.diagnostics import diagnose_avd_launch
 from ronin.agent.device.platform import Platform
 from ronin.defaults import (
@@ -165,8 +165,11 @@ class DeviceControl:
             self.serial,
         )
 
-    def _screen_area(self) -> int:
-        return getattr(self, "screen_width", 0) * getattr(self, "screen_height", 0)
+    @property
+    def focus(self) -> Focus:
+        """Focus checks bound to this session's driver and screen size."""
+        area = getattr(self, "screen_width", 0) * getattr(self, "screen_height", 0)
+        return Focus(self.driver, area)
 
     def get_screenshot(self):
         """The screen as PNG bytes, or ObservationUnavailable if unreadable.
@@ -208,18 +211,18 @@ class DeviceControl:
             # The planner focuses a field in the preceding step. Avoid tapping it
             # again after the keyboard has reflowed the layout when it is already
             # the active element at the current coordinates.
-            if not focus.contains(self.driver, self._screen_area(), x, y):
+            if not self.focus.contains(x, y):
                 self.tap(x, y)
-                focus.await_focus(self.driver, self._screen_area(), x, y)
-            focus.assert_at(self.driver, self._screen_area(), x, y, "TYPE")
+                self.focus.wait_for(x, y)
+            self.focus.assert_at(x, y, "TYPE")
             self.driver.switch_to.active_element.send_keys(text)
 
     def clear(self, x, y):
         try:
             self.tap(x, y)
-            focus.await_focus(self.driver, self._screen_area(), x, y)
+            self.focus.wait_for(x, y)
             if self.platform != Platform.IOS:
-                focus.assert_at(self.driver, self._screen_area(), x, y, "CLEAR")
+                self.focus.assert_at(x, y, "CLEAR")
             if self.platform == Platform.IOS:
                 self.driver.switch_to.active_element.clear()
             else:

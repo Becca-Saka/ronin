@@ -18,7 +18,7 @@ from ronin.agent.actuation.actions import TARGETED_ACTIONS, ActionType, Coordina
 from ronin.agent.history import ActionEntry, ActionResult
 from ronin.agent.device_planner import GROUNDING_MARKS
 from ronin.agent.perception import marks
-from ronin.agent.staleness import has_target, target_moved
+from ronin.agent.step.staleness import has_target, target_moved
 from ronin.errors import ObservationUnavailable
 
 logger = logging.getLogger(__name__)

@@ -9,7 +9,7 @@ import io
 
 from PIL import Image
 
-from ronin.agent.observation import PerceptionSnapshot
+from ronin.agent.step.observation import PerceptionSnapshot
 from ronin.agent.perception.elements import BoundingBox, GUIElement
 from ronin.agent.perception.marks import Mark
 

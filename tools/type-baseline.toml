@@ -9,7 +9,7 @@
 "src/ronin/agent/device/device_session.py" = 3
 "src/ronin/agent/device_agent.py" = 2
 "src/ronin/agent/device_planner.py" = 2
-"src/ronin/agent/launch.py" = 1
+"src/ronin/agent/device/launch.py" = 1
 "src/ronin/agent/perception/image_descriptor.py" = 2
 "src/ronin/agent/perception/perception.py" = 4
 "src/ronin/llm/credentials.py" = 1

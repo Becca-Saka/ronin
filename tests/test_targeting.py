@@ -43,7 +43,7 @@ class StalenessTests(unittest.TestCase):
         return TapAction(coordinates=Coordinates(x=x, y=y), reason="tap it")
 
     def test_an_unchanged_target_is_not_stale(self):
-        from ronin.agent.staleness import target_moved
+        from ronin.agent.step.staleness import target_moved
 
         before = self._png("white", ((10, 10, 60, 60), (0, 0, 0)))
 
@@ -52,7 +52,7 @@ class StalenessTests(unittest.TestCase):
         )
 
     def test_a_target_that_moved_is_stale(self):
-        from ronin.agent.staleness import target_moved
+        from ronin.agent.step.staleness import target_moved
 
         before = self._png("white", ((10, 10, 60, 60), (0, 0, 0)))
         after = self._png("white")
@@ -63,7 +63,7 @@ class StalenessTests(unittest.TestCase):
 
     def test_change_elsewhere_on_screen_is_ignored(self):
         """A banner landing in the corner must not throw away a good plan."""
-        from ronin.agent.staleness import target_moved
+        from ronin.agent.step.staleness import target_moved
 
         before = self._png("white", ((10, 10, 60, 60), (0, 0, 0)))
         after = self._png("white", ((10, 10, 60, 60), (0, 0, 0)))
@@ -74,7 +74,7 @@ class StalenessTests(unittest.TestCase):
         )
 
     def test_a_point_outside_every_element_still_gets_checked(self):
-        from ronin.agent.staleness import target_moved
+        from ronin.agent.step.staleness import target_moved
 
         before = self._png("white", ((100, 300, 190, 390), (0, 0, 0)))
         after = self._png("white")
@@ -83,7 +83,7 @@ class StalenessTests(unittest.TestCase):
 
     def test_an_action_with_no_target_is_never_stale(self):
         from ronin.agent.actuation.actions import KeyEventAction
-        from ronin.agent.staleness import target_moved
+        from ronin.agent.step.staleness import target_moved
 
         before = self._png("white", ((10, 10, 60, 60), (0, 0, 0)))
         after = self._png("black")
@@ -93,7 +93,7 @@ class StalenessTests(unittest.TestCase):
         )
 
     def test_an_unreadable_screenshot_does_not_strand_the_run(self):
-        from ronin.agent.staleness import target_moved
+        from ronin.agent.step.staleness import target_moved
 
         self.assertFalse(
             target_moved(b"not a png", b"nor this", self._tap(30, 30), [])
@@ -117,7 +117,7 @@ class TargetDecisionTests(unittest.TestCase):
     def test_a_valid_number_becomes_the_point_to_touch(self):
         """The number is swapped for its coordinate twin — every mode ends in a point."""
         from ronin.agent.actuation.actions import TapAction, TapMarkAction
-        from ronin.agent.targeting import evaluate
+        from ronin.agent.step.targeting import evaluate
 
         decision = evaluate(
             TapMarkAction(mark=1, reason="continue"),
@@ -133,7 +133,7 @@ class TargetDecisionTests(unittest.TestCase):
 
     def test_a_number_that_names_nothing_stops_the_step(self):
         from ronin.agent.actuation.actions import TapMarkAction
-        from ronin.agent.targeting import evaluate
+        from ronin.agent.step.targeting import evaluate
 
         decision = evaluate(
             TapMarkAction(mark=47, reason="continue"),
@@ -147,7 +147,7 @@ class TargetDecisionTests(unittest.TestCase):
 
     def test_an_undetected_target_ends_the_scenario_and_is_kept(self):
         from ronin.agent.actuation.actions import TargetNotListedAction
-        from ronin.agent.targeting import evaluate
+        from ronin.agent.step.targeting import evaluate
 
         decision = evaluate(
             TargetNotListedAction(description="blue button at the bottom", reason="r"),
@@ -161,7 +161,7 @@ class TargetDecisionTests(unittest.TestCase):
 
     def test_coordinates_still_work_when_marks_are_not_in_use(self):
         from ronin.agent.actuation.actions import Coordinates, TapAction
-        from ronin.agent.targeting import evaluate
+        from ronin.agent.step.targeting import evaluate
 
         action = TapAction(coordinates=Coordinates(x=5, y=6), reason="tap")
 
@@ -170,7 +170,7 @@ class TargetDecisionTests(unittest.TestCase):
     def test_an_untargeted_action_does_not_re_read_the_screen(self):
         """A key event is aimed at no point, so there is nothing to re-check."""
         from ronin.agent.actuation.actions import KeyEventAction
-        from ronin.agent.targeting import evaluate
+        from ronin.agent.step.targeting import evaluate
 
         device = self._device()
 
@@ -184,7 +184,7 @@ class TargetDecisionTests(unittest.TestCase):
     def test_a_target_that_moved_stops_the_step(self):
         """The number resolved to a point, but the screen moved under it."""
         from ronin.agent.actuation.actions import TapMarkAction
-        from ronin.agent.targeting import evaluate
+        from ronin.agent.step.targeting import evaluate
 
         decision = evaluate(
             TapMarkAction(mark=1, reason="continue"),
@@ -198,7 +198,7 @@ class TargetDecisionTests(unittest.TestCase):
     def test_a_screen_that_cannot_be_read_again_stops_the_step(self):
         """No current screen is no evidence that the target survived."""
         from ronin.agent.actuation.actions import TapMarkAction
-        from ronin.agent.targeting import evaluate
+        from ronin.agent.step.targeting import evaluate
 
         device = SimpleNamespace(
             get_screenshot=Mock(side_effect=ObservationUnavailable("session gone"))
@@ -215,7 +215,7 @@ class TargetDecisionTests(unittest.TestCase):
 
     def test_an_empty_screenshot_stops_the_step(self):
         from ronin.agent.actuation.actions import TapMarkAction
-        from ronin.agent.targeting import evaluate
+        from ronin.agent.step.targeting import evaluate
 
         decision = evaluate(
             TapMarkAction(mark=1, reason="continue"),
@@ -229,7 +229,7 @@ class TargetDecisionTests(unittest.TestCase):
     def test_resolving_a_number_leaves_the_proposed_action_untouched(self):
         """A proposed action is parsed once, never edited into a resolved one."""
         from ronin.agent.actuation.actions import TapMarkAction
-        from ronin.agent.targeting import evaluate
+        from ronin.agent.step.targeting import evaluate
 
         proposed = TapMarkAction(mark=1, reason="continue")
 
@@ -250,7 +250,7 @@ class GroundingContractTests(unittest.TestCase):
         return SimpleNamespace(get_screenshot=Mock(return_value=fakes.solid_png()))
 
     def _verdict(self, action, grounding):
-        from ronin.agent.targeting import evaluate
+        from ronin.agent.step.targeting import evaluate
 
         return evaluate(action, self._snapshot(), self._device(), grounding)
 
@@ -323,7 +323,7 @@ class GroundingContractTests(unittest.TestCase):
         self.assertIn("nothing to", str(caught.exception))
 
     def test_an_unmatched_screen_is_saved_redacted(self):
-        from ronin.agent.targeting import save_unmatched_screen
+        from ronin.agent.step.targeting import save_unmatched_screen
 
         media = Mock()
         snapshot = SimpleNamespace(raw_img_bytes=b"png", gui_elements=["el"])
