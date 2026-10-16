@@ -1,16 +1,23 @@
+"""One way to run a command, and one failure to catch when it does not work.
+
+Callers care about two things: the output, or the reason there is none. A
+missing binary and a non-zero exit are the same event to them, so both arrive
+as SubprocessRunError and nothing has to catch OSError alongside it.
+"""
+
 import logging
 import subprocess
-from typing import List, Union, Dict, Any, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT = object()
+DID_NOT_RUN = -1
 
 
 class SubprocessRunError(subprocess.SubprocessError):
-    """Exception raised when a subprocess command fails."""
+    """A command could not be run, or ran and failed."""
 
-    def __init__(self, cmd: Union[List[str], str], returncode: int, stdout: str, stderr: str):
+    def __init__(self, cmd: list[str] | str, returncode: int, stdout: str, stderr: str):
         self.cmd = cmd
         self.returncode = returncode
         self.stdout = stdout
@@ -24,116 +31,68 @@ class SubprocessRunError(subprocess.SubprocessError):
 
 
 def run_command(
-    cmd: Union[List[str], str],
+    cmd: list[str] | str,
     check: bool = False,
     timeout: Optional[float] = None,
-    capture_output: Any = _DEFAULT,
-    text: Any = _DEFAULT,
+    capture_output: bool = True,
+    text: bool = True,
     shell: bool = False,
-    env: Optional[Dict[str, str]] = None,
+    env: Optional[dict[str, str]] = None,
     log_command: bool = True,
 ) -> subprocess.CompletedProcess:
-    """Executes a command as a subprocess, providing centralized logging and error handling.
+    """Runs a command as a subprocess, with one place to log it and to fail.
 
     Args:
-        cmd: The command to run, either as a list of arguments or a shell string.
-        check: If True, raises a SubprocessRunError if the exit code is non-zero.
-        timeout: Optional timeout in seconds for command execution.
-        capture_output: If True, stdout and stderr are captured.
-        text: If True, captured stdout/stderr are decoded to strings.
-        shell: If True, the command is executed in a shell.
-        env: Optional environment variables dictionary.
-        log_command: If True, the command is logged before execution.
+        cmd: The command to run, as a list of arguments or a shell string.
+        check: If True, a non-zero exit code raises SubprocessRunError.
+        timeout: Seconds to wait before giving up on the command.
+        capture_output: If True, Ronin captures stdout and stderr. If False,
+            the command writes to the terminal and the result carries no output.
+        text: If True, Ronin decodes the captured output to strings.
+        shell: If True, a shell runs the command.
+        env: Environment variables for the command.
+        log_command: If True, Ronin logs the command at info rather than debug.
 
     Returns:
-        A subprocess.CompletedProcess instance containing results.
+        The CompletedProcess, whatever its exit code, unless check is True.
 
     Raises:
-        SubprocessRunError: If check is True and the command returns a non-zero exit code.
-        subprocess.TimeoutExpired: If a timeout is specified and the command times out.
+        SubprocessRunError: If Ronin could not start the command, or if check
+            is True and the command exited non-zero.
+        subprocess.TimeoutExpired: If the command ran longer than timeout.
     """
-    # Detect if subprocess.run is mocked
-    is_mocked = False
-    try:
-        from unittest.mock import Mock
-        if isinstance(subprocess.run, Mock):
-            is_mocked = True
-    except ImportError:
-        pass
-
-    # Resolve default values
-    actual_capture_output = capture_output
-    actual_text = text
-    if not is_mocked:
-        if actual_capture_output is _DEFAULT:
-            actual_capture_output = True
-        if actual_text is _DEFAULT:
-            actual_text = True
-
     cmd_str = cmd if isinstance(cmd, str) else " ".join(cmd)
-    if log_command:
-        logger.info("Running subprocess command: %s", cmd_str)
-    else:
-        logger.debug("Running subprocess command: %s", cmd_str)
-
-    # Build kwargs dynamically to match expected mock signatures in tests
-    run_args = {}
-    if check:
-        run_args["check"] = check
-    if actual_capture_output is not _DEFAULT and actual_capture_output is not None:
-        run_args["capture_output"] = actual_capture_output
-    if actual_text is not _DEFAULT and actual_text is not None:
-        run_args["text"] = actual_text
-    if shell:
-        run_args["shell"] = shell
-    if env is not None:
-        run_args["env"] = env
-    if timeout is not None:
-        run_args["timeout"] = timeout
+    logger.log(
+        logging.INFO if log_command else logging.DEBUG,
+        "Running subprocess command: %s",
+        cmd_str,
+    )
 
     try:
-        result = subprocess.run(cmd, **run_args)
-
-        # Handle Mock return values gracefully in unit tests
-        from unittest.mock import Mock
-        
-        stdout_val = getattr(result, "stdout", "")
-        if isinstance(stdout_val, Mock):
-            stdout_str = ""
-        else:
-            stdout_str = stdout_val or ""
-
-        stderr_val = getattr(result, "stderr", "")
-        if isinstance(stderr_val, Mock):
-            stderr_str = ""
-        else:
-            stderr_str = stderr_val or ""
-
-        # Log stdout/stderr at debug level if captured
-        if actual_capture_output is True:
-            if stdout_str.strip():
-                logger.debug("Subprocess stdout:\n%s", stdout_str.strip())
-            if stderr_str.strip():
-                logger.debug("Subprocess stderr:\n%s", stderr_str.strip())
-
-        returncode = getattr(result, "returncode", 0)
-        if isinstance(returncode, Mock):
-            # Bypassed when returncode is a Mock object
-            pass
-        elif check and returncode != 0:
-            raise SubprocessRunError(
-                cmd=cmd,
-                returncode=returncode,
-                stdout=stdout_str,
-                stderr=stderr_str,
-            )
-
-        return result
-
+        # `check` stays out of this call. subprocess.run would raise
+        # CalledProcessError, which is not the failure every caller here
+        # catches.
+        result = subprocess.run(
+            cmd,
+            capture_output=capture_output,
+            text=text,
+            shell=shell,
+            env=env,
+            timeout=timeout,
+        )
     except subprocess.TimeoutExpired:
         logger.error("Subprocess command timed out: %s", cmd_str)
         raise
-    except Exception as e:
-        if not isinstance(e, SubprocessRunError) and not isinstance(e, subprocess.SubprocessError):
-            logger.error("Failed to run subprocess command '%s': %s", cmd_str, e)
-        raise
+    except OSError as exc:
+        raise SubprocessRunError(cmd, DID_NOT_RUN, "", str(exc)) from exc
+
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+    if stdout.strip():
+        logger.debug("Subprocess stdout:\n%s", stdout.strip())
+    if stderr.strip():
+        logger.debug("Subprocess stderr:\n%s", stderr.strip())
+
+    if check and result.returncode != 0:
+        raise SubprocessRunError(cmd, result.returncode, stdout, stderr)
+    return result

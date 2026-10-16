@@ -7,4 +7,3 @@
 
 [complex_functions]
 "src/ronin/testing/runner.py:run_journey" = 23
-"src/ronin/utils/subprocess_runner.py:run_command" = 30

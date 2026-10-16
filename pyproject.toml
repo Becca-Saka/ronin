@@ -84,7 +84,6 @@ max-complexity = 21  # The project requirement is strictly less than 22.
 "src/ronin/testing/qa_agent.py" = ["E402"]
 "src/ronin/testing/qa_planner.py" = ["SIM108"]
 "src/ronin/testing/runner.py" = ["BLE001"]
-"src/ronin/utils/subprocess_runner.py" = ["C901", "SIM108"]
 "test_latency.py" = ["BLE001"]
 
 [tool.pyright]
@@ -105,4 +104,4 @@ source = ["src/ronin"]
 show_missing = true
 # The measured baseline for the offline suite. Raise it as coverage improves.
 # It is a floor against regression, not a target.
-fail_under = 44
+fail_under = 45
