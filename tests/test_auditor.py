@@ -92,6 +92,41 @@ class ScreenCachingTests(unittest.TestCase):
         self.assertEqual(llm.generate_response.call_count, 2)
 
 
+class AuditorPromptTests(unittest.TestCase):
+    """What the prompt forbids, in both directions."""
+
+    def _prompt(self):
+        from unittest.mock import Mock
+
+        from ronin.testing.qa_auditor import QAAuditor
+
+        llm = SimpleNamespace(generate_response=Mock(return_value=_assessment()))
+        QAAuditor(llm, ["Order is confirmed"], ["Card is masked"]).audit(b"png", "s")
+        message = llm.generate_response.call_args[0][0][0]
+        return "".join(
+            part.get("text", "")
+            for part in message.to_dict()["content"]
+            if isinstance(part, dict)
+        )
+
+    def test_a_rule_is_not_passed_because_its_subject_is_absent(self):
+        self.assertIn("Never mark a rule passed because its subject is absent", self._prompt())
+
+    def test_a_rule_is_not_failed_on_what_a_screen_might_show_later(self):
+        """It failed rules on hypotheticals: a label that could expose a value."""
+        prompt = self._prompt()
+
+        self.assertIn("not what the design permits", prompt)
+        self.assertIn("once it is filled", prompt)
+
+    def test_the_auditor_is_never_asked_whether_the_plan_finished(self):
+        """It is told it does not know the plan, so it cannot answer that."""
+        prompt = self._prompt()
+
+        self.assertIn("you do not know what it was asked to do", prompt)
+        self.assertNotIn("goal_satisfied", prompt)
+
+
 class AssessmentScrubbingTests(unittest.TestCase):
     """The auditor writes in its own words, which quote the journey's values."""
 
@@ -103,7 +138,7 @@ class AssessmentScrubbingTests(unittest.TestCase):
         scrubber = SecretScrubber()
         scrubber.learn_secrets({"password": "hunter2"})
         written = _assessment(
-            goal_evidence="the field held hunter2",
+            screen_name="Screen showing hunter2",
             rule_verifications=[
                 RuleVerification(
                     rule="Password masked",
@@ -124,10 +159,10 @@ class AssessmentScrubbingTests(unittest.TestCase):
 
         assessed = QAAuditor(llm, [], ["Password masked"], scrubber=scrubber).audit(b"p", "s")
 
-        self.assertNotIn("hunter2", assessed.goal_evidence)
+        self.assertNotIn("hunter2", assessed.screen_name)
         self.assertNotIn("hunter2", assessed.rule_verifications[0].reasoning)
         self.assertNotIn("hunter2", assessed.detected_issues[0].description)
-        self.assertIn("{{password}}", assessed.goal_evidence)
+        self.assertIn("{{password}}", assessed.screen_name)
 
 
 class CacheAliasingTests(unittest.TestCase):

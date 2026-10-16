@@ -454,14 +454,14 @@ class QAAgent:
         if run_result.status != "goal_reached" or not assessments:
             return "UNVERIFIED", "The scenario did not produce verified completion evidence."
 
-        # The auditor's word, not the planner's: the planner wanted to be done.
-        final = assessments[-1]
-        if not final.goal_satisfied or not final.goal_evidence.strip():
-            return (
-                "UNVERIFIED",
-                "No observable evidence of the goal on the final screen.",
-            )
-
+        # Completion is the planner's call, because it is the only one told what
+        # the scenario set out to do. The auditor is deliberately blind to the
+        # plan, so it cannot judge whether a plan finished — asked anyway, it
+        # answered "no" to every scenario in a recorded run.
+        #
+        # Independence is not lost. The expected outcomes reach the auditor as
+        # rules, and the checks below refuse the scenario unless the auditor
+        # evidenced every one of them on a screen it judged without the plan.
         missing = _missing_required_ids(
             all_verifications, required_outcomes, security_rules
         )
@@ -469,6 +469,14 @@ class QAAgent:
             return (
                 "UNVERIFIED",
                 "Required verification evidence is missing or untested: " + ", ".join(missing),
+            )
+
+        # Named last so a specific gap is reported in preference to this.
+        if not required_outcomes:
+            return (
+                "UNVERIFIED",
+                "The scenario declared no expected outcome, so reaching the goal "
+                "rests on the planner's own word.",
             )
 
         return "PASSED", None

@@ -19,9 +19,9 @@ class VerdictTests(unittest.TestCase):
             is_scenario_feasible=feasible, infeasibility_reason=None
         )
 
-    def _assessment(self, satisfied=True, evidence="Confirmation is visible"):
-        """What the auditor answers: whether the screen shows the goal met."""
-        return SimpleNamespace(goal_satisfied=satisfied, goal_evidence=evidence)
+    def _assessment(self):
+        """What the auditor answers: rules and defects, never the plan's goal."""
+        return SimpleNamespace(rule_verifications=[], detected_issues=[])
 
     def _verdict(self, **overrides):
         values = {
@@ -38,10 +38,16 @@ class VerdictTests(unittest.TestCase):
         return self._agent()._determine_status(**values)
 
     def test_model_done_without_observable_evidence_is_not_a_pass(self):
-        """The planner wanting to be done is not evidence that it is."""
-        status, _reason = self._verdict(assessments=[self._assessment(False, "")])
+        """The planner wanting to be done is not evidence that it is.
+
+        Completion needs a rule the auditor confirmed on a screen it judged
+        without the plan. A scenario naming no expected outcome offers nothing
+        to confirm, so the planner's say-so is all that is left.
+        """
+        status, reason = self._verdict(required_outcomes=[])
 
         self.assertEqual(status, "UNVERIFIED")
+        self.assertIn("planner's own word", reason)
 
     def test_missing_required_verification_is_not_a_pass(self):
         status, reason = self._verdict(required_outcomes=["Order is confirmed"])
@@ -230,14 +236,21 @@ class VerificationAggregationTests(unittest.TestCase):
                 SimpleNamespace(is_scenario_feasible=True, infeasibility_reason=None)
             ],
             "assessments": [
-                SimpleNamespace(
-                    goal_satisfied=True, goal_evidence="Confirmation is visible"
-                )
+                SimpleNamespace(rule_verifications=[], detected_issues=[])
             ],
             "required_outcomes": [],
             "security_rules": [],
         }
         values.update(overrides)
+
+        # A scenario passes only once the auditor evidenced an expected
+        # outcome, so a test about any other rule needs one in place to reach
+        # the behaviour it is checking.
+        if "required_outcomes" not in overrides:
+            values["required_outcomes"] = ["Order is confirmed"]
+            values["all_verifications"] = list(values["all_verifications"]) + [
+                self._verification("expected:0", "passed", rule="Order is confirmed")
+            ]
         return QAAgent.__new__(QAAgent)._determine_status(**values)
 
     def test_an_outcome_checked_too_early_does_not_condemn_the_scenario(self):
@@ -450,7 +463,15 @@ class AuditorOwnershipTests(unittest.TestCase):
 
         self.assertIn("rule_verifications", fields)
         self.assertIn("detected_issues", fields)
-        self.assertIn("goal_satisfied", fields)
+
+    def test_completion_stays_with_the_planner(self):
+        """Only the planner is told the goal, so only it can say the goal is met."""
+        from ronin.testing.qa_auditor import Assessment
+        from ronin.testing.qa_planner import QAStepResponse
+
+        self.assertIn("goal_satisfied", QAStepResponse.model_fields)
+        self.assertNotIn("goal_satisfied", Assessment.model_fields)
+        self.assertNotIn("goal_evidence", Assessment.model_fields)
 
     def test_feasibility_stays_with_the_planner(self):
         """Whether the agent can proceed is not a statement about the app."""

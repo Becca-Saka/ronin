@@ -11,6 +11,9 @@ overlapping controls, and overflow stripes.
 
 One assessment covers every rule on one screen. The auditor reads a given
 screen once.
+
+It judges rules and reports defects. It does not judge whether the scenario
+finished: that needs the goal, and withholding the goal is the point.
 """
 
 import logging
@@ -42,14 +45,6 @@ class Assessment(BaseModel):
     detected_issues: List[QAIssue] = Field(
         default_factory=list,
         description="Visual defects visible on this screen.",
-    )
-    goal_satisfied: bool = Field(
-        default=False,
-        description="True only when this screen itself shows the journey is complete.",
-    )
-    goal_evidence: str = Field(
-        default="",
-        description="What on this screen shows that, quoted. Empty when not satisfied.",
     )
 
     @model_validator(mode="before")
@@ -97,7 +92,12 @@ only what this screen shows.
 2. `rule_verifications`: one entry per rule above, copying its bracketed id into
    `rule_id`.
    - "passed" means you can see this screen satisfying the rule, now.
-   - "failed" means you can see this screen breaking it.
+   - "failed" means you can see this screen breaking it, now. A rule is not
+     failed because a field could show something once it is filled, because a
+     label suggests a value might appear beside it, or because the layout
+     could expose something under other conditions. Report what is rendered,
+     not what the design permits. If the violating content is not on the
+     screen in front of you, the rule is not failed.
    - "untested" means this screen does not show you either way. A rule about a
      screen you are not looking at is "untested", never "failed".
    - `applicable` is false when this screen holds nothing the rule could apply
@@ -109,8 +109,6 @@ only what this screen shows.
 3. `detected_issues`: visual defects on this screen — clipped or overlapping
    text, layout overflow stripes, a blank or crashed screen, or sensitive data
    shown in plain text. Each needs a `severity`.
-4. `goal_satisfied`: true only if this screen itself is proof the journey
-   finished, with the visible proof quoted in `goal_evidence`.
 """
 
 
@@ -126,9 +124,13 @@ class QAAuditor:
     def audit(self, screenshot: bytes, screen_id: Optional[str]) -> Assessment:
         """What this screen shows. Asks once per distinct screen.
 
-        A screen that did not change cannot give a different answer. One screen
-        lasts for many steps. In one recorded run the fingerprint stayed
-        identical for five steps. The fingerprint decides whether to pay again.
+        A screen that did not change cannot give a different answer, so an
+        identical fingerprint reuses the answer. The match is exact on purpose.
+        A looser one would reuse an assessment across the small change the
+        auditor exists to catch — a value appearing in a field that was empty.
+
+        Expect few hits. Typing changes the fingerprint, so a form pays per
+        step. One recorded run of 122 audits reused nothing.
         """
         if screen_id and screen_id in self._by_screen:
             logger.debug("Screen %s already audited; reusing it.", screen_id[:12])
@@ -164,7 +166,6 @@ class QAAuditor:
             return
         scrub = partial(safe_text, scrubber=self._scrubber)
         assessment.screen_name = scrub(assessment.screen_name)
-        assessment.goal_evidence = scrub(assessment.goal_evidence)
         for verification in assessment.rule_verifications:
             verification.rule = scrub(verification.rule)
             verification.reasoning = scrub(verification.reasoning)
