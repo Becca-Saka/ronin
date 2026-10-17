@@ -342,7 +342,8 @@ class DeviceAgent:
         if decision.unmatched:
             artifacts.save_unmatched_screen(
                 self.images,
-                session_dir / f"not_listed_step{step + 1}_{snapshot.timestamp}.png",
+                session_dir
+                / f"step{step + 1:03d}_{snapshot.timestamp}_not_listed.png",
                 snapshot,
             )
         if stall.reveal_behind_keyboard(device_control, snapshot, ctx):

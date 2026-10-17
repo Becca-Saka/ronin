@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 from ronin.agent.device.platform import Platform
+from ronin.utils.secrets import SecretScrubber
 
 
 class ArtifactSafetyTests(unittest.TestCase):
@@ -449,3 +450,52 @@ class PlannerViewArtifactTests(unittest.TestCase):
             )
 
         self.assertEqual(saved, [])
+
+
+class StepFileNameTests(unittest.TestCase):
+    """One step's files sit together, and the steps sit in order."""
+
+    def _names(self, steps):
+        from ronin.agent.artifacts.steps import StepArtifacts
+
+        written = []
+
+        class Recorder:
+            def save_redacted_pair(self, annotated, raw, elements, a, b):
+                written.extend([a.name, b.name])
+
+            def save_redacted_bytes(self, data, elements, path):
+                written.append(path.name)
+
+            def save_redacted_action_annotation(self, annotated, elements, action, path):
+                written.append(path.name)
+                return True
+
+        artifacts = StepArtifacts(Recorder(), SecretScrubber())
+        for step in steps:
+            snapshot = SimpleNamespace(
+                timestamp="20261017_041552", annotated_img=None, raw_img_bytes=b"",
+                gui_elements=[], scan_info=None, marks=[1], planner_img_bytes=b"x",
+                prev_phash=None,
+            )
+            with tempfile.TemporaryDirectory() as directory:
+                artifacts.save_step(Path(directory), step, snapshot)
+                artifacts.save_planner_view(Path(directory), step, snapshot)
+                artifacts.save_action(Path(directory), step, snapshot, object())
+        return written
+
+    def test_every_file_of_one_step_shares_its_prefix(self):
+        names = self._names([0])
+
+        self.assertTrue(
+            all(name.startswith("step001_20261017_041552") for name in names), names
+        )
+
+    def test_a_listing_puts_step_two_before_step_ten(self):
+        names = self._names([1, 9])
+
+        self.assertLess(
+            sorted(names)[0].split("_")[0], sorted(names)[-1].split("_")[0]
+        )
+        self.assertIn("step002_20261017_041552.png", names)
+        self.assertIn("step010_20261017_041552.png", names)

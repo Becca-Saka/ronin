@@ -1,5 +1,10 @@
 """What each step leaves behind on disk.
 
+Every file a step writes starts with that step and the moment it was read, so
+one step's files sit together and one glob finds them all. What kind of file
+it is comes last. The step is padded, because a listing orders names by
+character and would otherwise put step 10 before step 2.
+
 Both writers go through the media manager rather than straight to disk. These
 files outlive the run, so the manager covers a declared secret on screen first.
 The scan dump goes beside them, which keeps a step's screenshots and the
@@ -31,7 +36,7 @@ class StepArtifacts:
         self, session_dir: Path, step: int, snapshot: PerceptionSnapshot
     ) -> None:
         session_dir.mkdir(parents=True, exist_ok=True)
-        base = f"step{step + 1}_{snapshot.timestamp}"
+        base = f"step{step + 1:03d}_{snapshot.timestamp}"
         annotated_path = session_dir / f"{base}.png"
         raw_path = session_dir / f"{base}_raw.png"
         scan_path = session_dir / f"{base}_scan.json"
@@ -80,13 +85,13 @@ class StepArtifacts:
         self.images.save_redacted_bytes(
             planner_view,
             snapshot.gui_elements,
-            session_dir / f"step{step + 1}_{snapshot.timestamp}_marks.png",
+            session_dir / f"step{step + 1:03d}_{snapshot.timestamp}_marks.png",
         )
 
     def save_action(
         self, session_dir: Path, step: int, snapshot: PerceptionSnapshot, action
     ) -> None:
-        click_path = session_dir / f"action_step{step + 1}_{snapshot.timestamp}.png"
+        click_path = session_dir / f"step{step + 1:03d}_{snapshot.timestamp}_action.png"
         self.images.save_redacted_action_annotation(
             snapshot.annotated_img, snapshot.gui_elements, action, click_path
         )
