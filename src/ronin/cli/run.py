@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ronin.app_discovery import resolve_app_path
 from ronin.config import Config
-from ronin.llm.credentials import require_credentials
+from ronin.preflight import require_run
 from ronin.schema import PLATFORMS
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ def run(args: argparse.Namespace, config: Config) -> int:
     fast_model = config.resolve("fast_model", args.fast_model)
     platform = config.resolve("platform", args.platform)
 
-    require_credentials(model, fast_model)
+    require_run(model, fast_model)
 
     app_path = resolve_app_path(
         config.resolve("app_path", args.app_path), platform, Path.cwd()

@@ -4,7 +4,7 @@ import argparse
 from typing import List
 
 from ronin.config import Config
-from ronin.llm.credentials import require_credentials
+from ronin.preflight import require_run
 
 
 def register(subcommands: argparse._SubParsersAction) -> None:
@@ -41,8 +41,10 @@ def run(args: argparse.Namespace, config: Config) -> int:
     cli = RoninCLI(config)
     cli.parser.prog = "ronin test"
     parsed = cli.parser.parse_args(argv)
-    require_credentials(
-        config.resolve("model", parsed.model), config.resolve("fast_model", parsed.fast_model)
+    require_run(
+        config.resolve("model", parsed.model),
+        config.resolve("fast_model", parsed.fast_model),
+        config.resolve("grounding", parsed.grounding),
     )
     # RoninCLI.run() re-parses argv and answers with the suite's status.
     return cli.run(argv)
