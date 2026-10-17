@@ -1,7 +1,10 @@
 """Confirming a device can be driven, before a run spends anything on it.
 
-Scenario generation costs a model call and runs before anything touches the
-device, so these checks have to come first.
+Opening the session is the real proof, and it runs first for that reason.
+What is left here is the question adb can answer without booting anything: is
+this the name of a device that exists. A wrong name is the common mistake, and
+answering it here names the devices that do exist instead of failing inside
+the driver.
 """
 
 import logging

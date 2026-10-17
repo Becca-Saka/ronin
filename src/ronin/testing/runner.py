@@ -164,9 +164,18 @@ class RoninTestRunner:
         device_agent.scrubber.learn_secrets(journey.secrets)
 
         try:
-            # Before the model call, because a device that cannot be driven
-            # otherwise costs a generated suite to discover.
+            # Both before the model call. Asking adb is cheap and names what is
+            # available when the device is wrong. Opening the session is what
+            # proves the device boots, the app installs and the driver answers,
+            # and all three used to be discovered after a generated suite had
+            # been paid for.
             ensure_device_ready(self.platform, self.device_name)
+
+            logger.info(
+                "Initializing emulator and starting remote webdriver session..."
+            )
+            device_control = session.start(is_headless=self.headless)
+            perception = for_grounding(self.grounding, session)
 
             scenarios = ScenarioGenerator(device_agent.llm).generate_scenarios(journey)
             scenarios.sort(key=lambda s: CLASSIFICATION_ORDER.get(s.classification, 99))
@@ -192,12 +201,6 @@ class RoninTestRunner:
             logger.info("Scenario plan: %s", progress.path)
 
             current_component = "ronin_agent_planner"
-
-            logger.info(
-                "Initializing emulator and starting remote webdriver session..."
-            )
-            device_control = session.start(is_headless=self.headless)
-            perception = for_grounding(self.grounding, session)
             total_scenarios = len(scenarios)
             for idx, scenario in enumerate(scenarios):
                 # Scenario evidence must not inherit screen names, actions, or
