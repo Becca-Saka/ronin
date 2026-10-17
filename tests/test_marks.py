@@ -82,7 +82,7 @@ class MarkTests(unittest.TestCase):
         self.assertIsNone(find(marks, 99))
 
     def test_marks_mode_never_offers_coordinates_to_the_model(self):
-        from ronin.agent.device_planner import GROUNDING_MARKS, DevicePlanner
+        from ronin.agent.plan.planner import GROUNDING_MARKS, DevicePlanner
 
         planner = DevicePlanner.__new__(DevicePlanner)
         planner.grounding = GROUNDING_MARKS
@@ -196,7 +196,7 @@ class UnresolvedMarkTests(unittest.TestCase):
 
     def test_an_unresolved_mark_can_be_hashed_for_loop_detection(self):
         from ronin.agent.actuation.actions import TapMarkAction
-        from ronin.agent.step.loop_detector import RollingLoopDetector
+        from ronin.agent.memory.loop_detector import RollingLoopDetector
 
         same = RollingLoopDetector.hash_action(self._action())
         other = RollingLoopDetector.hash_action(TapMarkAction(mark=48, reason="continue"))
@@ -207,7 +207,7 @@ class UnresolvedMarkTests(unittest.TestCase):
     def test_a_not_listed_action_can_be_described_and_hashed(self):
         from ronin.agent.step import narration
         from ronin.agent.actuation.actions import TargetNotListedAction
-        from ronin.agent.step.loop_detector import RollingLoopDetector
+        from ronin.agent.memory.loop_detector import RollingLoopDetector
 
         action = TargetNotListedAction(description="blue button", reason="r")
 

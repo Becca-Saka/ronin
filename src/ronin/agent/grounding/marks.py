@@ -9,12 +9,13 @@ The screenshot labels and the prompt labels are generated here, from one pass,
 so the two cannot drift apart.
 """
 
+import io
 import logging
 from copy import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -24,6 +25,7 @@ from ronin.agent.actuation.actions import (
     Coordinates,
 )
 from ronin.agent.grounding import GROUNDING_MARKS
+from ronin.agent.perception import keyboard
 from ronin.agent.perception.elements import GUIElement
 
 logger = logging.getLogger(__name__)
@@ -443,3 +445,68 @@ def resolve_mark(action, element_marks, grounding: str = "") -> tuple:
     )
     logger.info("Element %s resolves to (%d, %d).", index, x, y)
     return None, resolved
+
+
+def refuse_mark(
+    strikes: Dict[str, List[Box]],
+    refused: Dict[str, List[Box]],
+    phash: Optional[str],
+    index: Optional[int],
+    element_marks: Sequence[Mark],
+) -> None:
+    """Records a failure to put text somewhere, and bans the place on the second.
+
+    Focus that did not move proves the tap reached nothing focusable. It does
+    not prove the element holds no text: a tap into the padding of a real field
+    does the same. Banning on one failure can make a genuine password field
+    untypable for the rest of the screen, so the first failure only leaves a
+    mark against the place.
+
+    Kept by place rather than by number. Numbers are handed out in reading
+    order over whatever the detector returned, so they do not survive a
+    detection appearing or disappearing between two looks at one screen.
+    """
+    mark = find(element_marks, index) if index is not None else None
+    if phash is None or mark is None:
+        return
+
+    box = box_of(mark.element)
+    first = strikes.setdefault(phash, [])
+    if not any(is_same_element(mark.element, seen) for seen in first):
+        first.append(box)
+        logger.info("Element %d took no text. Trying it once more.", index)
+        return
+
+    refused.setdefault(phash, []).append(box)
+    logger.info("Element %d took no text twice. Its place will be skipped.", index)
+
+
+def number(
+    elements: List[GUIElement],
+    screenshot: bytes,
+    keyboard_open: Optional[bool],
+    screen_height: Optional[int],
+    refused: Sequence[Box] = (),
+) -> tuple[List[Mark], bytes]:
+    """The numbered targets, and the screenshot carrying their numbers.
+
+    Built together so that a number in the prompt is a number the planner can
+    see. A place that already refused text keeps its number and is marked, so
+    the planner is told rather than left to choose it again.
+    """
+    targets, keys = keyboard.split_keyboard(elements, keyboard_open, screen_height)
+    image = Image.open(io.BytesIO(screenshot))
+    width, height = image.size
+
+    built = [
+        replace(mark, refuses_text=True)
+        if any(is_same_element(mark.element, box) for box in refused)
+        else mark
+        for mark in build(targets, screen_area=width * height)
+    ]
+
+    numbered = io.BytesIO()
+    render(image, built, band=keyboard.keyboard_band(keys, width)).save(
+        numbered, format="PNG"
+    )
+    return built, numbered.getvalue()

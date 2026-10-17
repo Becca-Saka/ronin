@@ -59,7 +59,7 @@ class PromptAgreementTests(unittest.TestCase):
     def _planner_prompt(self):
         from types import SimpleNamespace
 
-        from ronin.agent.device_planner import GROUNDING_COORDINATES
+        from ronin.agent.plan.planner import GROUNDING_COORDINATES
         from ronin.testing.qa_planner import QAPlanner
 
         planner = QAPlanner.__new__(QAPlanner)

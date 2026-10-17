@@ -2,7 +2,7 @@ import logging
 import time
 
 from ronin.agent.actuation.actions import Action, ActionPlan, ActionType
-from ronin.agent.device.device_control import DeviceControl
+from ronin.agent.device.control import DeviceControl
 from ronin.agent.device.capability_controller import CapabilityController
 
 logger = logging.getLogger(__name__)

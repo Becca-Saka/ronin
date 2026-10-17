@@ -12,7 +12,7 @@ from typing import Callable, Optional
 
 from ronin.agent.actuation.actions import Action, ActionType, TypeAction
 from ronin.agent.actuation.orchestrator import ActionOrchestrator
-from ronin.agent.history import ActionEntry, ActionResult
+from ronin.agent.memory.history import ActionEntry, ActionResult
 
 logger = logging.getLogger(__name__)
 

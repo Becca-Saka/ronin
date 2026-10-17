@@ -11,32 +11,34 @@ from typing import Optional
 
 from ronin.agent.actuation.actions import ActionType
 from ronin.agent.actuation.orchestrator import ActionOrchestrator
-from ronin.agent.device.device_session import DeviceSession
-from ronin.agent.device.platform import Platform
-from ronin.agent.device_planner import (
+from ronin.agent.plan.planner import (
     GROUNDING_COORDINATES,
     DevicePlanner,
     DeviceStepResponse,
 )
-from ronin.agent.history import ActionEntry, AgentHistory
+from ronin.agent.memory.history import ActionEntry, AgentHistory
 from ronin.agent.device.launch import SetupMode, clear_app_data, restart_app
-from ronin.agent.step import outcomes
-from ronin.agent.step.outcomes import DeviceRunResult, StepHookFn
+from ronin.agent.run import outcomes
+from ronin.agent.run.outcomes import DeviceRunResult, StepHookFn
+from ronin.agent.device import state
+from ronin.agent.perception import settle
 from ronin.agent.step import observation
 from ronin.agent.step.observation import PerceptionSnapshot
-from ronin.agent.step.artifacts import StepArtifacts
+from ronin.agent.artifacts import steps as artifacts
+from ronin.agent.artifacts.steps import StepArtifacts
 from ronin.agent.step import narration
-from ronin.agent.step.loop_detector import RollingLoopDetector
-from ronin.agent.step.run_context import RunContext
-from ronin.agent.step import stall
-from ronin.agent.step.stall import SPENT
-from ronin.agent.replay import ReplayLedger, replay_known_path, target_label
+from ronin.agent.memory.loop_detector import RollingLoopDetector
+from ronin.agent.run.context import RunContext
+from ronin.agent.memory import stall
+from ronin.agent.memory.stall import SPENT
+from ronin.agent.memory.replay import ReplayLedger, replay_known_path, target_label
 from ronin.agent.step import targeting
 from ronin.utils.secrets import SecretScrubber
+from ronin.agent.grounding import marks
 from ronin.agent.perception import keyboard
-from ronin.agent.perception.media_manager import MediaManager
-from ronin.agent.perception.perception import ScreenPerception
-from ronin.agent.trail import SessionTrail
+from ronin.agent.artifacts.redaction import RedactedImages
+from ronin.agent.perception.screen import ScreenPerception
+from ronin.agent.memory.trail import SessionTrail
 from ronin.errors import TargetNotInteractive
 from ronin.llm.llm_client import LLMClient
 
@@ -63,35 +65,21 @@ class DeviceAgent:
 
     def __init__(
         self,
-        device_name: str,
-        app_path: str,
-        platform: Platform = Platform.ANDROID,
         model: str = "openrouter/google/gemini-2.5-flash",
-        assets_dir: Path = Path("assets"),
         max_steps: int = 40,
         settle_time: float = 2.0,
         use_multimodal_vision: bool = False,
-        headless: bool = True,
         fast_model: str = None,
         planner: Optional[DevicePlanner] = None,
         stop_when_satisfied: bool = False,
-        keep_device: bool = False,
-        reuse_app: bool = False,
         replay_ledger: Optional[ReplayLedger] = None,
         grounding: str = GROUNDING_COORDINATES,
     ):
-        self.device_name = device_name
-        self.app_path = app_path
-        self.platform = platform
-        self.assets_dir = assets_dir
         self.max_steps = max_steps
         self.settle_time = settle_time
-        self.headless = headless
         self.use_multimodal_vision = use_multimodal_vision
         self.grounding = grounding
         self.stop_when_satisfied = stop_when_satisfied
-        self.keep_device = keep_device
-        self.reuse_app = reuse_app
         self.replay_ledger = replay_ledger
         self.scrubber = SecretScrubber()
 
@@ -113,8 +101,8 @@ class DeviceAgent:
                 self.fast_llm, use_multimodal_vision, grounding
             )
 
-        self.media_manager = MediaManager(self.scrubber)
-        self.artifacts = StepArtifacts(self.media_manager, self.scrubber)
+        self.images = RedactedImages(self.scrubber)
+        self.artifacts = StepArtifacts(self.images, self.scrubber)
 
     def run(
         self,
@@ -156,8 +144,8 @@ class DeviceAgent:
                 device_control=device_control,
                 goal=goal,
                 history=ctx.history,
-                quick_phash=observation.quick_phash,
-                settle=lambda control: observation.settle(control, self.settle_time),
+                quick_phash=settle.quick_phash,
+                settle=lambda control: settle.settle(control, self.settle_time),
                 scrubber=self.scrubber,
             )
             self._step_limit = max_steps or self.max_steps
@@ -217,124 +205,149 @@ class DeviceAgent:
         step_hook: Optional[StepHookFn],
         ctx: RunContext,
     ) -> Optional[DeviceRunResult]:
+        """One turn of the loop, as the five things it does."""
         ctx.steps_executed += 1
-        logger.info(
-            "--- [DeviceAgent] Step %d / %d ---", step + 1, self.max_steps
-        )
+        logger.info("--- [DeviceAgent] Step %d / %d ---", step + 1, self.max_steps)
 
-        ctx.drift_warning = observation.context_drift(
+        snapshot = self._observe(step, device_control, perception, session_dir,
+                                 session_trail, ctx)
+
+        ending = outcomes.page_stagnation(ctx, session_trail, snapshot.current_phash)
+        if ending is not None:
+            return ending
+
+        step_response = self._plan(step, goal, planner, snapshot, session_dir,
+                                   session_trail, ctx)
+
+        ending = self._ending_after_planning(
+            step_response, snapshot, session_trail, step_hook, ctx
+        )
+        if ending is not None:
+            return ending
+
+        decision = targeting.evaluate(
+            step_response.action, snapshot, device_control, self.grounding
+        )
+        if not decision.ok:
+            return self._blocked(step, step_response.action, decision, snapshot,
+                                 device_control, session_dir, session_trail, ctx)
+
+        return self._act(step, decision.action or step_response.action, step_response,
+                         device_control, snapshot, session_dir, session_trail, ctx)
+
+    def _observe(
+        self, step, device_control, perception, session_dir, session_trail, ctx
+    ) -> PerceptionSnapshot:
+        """Reads the screen, writes it down, and says what the last action did."""
+        ctx.drift_warning = state.context_drift(
             device_control, ctx.last_external_nav, self.settle_time
         )
 
-        snapshot = observation.capture(
-            perception, session_trail, ctx.prev_phash
-        )
+        snapshot = observation.capture(perception, session_trail, ctx.prev_phash)
         ctx.current_phash = snapshot.current_phash
         self.artifacts.save_step(session_dir, step, snapshot)
 
-        needs_keyboard_check = (
-            snapshot.scan_info and snapshot.scan_info.reason in ("navigation", "layout_shift")
-        ) or ctx.last_action_type == ActionType.TYPE.value
-        if needs_keyboard_check:
+        # The keyboard resizes the app, so its state is only worth re-reading
+        # where something could have changed it.
+        moved = snapshot.scan_info and snapshot.scan_info.reason in (
+            "navigation", "layout_shift"
+        )
+        if moved or ctx.last_action_type == ActionType.TYPE.value:
             detected = device_control.is_keyboard_open()
             if detected is not None:
                 ctx.keyboard_open = detected
 
-        reaction = narration.reaction(snapshot.scan_info, ctx.prev_element_count, ctx.keyboard_open)
-        ctx.history.update_last_reaction(reaction)
-        ctx.prev_element_count = snapshot.scan_info.element_count if snapshot.scan_info else None
-
-        page_nudge = ctx.loop_detector.check(None, snapshot.current_phash)
-        stagnation_result = outcomes.page_stagnation(
-            ctx, session_trail, snapshot.current_phash
+        ctx.history.update_last_reaction(
+            narration.reaction(
+                snapshot.scan_info, ctx.prev_element_count, ctx.keyboard_open
+            )
         )
-        if stagnation_result is not None:
-            return stagnation_result
-
-        loop_nudge = "\n".join(
-            filter(None, [ctx.pending_loop_nudge, page_nudge])
+        ctx.prev_element_count = (
+            snapshot.scan_info.element_count if snapshot.scan_info else None
+        )
+        ctx.pending_loop_nudge = "\n".join(
+            filter(None, [
+                ctx.pending_loop_nudge,
+                ctx.loop_detector.check(None, snapshot.current_phash),
+            ])
         ) or None
-        ctx.pending_loop_nudge = None
+        return snapshot
 
+    def _plan(
+        self, step, goal, planner, snapshot, session_dir, session_trail, ctx
+    ) -> DeviceStepResponse:
+        """Numbers the targets, asks for an action, and records what came back."""
         # Saved before the model is called, so a planning failure still leaves
         # the image the planner was given.
         observation.number_targets(snapshot, ctx, self.grounding)
         self.artifacts.save_planner_view(session_dir, step, snapshot)
 
+        nudge, ctx.pending_loop_nudge = ctx.pending_loop_nudge, None
         step_response = self._plan_step(
-            planner=planner,
-            goal=goal,
-            snapshot=snapshot,
-            ctx=ctx,
-            session_trail=session_trail,
-            loop_nudge=loop_nudge,
+            planner=planner, goal=goal, snapshot=snapshot, ctx=ctx,
+            session_trail=session_trail, loop_nudge=nudge,
         )
         self._apply_plan_result(step_response, snapshot, session_trail, ctx)
+        return step_response
 
+    def _ending_after_planning(
+        self, step_response, snapshot, session_trail, step_hook, ctx
+    ) -> Optional[DeviceRunResult]:
+        """The three ways a plan ends the run instead of reaching the device."""
         if step_hook:
-            hook_result = outcomes.hook_stop(
-                step_hook, step_response, snapshot, session_trail, snapshot.current_phash, ctx
+            stopped = outcomes.hook_stop(
+                step_hook, step_response, snapshot, session_trail,
+                snapshot.current_phash, ctx,
             )
-            if hook_result is not None:
-                return hook_result
+            if stopped is not None:
+                return stopped
 
-        done_result = outcomes.goal_reached(
-            self.stop_when_satisfied,
-            step_response,
-            session_trail,
-            snapshot.current_phash,
-            ctx,
+        done = outcomes.goal_reached(
+            self.stop_when_satisfied, step_response, session_trail,
+            snapshot.current_phash, ctx,
         )
-        if done_result is not None:
-            return done_result
+        if done is not None:
+            return done
 
-        action = step_response.action
-        action_nudge = ctx.loop_detector.check(
-            RollingLoopDetector.hash_action(action), None
+        ctx.pending_loop_nudge = ctx.loop_detector.check(
+            RollingLoopDetector.hash_action(step_response.action), None
         )
-        loop_result = outcomes.action_repetition(
-            ctx, session_trail, snapshot.current_phash
-        )
-        if loop_result is not None:
-            return loop_result
+        return outcomes.action_repetition(ctx, session_trail, snapshot.current_phash)
 
-        ctx.pending_loop_nudge = action_nudge
-
-        decision = targeting.evaluate(
-            action, snapshot, device_control, self.grounding
+    def _blocked(
+        self, step, action, decision, snapshot, device_control,
+        session_dir, session_trail, ctx
+    ) -> Optional[DeviceRunResult]:
+        """An action that never reached the device, and what that costs the screen."""
+        targeting.record_unexecuted(
+            ctx.history, step, narration.describe(action), decision.observation
         )
-        if not decision.ok:
-            targeting.record_unexecuted(
-                ctx.history, step, narration.describe(action), decision.observation
+        if decision.unmatched:
+            artifacts.save_unmatched_screen(
+                self.images,
+                session_dir / f"not_listed_step{step + 1}_{snapshot.timestamp}.png",
+                snapshot,
             )
-            if decision.unmatched:
-                targeting.save_unmatched_screen(
-                    self.media_manager,
-                    session_dir / f"not_listed_step{step + 1}_{snapshot.timestamp}.png",
-                    snapshot,
-                )
-            if stall.reveal_behind_keyboard(device_control, snapshot, ctx):
-                return None
-            ctx.stall.record_blocked(snapshot.current_phash)
-            if ctx.stall.spent:
-                return outcomes.loop_detected(
-                    ctx,
-                    session_trail,
-                    snapshot.current_phash,
-                    targeting.stalled_reason(decision),
-                )
+        if stall.reveal_behind_keyboard(device_control, snapshot, ctx):
             return None
+        ctx.stall.record_blocked(snapshot.current_phash)
+        if ctx.stall.spent:
+            return outcomes.loop_detected(
+                ctx, session_trail, snapshot.current_phash,
+                targeting.stalled_reason(decision),
+            )
+        return None
 
-        action = decision.action or action
+    def _act(
+        self, step, action, step_response, device_control, snapshot,
+        session_dir, session_trail, ctx
+    ) -> Optional[DeviceRunResult]:
+        """Touches the device, and decides whether the screen is going anywhere."""
         self.artifacts.save_action(session_dir, step, snapshot, action)
         ctx.last_external_nav = self._execute_and_record(
-            step=step,
-            action=action,
-            step_response=step_response,
-            device_control=device_control,
-            snapshot=snapshot,
-            session_trail=session_trail,
-            ctx=ctx,
+            step=step, action=action, step_response=step_response,
+            device_control=device_control, snapshot=snapshot,
+            session_trail=session_trail, ctx=ctx,
         )
         if ctx.stall.stuck and stall.reveal_behind_keyboard(
             device_control, snapshot, ctx
@@ -347,10 +360,8 @@ class DeviceAgent:
             return outcomes.loop_detected(
                 ctx, session_trail, snapshot.current_phash, SPENT
             )
-
         ctx.prev_phash = snapshot.current_phash
         return None
-
 
     def _plan_step(
         self,
@@ -426,7 +437,7 @@ class DeviceAgent:
             ctx.stall.action_dispatched()
         except TargetNotInteractive as exc:
             error = str(exc)
-            targeting.refuse_mark(
+            marks.refuse_mark(
                 ctx.text_strikes,
                 ctx.refused_marks,
                 snapshot.current_phash,
@@ -441,7 +452,7 @@ class DeviceAgent:
         if error is not None:
             ctx.stall.record_blocked(snapshot.current_phash)
 
-        post_phash = observation.settle(device_control, self.settle_time)
+        post_phash = settle.settle(device_control, self.settle_time)
         action_result = narration.action_result(
             action, snapshot.current_phash, post_phash, error
         )
@@ -469,30 +480,3 @@ class DeviceAgent:
 
         ctx.last_action_type = getattr(action, "type", None)
         return last_external_nav
-
-
-
-
-    def run_standalone(self, goal: str, record_session: bool = True) -> DeviceRunResult:
-        """Runs one goal against a device session this method owns."""
-        session = DeviceSession(
-            device_name=self.device_name,
-            app_path=self.app_path,
-            platform=self.platform,
-            record_session=record_session,
-            session_dir=self.assets_dir,
-            keep_device=self.keep_device,
-            reuse_app=self.reuse_app,
-        )
-        try:
-            device_control = session.start(is_headless=self.headless)
-            perception = ScreenPerception(session)
-            result = self.run(
-                goal=goal,
-                device_control=device_control,
-                perception=perception,
-                session_dir=session.screenshots_dir,
-            )
-        finally:
-            session.close()
-        return result

@@ -1,19 +1,16 @@
 """What one run carries from step to step.
 
-Three groups of state, each belonging to a policy that decides when a screen
-is going nowhere: what the planner has learned not to type into, which screens
-have had their keyboard pulled down, and which have been handed to a recovery
-planner. Each is keyed by screen, because none of it means anything on a
-different one.
+Each group belongs to a policy that decides when a screen is going nowhere, and
+each is keyed by screen, because none of it means anything on a different one.
 """
 
 from dataclasses import dataclass, field
 from typing import Optional
 
-from ronin.agent.history import AgentHistory
+from ronin.agent.memory.history import AgentHistory
 from ronin.agent.grounding import marks
-from ronin.agent.step.loop_detector import RollingLoopDetector
-from ronin.agent.step.stall import Stall
+from ronin.agent.memory.loop_detector import RollingLoopDetector
+from ronin.agent.memory.stall import Stall
 
 
 @dataclass

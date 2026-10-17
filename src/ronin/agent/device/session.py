@@ -13,8 +13,9 @@ from uuid import uuid4
 
 from appium.webdriver.appium_service import AppiumService
 
+from ronin.agent.artifacts.layout import RunLayout, attach_run_log, detach_run_log
 from ronin.agent.device.adb_control import AdbControl
-from ronin.agent.device.device_control import DeviceControl
+from ronin.agent.device.control import DeviceControl
 from ronin.agent.device.platform import Platform
 from ronin.agent.device.recording import DeviceRecording
 from ronin.utils.platform_checks import run_android_preflight, run_ios_preflight
@@ -79,22 +80,9 @@ class DeviceSession(DeviceRecording):
         self.is_recording = False
         self.session_id = session_id or str(uuid4())
 
-        # Ensure structured session directories exist
-        self.session_root = self.session_dir / self.session_id
-        self.logs_dir = self.session_root / "logs"
-        self.screenshots_dir = self.session_root / "screenshots"
-        self.recordings_dir = self.session_root / "recordings"
-        self.telemetry_dir = self.session_root / "telemetry"
-
-        self._ensure_directories()
-
-        self.appium_log_path = self.logs_dir / f"appium_session_{self.session_id}.log"
-        self.root_log_file = self.logs_dir / f"ronin_session_{self.session_id}.log"
-
-        # Create a file log handler to save all python logging output to the assets directory
-        self._file_handler = logging.FileHandler(self.root_log_file, encoding="utf-8")
-        self._file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-        logging.getLogger().addHandler(self._file_handler)
+        self.layout = RunLayout.under(self.session_dir, self.session_id)
+        self.layout.create()
+        self._file_handler = attach_run_log(self.layout.run_log)
 
         host = os.environ.get("APPIUM_HOST", "127.0.0.1")
         port = int(os.environ.get("APPIUM_PORT", "4723"))
@@ -110,7 +98,7 @@ class DeviceSession(DeviceRecording):
             # copying screen contents into a second artifact.
             "args": [
                 "--log",
-                str(self.appium_log_path),
+                str(self.layout.appium_log),
                 "--log-level",
                 "warn",
                 "--log-no-colors",
@@ -118,18 +106,29 @@ class DeviceSession(DeviceRecording):
         }
 
     @property
+    def screenshots_dir(self) -> Path:
+        return self.layout.screenshots
+
+    @property
+    def recordings_dir(self) -> Path:
+        return self.layout.recordings
+
+    @property
+    def telemetry_dir(self) -> Path:
+        return self.layout.telemetry
+
+    @property
+    def root_log_file(self) -> Path:
+        return self.layout.run_log
+
+    @property
+    def appium_log_path(self) -> Path:
+        return self.layout.appium_log
+
+    @property
     def installed_by_run(self) -> Optional[bool]:
         """Whether this run installed the app, as far as it could tell."""
         return self._installed_by_run
-
-    def _ensure_directories(self) -> None:
-        for directory in (
-            self.logs_dir,
-            self.screenshots_dir,
-            self.recordings_dir,
-            self.telemetry_dir,
-        ):
-            directory.mkdir(parents=True, exist_ok=True)
 
     def _start_appium(self):
         try:
@@ -147,7 +146,7 @@ class DeviceSession(DeviceRecording):
         logger.info("Starting Appium...")
         self._appium_service.start(**self._appium_args)
         if not self._appium_service.is_running:
-            raise RuntimeError(f"Appium failed to start. See {self.appium_log_path}")
+            raise RuntimeError(f"Appium failed to start. See {self.layout.appium_log}")
         logger.info("Appium started")
         self._owns_appium = True
 
@@ -177,7 +176,7 @@ class DeviceSession(DeviceRecording):
         self._installed_by_run = bool(package) and package not in packages
 
     def start(self, is_headless: bool = False) -> DeviceControl:
-        self._ensure_directories()
+        self.layout.create()
         self._start_appium()
         self._note_app_ownership()
         self.device_control = DeviceControl(
@@ -255,8 +254,4 @@ class DeviceSession(DeviceRecording):
             finally:
                 self._owns_appium = False
         if hasattr(self, "_file_handler"):
-            try:
-                logging.getLogger().removeHandler(self._file_handler)
-                self._file_handler.close()
-            except Exception as e:
-                logger.warning("Failed to close root file handler: %s", e)
+            detach_run_log(self._file_handler)

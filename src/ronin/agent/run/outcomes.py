@@ -14,12 +14,15 @@ are built here rather than at each exit.
 
 import logging
 from dataclasses import dataclass
-from typing import Callable, Literal, Optional
+from typing import TYPE_CHECKING, Callable, Literal, Optional
 
-from ronin.agent.device_planner import DeviceStepResponse, DoneAction
-from ronin.agent.history import AgentHistory
+from ronin.agent.memory.history import AgentHistory
+from ronin.agent.plan.schema import DeviceStepResponse, DoneAction
 from ronin.agent.step.observation import PerceptionSnapshot
-from ronin.agent.trail import SessionTrail
+from ronin.agent.memory.trail import SessionTrail
+
+if TYPE_CHECKING:
+    from ronin.agent.run.context import RunContext
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +55,7 @@ def flush_trail(
 
 
 def loop_detected(
-    ctx,
+    ctx: "RunContext",
     session_trail: Optional[SessionTrail],
     current_phash: Optional[str],
     failure_reason: str,
@@ -68,7 +71,7 @@ def loop_detected(
 
 def step_limit(
     limit: int,
-    ctx,
+    ctx: "RunContext",
     session_trail: Optional[SessionTrail],
 ) -> DeviceRunResult:
     logger.warning("Reached max step limit (%d).", limit)
@@ -82,7 +85,7 @@ def step_limit(
 
 
 def page_stagnation(
-    ctx,
+    ctx: "RunContext",
     session_trail: Optional[SessionTrail],
     current_phash: Optional[str],
 ) -> Optional[DeviceRunResult]:
@@ -99,7 +102,7 @@ def page_stagnation(
 
 
 def action_repetition(
-    ctx,
+    ctx: "RunContext",
     session_trail: Optional[SessionTrail],
     current_phash: Optional[str],
 ) -> Optional[DeviceRunResult]:
@@ -121,7 +124,7 @@ def hook_stop(
     snapshot: PerceptionSnapshot,
     session_trail: Optional[SessionTrail],
     current_phash: Optional[str],
-    ctx,
+    ctx: "RunContext",
 ) -> Optional[DeviceRunResult]:
     if step_hook(step_response, snapshot) is not False:
         return None
@@ -140,7 +143,7 @@ def goal_reached(
     step_response: DeviceStepResponse,
     session_trail: Optional[SessionTrail],
     current_phash: Optional[str],
-    ctx,
+    ctx: "RunContext",
 ) -> Optional[DeviceRunResult]:
     satisfied = stop_when_satisfied and getattr(
         step_response, "goal_satisfied", False

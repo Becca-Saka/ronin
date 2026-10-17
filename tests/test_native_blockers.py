@@ -15,7 +15,7 @@ class SystemPromptTests(unittest.TestCase):
     """
 
     def _control(self, package):
-        from ronin.agent.device.device_control import DeviceControl
+        from ronin.agent.device.control import DeviceControl
         from ronin.agent.device.platform import Platform
 
         control = DeviceControl.__new__(DeviceControl)
@@ -45,7 +45,7 @@ class SystemPromptTests(unittest.TestCase):
 
     def test_a_driver_that_cannot_answer_reports_no_prompt(self):
         """An unreachable session must not be read as a prompt to leave alone."""
-        from ronin.agent.device.device_control import DeviceControl
+        from ronin.agent.device.control import DeviceControl
         from ronin.agent.device.platform import Platform
 
         class DeadDriver:
@@ -67,7 +67,7 @@ class SystemPromptTests(unittest.TestCase):
         Being silent costs little there: iOS recovery brings the app forward
         rather than pressing back, so no permission is answered by accident.
         """
-        from ronin.agent.device.device_control import DeviceControl
+        from ronin.agent.device.control import DeviceControl
         from ronin.agent.device.platform import Platform
 
         control = DeviceControl.__new__(DeviceControl)
@@ -90,7 +90,7 @@ class DriftRecoveryTests(unittest.TestCase):
         )
 
     def test_back_is_never_pressed_under_a_permission_prompt(self):
-        from ronin.agent.step.observation import context_drift
+        from ronin.agent.device.state import context_drift
 
         device = self._device(in_sut=False, system_prompt=True)
 
@@ -100,7 +100,7 @@ class DriftRecoveryTests(unittest.TestCase):
         self.assertIn("permission", note)
 
     def test_the_planner_is_told_not_to_navigate_away(self):
-        from ronin.agent.step.observation import context_drift
+        from ronin.agent.device.state import context_drift
 
         note = context_drift(
             self._device(in_sut=False, system_prompt=True),
@@ -111,7 +111,7 @@ class DriftRecoveryTests(unittest.TestCase):
         self.assertIn("denies the permission", note)
 
     def test_real_drift_is_still_recovered(self):
-        from ronin.agent.step.observation import context_drift
+        from ronin.agent.device.state import context_drift
 
         device = self._device(in_sut=False, system_prompt=False)
 
@@ -120,7 +120,7 @@ class DriftRecoveryTests(unittest.TestCase):
         device.recover_to_sut.assert_called_once()
 
     def test_staying_in_the_app_needs_no_recovery(self):
-        from ronin.agent.step.observation import context_drift
+        from ronin.agent.device.state import context_drift
 
         device = self._device(in_sut=True)
 
@@ -136,7 +136,7 @@ class KeyboardDismissTests(unittest.TestCase):
     """
 
     def _control(self, platform, keyboard_after, raises=False):
-        from ronin.agent.device.device_control import DeviceControl
+        from ronin.agent.device.control import DeviceControl
 
         control = DeviceControl.__new__(DeviceControl)
         control.platform = platform

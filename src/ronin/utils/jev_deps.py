@@ -1,7 +1,7 @@
 """Access to the optional decision-model dependency.
 
-Grounding against a decision model needs its vendor SDK, which a run that never
-grounds never uses. These helpers keep the rest of the codebase importable
+Grounding against a decision model needs its vendor SDK. A run that never
+grounds never uses it. These helpers keep the rest of the codebase importable
 without it, and turn a missing install into an actionable message instead of a
 bare ``ModuleNotFoundError`` surfacing mid-run.
 """

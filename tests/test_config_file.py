@@ -306,7 +306,7 @@ class OneDeclarationTests(unittest.TestCase):
     def test_the_grounding_constants_match_the_schema(self):
         import typing
 
-        from ronin.agent.device_planner import GROUNDING_COORDINATES, GROUNDING_MARKS
+        from ronin.agent.plan.planner import GROUNDING_COORDINATES, GROUNDING_MARKS
         from ronin.schema import GROUNDINGS
         from ronin.schema import Grounding as GroundingLiteral
 

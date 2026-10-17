@@ -9,11 +9,11 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-from ronin.agent.device_agent import DeviceAgent, DeviceRunResult
-from ronin.agent.device_planner import DeviceStepResponse
-from ronin.agent.trail import SessionTrail
+from ronin.agent.run.agent import DeviceAgent, DeviceRunResult
+from ronin.agent.plan.planner import DeviceStepResponse
+from ronin.agent.memory.trail import SessionTrail
 from ronin.agent.device.platform import Platform
-from ronin.agent.replay import ReplayLedger
+from ronin.agent.memory.replay import ReplayLedger
 
 # Replay skips perception and auditing on the screens it passes through, so
 # any scenario whose assertions can apply mid-navigation must not use it.
@@ -33,7 +33,7 @@ from ronin.testing.models import (
     SensitiveFinding,
 )
 from ronin.testing.capabilities import unsupported_reason
-from ronin.agent.device_planner import GROUNDING_COORDINATES
+from ronin.agent.plan.planner import GROUNDING_COORDINATES
 from ronin.testing import rules
 from ronin.testing.verdicts import (
     _missing_required_ids,
@@ -119,15 +119,10 @@ class QAAgent:
         self._grounding = grounding
 
         self._device_agent = DeviceAgent(
-            device_name=device_name,
-            app_path=app_path,
-            platform=platform,
             model=model,
-            assets_dir=assets_dir,
             max_steps=max_steps,
             settle_time=settle_time,
             use_multimodal_vision=use_multimodal_vision,
-            headless=headless,
             fast_model=fast_model,
             replay_ledger=replay_ledger,
             grounding=grounding,

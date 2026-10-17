@@ -70,7 +70,8 @@ def register(subcommands: argparse._SubParsersAction) -> None:
 
 def run(args: argparse.Namespace, config: Config) -> int:
     from ronin.agent.device.platform import Platform
-    from ronin.agent.device_agent import DeviceAgent
+    from ronin.agent.run.agent import DeviceAgent
+    from ronin.agent.run.standalone import run_goal
 
     model = config.resolve("model", args.model)
     fast_model = config.resolve("fast_model", args.fast_model)
@@ -83,24 +84,28 @@ def run(args: argparse.Namespace, config: Config) -> int:
     )
 
     agent = DeviceAgent(
-        device_name=config.resolve("device", args.device),
-        app_path=str(app_path),
-        platform=Platform.named(platform),
         model=model,
         fast_model=fast_model,
-        assets_dir=Path(config.resolve("output_dir", args.output_dir)),
         max_steps=config.resolve("max_steps", args.max_steps),
         settle_time=config.resolve("settle_time", args.settle_time),
         use_multimodal_vision=config.resolve("use_multimodal_vision", args.use_multimodal_vision),
-        headless=config.resolve("headless", args.headless),
         # A single goal is done when it is done; journeys keep auditing past it.
         stop_when_satisfied=True,
-        keep_device=args.keep_device,
-        reuse_app=args.reuse_app,
     )
 
     try:
-        result = agent.run_standalone(args.goal, record_session=not args.no_record)
+        result = run_goal(
+            agent,
+            goal=args.goal,
+            device_name=config.resolve("device", args.device),
+            app_path=str(app_path),
+            platform=Platform.named(platform),
+            assets_dir=Path(config.resolve("output_dir", args.output_dir)),
+            headless=config.resolve("headless", args.headless),
+            record_session=not args.no_record,
+            keep_device=args.keep_device,
+            reuse_app=args.reuse_app,
+        )
     except KeyboardInterrupt:
         logger.info("Agent execution interrupted by user")
         return 130

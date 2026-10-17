@@ -39,6 +39,6 @@ jobs:
         with:
           enable-cache: true
       # Pyright reads the perception module's deferred torch imports. The
-      # vision extra must resolve here, although no job runs a model.
-      - run: uv sync --group dev --extra vision
+      # Both optional extras must resolve here, although no job runs a model.
+      - run: uv sync --group dev --extra vision --extra jev
       - run: uv run python tools/type_gate.py

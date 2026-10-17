@@ -280,7 +280,7 @@ class GroundingContractTests(unittest.TestCase):
     def test_marks_mode_refuses_raw_coordinates(self):
         """Obeying them would reinstate the invented coordinate numbering prevents."""
         from ronin.agent.actuation.actions import Coordinates, TapAction
-        from ronin.agent.device_planner import GROUNDING_MARKS
+        from ronin.agent.plan.planner import GROUNDING_MARKS
 
         decision = self._verdict(
             TapAction(coordinates=Coordinates(x=535, y=1222), reason="r"),
@@ -304,7 +304,7 @@ class GroundingContractTests(unittest.TestCase):
         self.assertNotIn("mark", TapAction.model_fields)
 
     def test_the_marks_schema_offers_no_coordinates_at_all(self):
-        from ronin.agent.device_planner import MarksStepResponse
+        from ronin.agent.plan.planner import MarksStepResponse
 
         schema = MarksStepResponse.model_json_schema()
         tap = next(d for n, d in schema["$defs"].items() if n.startswith("Tap"))
@@ -315,12 +315,12 @@ class GroundingContractTests(unittest.TestCase):
 
     def test_an_untargeted_action_needs_neither(self):
         from ronin.agent.actuation.actions import KeyEventAction
-        from ronin.agent.device_planner import GROUNDING_MARKS
+        from ronin.agent.plan.planner import GROUNDING_MARKS
 
         self.assertTrue(self._verdict(KeyEventAction(key=4, reason="back"), GROUNDING_MARKS).ok)
 
     def test_the_heading_matches_the_mode(self):
-        from ronin.agent.device_planner import (
+        from ronin.agent.plan.planner import (
             GROUNDING_COORDINATES,
             GROUNDING_MARKS,
             DevicePlanner,
@@ -347,7 +347,7 @@ class GroundingContractTests(unittest.TestCase):
         self.assertIn("nothing to", str(caught.exception))
 
     def test_an_unmatched_screen_is_saved_redacted(self):
-        from ronin.agent.step.targeting import save_unmatched_screen
+        from ronin.agent.artifacts.steps import save_unmatched_screen
 
         media = Mock()
         snapshot = SimpleNamespace(raw_img_bytes=b"png", gui_elements=["el"])

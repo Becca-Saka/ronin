@@ -8,7 +8,7 @@ import logging
 import time
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional
 
 from ronin.llm import usage
 from ronin.utils.jev_deps import require_jev
@@ -82,7 +82,7 @@ def prepare(png: bytes) -> Frame:
     sent = (max(MIN_SIDE, round(width * factor)), max(MIN_SIDE, round(height * factor)))
 
     buffer = BytesIO()
-    image.resize(sent, Image.LANCZOS).save(buffer, format="PNG")
+    image.resize(sent, Image.Resampling.LANCZOS).save(buffer, format="PNG")
     return Frame(png=buffer.getvalue(), original=(width, height), sent=sent)
 
 
@@ -133,11 +133,12 @@ class JevClient:
         """The model name the vendor knows, without LiteLLM's provider prefix."""
         return self._model.split("/", 1)[-1]
 
-    def ask(self, questions: Mapping[str, object], screenshot: Optional[bytes] = None):
+    def ask(self, questions: Mapping[str, Any], screenshot: Optional[bytes] = None):
         """Answers every question, about the screenshot when one is given.
 
         Args:
-            questions: Named questions, as the vendor's question objects.
+            questions: Named questions, as the vendor's question objects or
+                their mapping form.
             screenshot: PNG bytes of the screen to ask about, already at device size.
 
         Returns:

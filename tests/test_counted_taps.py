@@ -67,7 +67,7 @@ class TapCountTests(unittest.TestCase):
 
 class PlannerVocabularyTests(unittest.TestCase):
     def test_both_groundings_offer_the_count(self):
-        from ronin.agent.device_planner import GROUNDING_MARKS, DevicePlanner
+        from ronin.agent.plan.planner import GROUNDING_MARKS, DevicePlanner
 
         for grounding in (GROUNDING_MARKS, "coordinates"):
             planner = DevicePlanner.__new__(DevicePlanner)

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, Mock, PropertyMock, patch
 
 
 from ronin.errors import ObservationUnavailable
-from ronin.agent.device.device_control import DeviceControl
+from ronin.agent.device.control import DeviceControl
 from ronin.agent.device.platform import Platform
 from ronin.errors import ActionRejected
 
@@ -92,7 +92,7 @@ class DeviceFailureTests(unittest.TestCase):
         self.assertIn("toggle pointer location", str(raised.exception))
 
     def test_an_unreadable_screen_is_reported_as_such(self):
-        from ronin.agent.device.device_control import DeviceControl
+        from ronin.agent.device.control import DeviceControl
         from ronin.errors import ObservationUnavailable
 
         control = DeviceControl.__new__(DeviceControl)
@@ -120,9 +120,9 @@ class DeviceFailureTests(unittest.TestCase):
 
 
 class LifecycleOwnershipTests(unittest.TestCase):
-    @patch("ronin.agent.device.device_session.urllib.request.urlopen")
+    @patch("ronin.agent.device.session.urllib.request.urlopen")
     def test_existing_appium_service_is_not_claimed(self, urlopen):
-        from ronin.agent.device.device_session import DeviceSession
+        from ronin.agent.device.session import DeviceSession
 
         response = MagicMock()
         response.__enter__.return_value.status = 200
@@ -270,8 +270,8 @@ class CapabilityMatchingTests(unittest.TestCase):
 
 class ScenarioIsolationTests(unittest.TestCase):
     def test_supported_scenario_resets_perception_before_running(self):
-        from ronin.agent.device_agent import DeviceRunResult
-        from ronin.agent.history import AgentHistory
+        from ronin.agent.run.agent import DeviceRunResult
+        from ronin.agent.memory.history import AgentHistory
         from ronin.testing.models import GeneratedTestCase
         from ronin.testing.qa_agent import QAAgent
 
@@ -328,7 +328,7 @@ class DeviceTypingTests(unittest.TestCase):
         control.screen_height = 2400
         return control, element
 
-    @patch("ronin.agent.device.device_control.time.sleep")
+    @patch("ronin.agent.device.control.time.sleep")
     def test_type_reuses_already_focused_field(self, _sleep):
         control, element = self._control(
             {"x": 63, "y": 820, "width": 954, "height": 147}
@@ -339,7 +339,7 @@ class DeviceTypingTests(unittest.TestCase):
         control.tap.assert_not_called()
         element.send_keys.assert_called_once_with("test@email.com")
 
-    @patch("ronin.agent.device.device_control.time.sleep")
+    @patch("ronin.agent.device.control.time.sleep")
     def test_type_is_refused_when_nothing_reports_focus(self, _sleep):
         """Text sent with no focus goes wherever focus happens to be."""
         control, element = self._control({"x": 63, "y": 820, "width": 954, "height": 147})
@@ -350,7 +350,7 @@ class DeviceTypingTests(unittest.TestCase):
 
         element.send_keys.assert_not_called()
 
-    @patch("ronin.agent.device.device_control.time.sleep")
+    @patch("ronin.agent.device.control.time.sleep")
     def test_type_is_refused_when_the_focused_element_has_no_bounds(self, _sleep):
         """An element that cannot report a rect cannot be checked against a point."""
         control, element = self._control({"x": 63, "y": 820, "width": 954, "height": 147})
@@ -364,7 +364,7 @@ class DeviceTypingTests(unittest.TestCase):
 
         unreadable.send_keys.assert_not_called()
 
-    @patch("ronin.agent.device.device_control.time.sleep")
+    @patch("ronin.agent.device.control.time.sleep")
     def test_a_full_screen_surface_still_accepts_typing(self, _sleep):
         """Some apps focus one element for the whole screen.
 
@@ -377,7 +377,7 @@ class DeviceTypingTests(unittest.TestCase):
 
         element.send_keys.assert_called_once_with("test@email.com")
 
-    @patch("ronin.agent.device.device_control.time.sleep")
+    @patch("ronin.agent.device.control.time.sleep")
     def test_clear_is_refused_when_nothing_reports_focus(self, _sleep):
         control, _element = self._control({"x": 63, "y": 820, "width": 954, "height": 147})
         control.driver.switch_to.active_element = None
@@ -385,7 +385,7 @@ class DeviceTypingTests(unittest.TestCase):
         with self.assertRaisesRegex(ActionRejected, "nothing reported focus"):
             control.clear(537, 1260)
 
-    @patch("ronin.agent.device.device_control.time.sleep")
+    @patch("ronin.agent.device.control.time.sleep")
     def test_type_rejects_a_tap_that_left_focus_where_it_was(self, _sleep):
         """Focus that never moved means the tap hit something that takes no text.
 
@@ -402,7 +402,7 @@ class DeviceTypingTests(unittest.TestCase):
         control.tap.assert_called_once_with(537, 1260)
         element.send_keys.assert_not_called()
 
-    @patch("ronin.agent.device.device_control.time.sleep")
+    @patch("ronin.agent.device.control.time.sleep")
     def test_type_rejects_a_tap_that_focused_a_different_field(self, _sleep):
         """Any text field opens the keyboard, so a wrong field looks like a reflow."""
         before = SimpleNamespace(id="nothing", rect={"x": 0, "y": 0, "width": 0, "height": 0})
@@ -427,7 +427,7 @@ class DeviceTypingTests(unittest.TestCase):
 
         email.send_keys.assert_not_called()
 
-    @patch("ronin.agent.device.device_control.time.sleep")
+    @patch("ronin.agent.device.control.time.sleep")
     def test_clear_propagates_the_focus_failure(self, _sleep):
         control, _element = self._control(
             {"x": 63, "y": 820, "width": 954, "height": 147}
@@ -453,7 +453,7 @@ class WarmSessionTests(unittest.TestCase):
         captured = {}
         return SimpleNamespace(set_capability=lambda k, v: captured.__setitem__(k, v)), captured
 
-    @patch("ronin.agent.device.device_control.AdbControl")
+    @patch("ronin.agent.device.control.AdbControl")
     def test_skips_setup_when_the_helper_apps_are_present(self, adb):
         adb.resolve_emulator_serial.return_value = "emulator-5554"
         adb.installed_packages.return_value = {
@@ -468,7 +468,7 @@ class WarmSessionTests(unittest.TestCase):
         self.assertTrue(captured["appium:skipServerInstallation"])
         self.assertTrue(captured["appium:skipDeviceInitialization"])
 
-    @patch("ronin.agent.device.device_control.AdbControl")
+    @patch("ronin.agent.device.control.AdbControl")
     def test_does_a_full_setup_when_the_server_is_missing(self, adb):
         adb.resolve_emulator_serial.return_value = "emulator-5554"
         adb.installed_packages.return_value = {"io.appium.settings"}

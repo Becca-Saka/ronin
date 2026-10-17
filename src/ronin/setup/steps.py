@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from ronin.agent.perception.image_descriptor import (
+from ronin.agent.perception.detector import (
     OCR_LANGUAGES,
     YOLO_FILENAME,
     YOLO_REPO_ID,

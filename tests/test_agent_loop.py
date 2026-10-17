@@ -4,8 +4,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from ronin.agent.step import observation, outcomes
-from ronin.agent.device_agent import (
+from ronin.agent.perception import settle
+from ronin.agent.run import outcomes
+from ronin.agent.run.agent import (
     AgentHistory,
     RollingLoopDetector,
     RunContext,
@@ -15,22 +16,22 @@ from ronin.agent.device_agent import (
 class SettleTests(unittest.TestCase):
     """Waiting only as long as the screen keeps changing."""
 
-    @patch("ronin.agent.step.observation.time.sleep")
+    @patch("ronin.agent.perception.settle.time.sleep")
     def test_settle_returns_as_soon_as_the_screen_repeats(self, _sleep):
         reads = Mock(side_effect=["a", "a", "should-not-be-read"])
 
-        with patch("ronin.agent.step.observation.quick_phash", reads):
-            settled = observation.settle(object(), settle_time=2.0)
+        with patch("ronin.agent.perception.settle.quick_phash", reads):
+            settled = settle.settle(object(), settle_time=2.0)
 
         self.assertEqual(settled, "a")
         self.assertEqual(reads.call_count, 2)
 
-    @patch("ronin.agent.step.observation.time.sleep")
+    @patch("ronin.agent.perception.settle.time.sleep")
     def test_settle_gives_up_at_the_settle_budget(self, _sleep):
         reads = Mock(side_effect=["a", "b", "c", "d", "e", "f", "g"])
 
-        with patch("ronin.agent.step.observation.quick_phash", reads):
-            observation.settle(object(), settle_time=2.0)
+        with patch("ronin.agent.perception.settle.quick_phash", reads):
+            settle.settle(object(), settle_time=2.0)
 
         # settle_time 2.0 / 0.35 poll = 5 polls after the first reading
         self.assertEqual(reads.call_count, 6)
@@ -65,7 +66,7 @@ class EarlyStopTests(unittest.TestCase):
 
 class ReplayTests(unittest.TestCase):
     def _replay(self, agent, goal, context):
-        from ronin.agent.replay import replay_known_path
+        from ronin.agent.memory.replay import replay_known_path
 
         return replay_known_path(
             ledger=agent.replay_ledger,
@@ -101,7 +102,7 @@ class ReplayTests(unittest.TestCase):
         )
 
     def _ledger(self):
-        from ronin.agent.replay import ReplayLedger
+        from ronin.agent.memory.replay import ReplayLedger
 
         ledger = ReplayLedger()
         ledger.record("0" * 64, self._tap(), "1" * 64, "tap Login", "Login")
@@ -110,7 +111,7 @@ class ReplayTests(unittest.TestCase):
     def _context(self):
         return RunContext(history=AgentHistory(), loop_detector=RollingLoopDetector())
 
-    @patch("ronin.agent.replay.ActionOrchestrator")
+    @patch("ronin.agent.memory.replay.ActionOrchestrator")
     def test_replays_a_known_transition(self, orchestrator):
         ledger = self._ledger()
         agent = self._agent(ledger, ["0" * 64, "1" * 64, "1" * 64])
@@ -121,7 +122,7 @@ class ReplayTests(unittest.TestCase):
         orchestrator.return_value.execute.assert_called_once()
         self.assertEqual(len(context.history._entries), 1)
 
-    @patch("ronin.agent.replay.ActionOrchestrator")
+    @patch("ronin.agent.memory.replay.ActionOrchestrator")
     def test_stops_when_the_screen_is_not_where_it_used_to_lead(self, orchestrator):
         ledger = self._ledger()
         agent = self._agent(ledger, ["0" * 64, "f" * 64])
@@ -132,9 +133,9 @@ class ReplayTests(unittest.TestCase):
         orchestrator.return_value.execute.assert_called_once()
         self.assertEqual(len(context.history._entries), 0)
 
-    @patch("ronin.agent.replay.ActionOrchestrator")
+    @patch("ronin.agent.memory.replay.ActionOrchestrator")
     def test_does_not_replay_text_the_scenario_never_mentions(self, orchestrator):
-        from ronin.agent.replay import ReplayLedger
+        from ronin.agent.memory.replay import ReplayLedger
 
         ledger = ReplayLedger()
         ledger.record("0" * 64, self._typing("password123"), "1" * 64, "type password", "Password")
@@ -144,11 +145,11 @@ class ReplayTests(unittest.TestCase):
 
         orchestrator.return_value.execute.assert_not_called()
 
-    @patch("ronin.agent.replay.ActionOrchestrator")
+    @patch("ronin.agent.memory.replay.ActionOrchestrator")
     def test_gestures_are_never_replayed(self, orchestrator):
         """Destructive scenarios are built from gestures, which must not carry over."""
         from ronin.agent.actuation.actions import ActionType, Coordinates, LongPressAction
-        from ronin.agent.replay import ReplayLedger
+        from ronin.agent.memory.replay import ReplayLedger
 
         ledger = ReplayLedger()
         ledger.record(
@@ -165,7 +166,7 @@ class ReplayTests(unittest.TestCase):
 
         self.assertEqual(len(ledger), 0)
 
-    @patch("ronin.agent.replay.ActionOrchestrator")
+    @patch("ronin.agent.memory.replay.ActionOrchestrator")
     def test_unknown_screen_plans_as_usual(self, orchestrator):
         agent = self._agent(self._ledger(), ["e" * 64])
 
@@ -173,10 +174,10 @@ class ReplayTests(unittest.TestCase):
 
         orchestrator.return_value.execute.assert_not_called()
 
-    @patch("ronin.agent.replay.ActionOrchestrator")
+    @patch("ronin.agent.memory.replay.ActionOrchestrator")
     def test_does_not_replay_a_tap_this_scenario_never_asked_for(self, orchestrator):
         """A 'Place Order' tap learned elsewhere must not fire in another scenario."""
-        from ronin.agent.replay import ReplayLedger
+        from ronin.agent.memory.replay import ReplayLedger
 
         ledger = ReplayLedger()
         ledger.record("0" * 64, self._tap(), "1" * 64, "tap Place Order", "Place Order")
@@ -186,10 +187,10 @@ class ReplayTests(unittest.TestCase):
 
         orchestrator.return_value.execute.assert_not_called()
 
-    @patch("ronin.agent.replay.ActionOrchestrator")
+    @patch("ronin.agent.memory.replay.ActionOrchestrator")
     def test_only_back_is_replayable_among_key_events(self, orchestrator):
         from ronin.agent.actuation.actions import ActionType, KeyEventAction
-        from ronin.agent.replay import ReplayLedger
+        from ronin.agent.memory.replay import ReplayLedger
 
         ledger = ReplayLedger()
         ledger.record(

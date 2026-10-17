@@ -9,8 +9,8 @@ import logging
 from typing import Optional
 
 from ronin.agent.actuation.actions import ActionType
-from ronin.agent.history import ActionResult
-from ronin.agent.perception.scan_dump import ScanInfo
+from ronin.agent.memory.history import ActionResult
+from ronin.agent.perception.elements import ScanInfo
 
 logger = logging.getLogger(__name__)
 

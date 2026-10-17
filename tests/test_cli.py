@@ -57,7 +57,7 @@ class ExitCodeTests(unittest.TestCase):
 
     def test_a_setting_ronin_config_does_not_know_is_not_looked_up_there(self):
         """grounding comes from a flag or the journey, or falls back to the default."""
-        from ronin.agent.device_planner import GROUNDING_COORDINATES
+        from ronin.agent.plan.planner import GROUNDING_COORDINATES
         from ronin.testing.cli import RoninCLI
         from ronin.testing.models import JourneyReport
 

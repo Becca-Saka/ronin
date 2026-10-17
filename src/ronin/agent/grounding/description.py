@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 class DecisionGrounder:
     """A grounder backed by a decision model.
 
-    Asks where the target is and whether it is there at all, in one request:
-    the frame is billed once however many questions ride on it. Whether it is
-    there decides; where it is never does.
+    One request asks two questions: where the target is, and whether it is
+    there at all. The frame costs the same either way. The second question
+    decides. The first one never does.
     """
 
     def __init__(self, client, min_presence: float = MIN_PRESENCE):

@@ -9,8 +9,8 @@ reading they came from together.
 import logging
 from pathlib import Path
 
-from ronin.agent.perception.media_manager import MediaManager
-from ronin.agent.perception.scan_dump import (
+from ronin.agent.artifacts.redaction import RedactedImages
+from ronin.agent.artifacts.scan import (
     build_screen_scan_record,
     write_screen_scan_dump,
 )
@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 class StepArtifacts:
     """Writes a step's files through the media manager that redacts them."""
 
-    def __init__(self, media_manager: MediaManager, scrubber: SecretScrubber):
-        self.media_manager = media_manager
+    def __init__(self, images: RedactedImages, scrubber: SecretScrubber):
+        self.images = images
         self.scrubber = scrubber
 
     def save_step(
@@ -36,7 +36,7 @@ class StepArtifacts:
         raw_path = session_dir / f"{base}_raw.png"
         scan_path = session_dir / f"{base}_scan.json"
 
-        self.media_manager.save_redacted_pair(
+        self.images.save_redacted_pair(
             snapshot.annotated_img,
             snapshot.raw_img_bytes,
             snapshot.gui_elements,
@@ -77,7 +77,7 @@ class StepArtifacts:
         if not snapshot.marks or not planner_view:
             return
         session_dir.mkdir(parents=True, exist_ok=True)
-        self.media_manager.save_redacted_bytes(
+        self.images.save_redacted_bytes(
             planner_view,
             snapshot.gui_elements,
             session_dir / f"step{step + 1}_{snapshot.timestamp}_marks.png",
@@ -87,6 +87,20 @@ class StepArtifacts:
         self, session_dir: Path, step: int, snapshot: PerceptionSnapshot, action
     ) -> None:
         click_path = session_dir / f"action_step{step + 1}_{snapshot.timestamp}.png"
-        self.media_manager.save_redacted_action_annotation(
+        self.images.save_redacted_action_annotation(
             snapshot.annotated_img, snapshot.gui_elements, action, click_path
         )
+
+
+def save_unmatched_screen(images: RedactedImages, path: Path, snapshot) -> None:
+    """Keeps the screen a target was missing from, so the gap can be studied later.
+
+    Through the media manager, not straight to disk: this file outlives the run
+    like any other artifact, so declared secrets on screen get covered first.
+    """
+    try:
+        images.save_redacted_bytes(
+            snapshot.raw_img_bytes, snapshot.gui_elements, path
+        )
+    except Exception as exc:  # noqa: BLE001 - an artifact must never fail a run
+        logger.warning("Could not save the unmatched screen: %s", exc)

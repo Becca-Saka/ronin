@@ -5,7 +5,7 @@ Encapsulates driver initialization, screenshots, and gesture/input execution.
 
 import logging
 import time
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from appium import webdriver
 from selenium.common.exceptions import WebDriverException
@@ -22,24 +22,13 @@ from ronin.defaults import (
     AVD_LAUNCH_TIMEOUT_MS,
 )
 from ronin.errors import DeviceUnavailable, ObservationUnavailable
-from ronin.utils.subprocess_runner import run_command
+
+if TYPE_CHECKING:
+    from ronin.agent.device.state import DeviceState
 
 logger = logging.getLogger(__name__)
 
 ANDROID_KEYCODE_BACK = 4
-
-# Android draws runtime permission prompts from its own package, so the app
-# under test is briefly not the foreground one.
-PERMISSION_DIALOG_PACKAGES = frozenset(
-    {
-        "com.google.android.permissioncontroller",
-        "com.android.permissioncontroller",
-        "com.android.packageinstaller",
-    }
-)
-IOS_APP_STATE_FOREGROUND = 4
-RECOVERY_SLEEP_AFTER_BACK = 1.5
-RECOVERY_SLEEP_AFTER_ACTIVATE = 2.0
 
 
 class DeviceControl:
@@ -177,6 +166,25 @@ class DeviceControl:
             self.model,
             self.serial,
         )
+
+    @property
+    def state(self) -> "DeviceState":
+        """What the device says about itself, built on the way through."""
+        from ronin.agent.device.state import DeviceState
+
+        return DeviceState(self)
+
+    def is_still_in_sut(self) -> bool:
+        return self.state.is_still_in_sut()
+
+    def showing_system_prompt(self) -> bool:
+        return self.state.showing_system_prompt()
+
+    def is_keyboard_open(self) -> Optional[bool]:
+        return self.state.is_keyboard_open()
+
+    def recover_to_sut(self) -> None:
+        self.state.recover_to_sut()
 
     @property
     def focus(self) -> Focus:
@@ -383,108 +391,3 @@ class DeviceControl:
                 or self.driver.capabilities.get("appium:bundleId")
             )
         return self.bundle_id
-
-    def is_still_in_sut(self) -> bool:
-        """Checks if the device is currently focused on the target app under test (SUT)."""
-        try:
-            if self.platform == Platform.ANDROID:
-                return self.driver.current_package == self.package_id
-            bundle_id = self._resolve_bundle_id()
-            if bundle_id:
-                return self.driver.query_app_state(bundle_id) == IOS_APP_STATE_FOREGROUND
-        except Exception as e:
-            logger.warning("Failed to check SUT focus: %s", e)
-        return True
-
-    def showing_system_prompt(self) -> bool:
-        """Whether the operating system is asking the user something over the app.
-
-        Android names the prompt: it is drawn from a package of its own, so the
-        foreground package stops matching and the check is exact. Saying so
-        matters there because drift recovery presses back, and back on a
-        permission prompt denies it, after which the journey fails several
-        steps later for a reason that looks nothing like a denial.
-
-        iOS answers False, and the alternative is worse. Appium reports an
-        alert for the app's own modals too, with nothing to tell the two apart,
-        so claiming a prompt there would tell the planner an app dialog belongs
-        to the system and must not be dismissed. Being wrong on iOS costs
-        little by comparison: recovery brings the app forward rather than
-        pressing back, so no permission is answered by accident.
-        """
-        if self.platform != Platform.ANDROID:
-            return False
-        try:
-            return self.driver.current_package in PERMISSION_DIALOG_PACKAGES
-        except Exception as exc:  # noqa: BLE001 - driver boundary
-            logger.debug("Could not read the foreground package: %s", exc)
-            return False
-
-    def is_keyboard_open(self) -> Optional[bool]:
-        """Detect whether the soft keyboard is currently visible on screen.
-
-        Tries Appium first (cross-platform), then falls back to a native check:
-        - Android: adb dumpsys input_method
-        - iOS: idb accessibility tree query
-        Returns None if all checks fail.
-        """
-        try:
-            return bool(self.driver.is_keyboard_shown())
-        except Exception:
-            logger.debug("Appium is_keyboard_shown() unavailable, using native fallback")
-
-        if self.platform == Platform.ANDROID:
-            try:
-                serial = self.serial or self.device_name
-                result = run_command(
-                    ["adb", "-s", serial, "shell", "dumpsys", "input_method"],
-                    capture_output=True, text=True, timeout=3.0,
-                )
-                return "mInputShown=true" in (result.stdout or "")
-            except Exception as e:
-                logger.debug("ADB keyboard check failed: %s", e)
-
-        elif self.platform == Platform.IOS:
-            try:
-                udid = self.serial or self.device_name
-                result = run_command(
-                    ["idb", "ui", "describe-all", "--udid", udid],
-                    capture_output=True, text=True, timeout=3.0,
-                )
-                return "XCUIElementTypeKeyboard" in (result.stdout or "")
-            except Exception as e:
-                logger.debug("idb keyboard check failed: %s", e)
-
-        return None
-
-    def recover_to_sut(self) -> None:
-        """Attempts to recover the focus back to the target app under test (SUT) after drift."""
-        logger.info(
-            "Context drift detected. Attempting to recover focus back to the target app..."
-        )
-        if self.platform == Platform.ANDROID:
-            try:
-                self.key_event(ANDROID_KEYCODE_BACK)
-                time.sleep(RECOVERY_SLEEP_AFTER_BACK)
-            except Exception as e:
-                logger.warning("Failed to press back key during recovery: %s", e)
-
-        if self.is_still_in_sut():
-            return
-
-        app_id = (
-            self.package_id
-            if self.platform == Platform.ANDROID
-            else self._resolve_bundle_id()
-        )
-
-        if not app_id:
-            logger.error("Cannot recover: no app ID available.")
-            return
-
-        try:
-            logger.info("Activating SUT app: %s", app_id)
-            self.driver.activate_app(app_id)
-            time.sleep(RECOVERY_SLEEP_AFTER_ACTIVATE)
-        except Exception as e:
-            logger.error("Failed to activate SUT app: %s", e)

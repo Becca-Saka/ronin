@@ -16,7 +16,7 @@ from typing import Any, Optional, Protocol
 from selenium.common.exceptions import WebDriverException
 
 from ronin.agent.device.adb_control import AdbControl
-from ronin.agent.device.device_files import MEDIA_PROJECTION_DIR, DeviceFiles
+from ronin.agent.device.files import MEDIA_PROJECTION_DIR, DeviceFiles
 from ronin.agent.device.platform import Platform
 
 logger = logging.getLogger(__name__)

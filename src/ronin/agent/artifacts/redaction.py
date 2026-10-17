@@ -1,33 +1,29 @@
+"""Writing a screenshot out with declared secrets covered, and marks drawn on it.
+
+Nothing masks detection text on the way in. The planner needs it, and a
+security audit cannot find a card number it never saw. So the mask goes on
+here, on the way out.
+"""
+
 import io
 import logging
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from ronin.agent.device.device_control import DeviceControl
 
 logger = logging.getLogger(__name__)
 
-CLASS_COLORS = {
-    "View": "blue",
-    "ImageView": "orange",
-    "Text": "green",
-    "Line": "purple",
-}
 
+class RedactedImages:
+    """Every screenshot this run writes, with its declared secrets covered."""
 
-class MediaManager:
     def __init__(self, scrubber=None):
         """`scrubber` holds the journey's declared secrets; without one, nothing is masked."""
         self.scrubber = scrubber
 
     def redact_artifact_image(self, image: Image.Image, elements: list) -> Image.Image:
-        """Covers declared secret values before a screenshot is persisted.
-
-        Detection text is never masked on the way in — the planner needs it,
-        and a security audit cannot find an exposed card number it was not
-        allowed to see — so the mask is applied here, on the way out.
-        """
+        """Covers declared secret values before a screenshot is persisted."""
         if self.scrubber is None:
             return image
         safe = image.copy()
@@ -80,38 +76,6 @@ class MediaManager:
         buf = io.BytesIO()
         image.save(buf, format="PNG")
         return buf.getvalue()
-
-    def save_screenshot(
-        self, png_bytes, name: str, screenshot_dir: Path = Path("screenshots")
-    ):
-        screenshot_dir.mkdir(parents=True, exist_ok=True)
-        filepath = screenshot_dir / f"{name}.png"
-        Image.open(io.BytesIO(png_bytes)).save(filepath)
-        logger.info("Saved screenshot to %s/%s.png", screenshot_dir, name)
-
-    def capture_screenshot(
-        self,
-        device_control: DeviceControl,
-        name: str,
-        screenshot_dir: Path = Path("screenshots"),
-    ):
-        png_bytes = device_control.get_screenshot()
-        self.save_screenshot(png_bytes, name, screenshot_dir)
-
-    def save_annotated_screenshot(
-        self,
-        x,
-        y,
-        device_control: DeviceControl,
-        name: str,
-        screenshot_dir: Path = Path("screenshots"),
-        label: str = "tap",
-        color: str = "red",
-    ):
-        png_bytes = device_control.get_screenshot()
-        annotated_png_bytes = self.annotate(png_bytes, x, y, label, color)
-        self.save_screenshot(annotated_png_bytes, name, screenshot_dir)
-        return annotated_png_bytes
 
     def save_action_annotation(
         self,

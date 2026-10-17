@@ -4,14 +4,14 @@ from pathlib import Path
 from typing import List
 
 from ronin import __version__
-from ronin.agent.trail import SessionTrail
-from ronin.agent.device.device_session import DeviceSession
+from ronin.agent.memory.trail import SessionTrail
+from ronin.agent.device.session import DeviceSession
 from ronin.agent.device.platform import Platform
 from ronin.agent.device.readiness import ensure_device_ready
-from ronin.agent.perception.image_descriptor import YOLO_REPO_ID, YOLO_REVISION
-from ronin.agent.perception.perception import ScreenPerception
-from ronin.agent.device_planner import GROUNDING_COORDINATES
-from ronin.agent.replay import ReplayLedger
+from ronin.agent.perception.detector import YOLO_REPO_ID, YOLO_REVISION
+from ronin.agent.perception.screen import ScreenPerception
+from ronin.agent.plan.planner import GROUNDING_COORDINATES
+from ronin.agent.memory.replay import ReplayLedger
 from ronin.errors import ArtifactWriteFailed
 from .coverage import unevidenced_security_rules
 from .generator import ScenarioGenerator

@@ -47,7 +47,7 @@ class SetupExecutionTests(unittest.TestCase):
     """Each mode has to do what it says, or the contract is another assumption."""
 
     def _run(self, mode):
-        from ronin.agent.device_agent import DeviceAgent
+        from ronin.agent.run.agent import DeviceAgent
 
         agent = DeviceAgent.__new__(DeviceAgent)
         agent.replay_ledger = None
@@ -56,9 +56,9 @@ class SetupExecutionTests(unittest.TestCase):
 
         # The run is cut short once setup is done. Only the setup matters.
         with (
-            patch("ronin.agent.device_agent.clear_app_data", lambda _d: calls.append("clear")),
-            patch("ronin.agent.device_agent.restart_app", lambda _d: calls.append("restart")),
-            patch("ronin.agent.device_agent.replay_known_path", side_effect=RuntimeError("stop")),
+            patch("ronin.agent.run.agent.clear_app_data", lambda _d: calls.append("clear")),
+            patch("ronin.agent.run.agent.restart_app", lambda _d: calls.append("restart")),
+            patch("ronin.agent.run.agent.replay_known_path", side_effect=RuntimeError("stop")),
             contextlib.suppress(Exception),
         ):
                 DeviceAgent.run(

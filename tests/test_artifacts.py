@@ -147,7 +147,7 @@ class ArtifactSafetyTests(unittest.TestCase):
         self.assertNotIn("**Detector**", payload)
 
     def test_the_runner_records_the_pinned_detector(self):
-        from ronin.agent.perception.image_descriptor import YOLO_REVISION
+        from ronin.agent.perception.detector import YOLO_REVISION
         from ronin.testing.runner import RoninTestRunner
 
         runner = RoninTestRunner(
@@ -194,19 +194,19 @@ class ArtifactSafetyTests(unittest.TestCase):
     def test_declared_secret_regions_are_covered_before_saving(self):
         from PIL import Image
 
-        from ronin.agent.perception.media_manager import MediaManager
+        from ronin.agent.artifacts.redaction import RedactedImages
         from ronin.utils.secrets import SecretScrubber
 
         scrubber = SecretScrubber()
         scrubber.learn_secrets({"card_number": "4111222233334444"})
         image = Image.new("RGB", (20, 20), "white")
 
-        safe = MediaManager(scrubber).redact_artifact_image(
+        safe = RedactedImages(scrubber).redact_artifact_image(
             image, [self._element("4111 2222 3333 4444")]
         )
         self.assertEqual(safe.getpixel((4, 5)), (255, 255, 255))
 
-        safe = MediaManager(scrubber).redact_artifact_image(
+        safe = RedactedImages(scrubber).redact_artifact_image(
             image, [self._element("4111222233334444")]
         )
         self.assertEqual(safe.getpixel((4, 5)), (0, 0, 0))
@@ -215,14 +215,14 @@ class ArtifactSafetyTests(unittest.TestCase):
     def test_ordinary_labels_are_never_covered(self):
         from PIL import Image
 
-        from ronin.agent.perception.media_manager import MediaManager
+        from ronin.agent.artifacts.redaction import RedactedImages
         from ronin.utils.secrets import SecretScrubber
 
         scrubber = SecretScrubber()
         scrubber.learn_secrets({"password": "secret-password123"})
         image = Image.new("RGB", (20, 20), "white")
 
-        safe = MediaManager(scrubber).redact_artifact_image(
+        safe = RedactedImages(scrubber).redact_artifact_image(
             image, [self._element("Continue")]
         )
 
@@ -243,7 +243,7 @@ class ScanDumpSafetyTests(unittest.TestCase):
         )
 
     def test_declared_secrets_are_masked_in_the_dump(self):
-        from ronin.agent.perception.scan_dump import element_to_dict
+        from ronin.agent.artifacts.scan import element_to_dict
         from ronin.utils.secrets import SecretScrubber
 
         scrubber = SecretScrubber()
@@ -254,7 +254,7 @@ class ScanDumpSafetyTests(unittest.TestCase):
         self.assertEqual(dumped["text"], "{{password}}")
 
     def test_ordinary_detected_text_survives(self):
-        from ronin.agent.perception.scan_dump import element_to_dict
+        from ronin.agent.artifacts.scan import element_to_dict
         from ronin.utils.secrets import SecretScrubber
 
         scrubber = SecretScrubber()
@@ -406,7 +406,7 @@ class PlannerViewArtifactTests(unittest.TestCase):
     """
 
     def _artifacts(self, saved):
-        from ronin.agent.step.artifacts import StepArtifacts
+        from ronin.agent.artifacts.steps import StepArtifacts
 
         media = SimpleNamespace(
             save_redacted_bytes=lambda data, elements, path: saved.append((path, data))

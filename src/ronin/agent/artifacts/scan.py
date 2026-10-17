@@ -1,10 +1,11 @@
+"""The reading a screenshot came from, written beside it."""
+
 import json
-from dataclasses import dataclass, field
 from numbers import Integral, Real
 from pathlib import Path
 from typing import Any, Optional
 
-from ronin.agent.perception.elements import GUIElement
+from ronin.agent.perception.elements import GUIElement, ScanInfo
 
 
 def _to_json_serializable(value: Any) -> Any:
@@ -17,24 +18,6 @@ def _to_json_serializable(value: Any) -> Any:
     if isinstance(value, Real) and not isinstance(value, bool):
         return float(value)
     return value
-
-
-@dataclass
-class ScanInfo:
-    mode: str
-    reason: str
-    phash: str
-    phash_distance: Optional[int] = None
-    screen_width: int = 0
-    screen_height: int = 0
-    element_count: int = 0
-    matched: Optional[int] = None
-    new: Optional[int] = None
-    removed: Optional[int] = None
-    match_rate: Optional[float] = None
-    dirty_ocr_count: Optional[int] = None
-    uncovered_mae: Optional[float] = None
-    thresholds: dict[str, float | int] = field(default_factory=dict)
 
 
 def element_to_dict(el: GUIElement, index: int, scrubber=None) -> dict[str, Any]:

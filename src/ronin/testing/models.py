@@ -5,7 +5,7 @@ from typing import Dict, List, Literal, Optional
 
 # Trail models live in agent/trail.py — re-exported here for backward compatibility.
 from ronin.agent.device.launch import SetupMode  # noqa: F401
-from ronin.agent.trail import SessionTrail, TrailElement, ScreenEntry  # noqa: F401
+from ronin.agent.memory.trail import SessionTrail, TrailElement, ScreenEntry  # noqa: F401
 
 
 class UserJourney(BaseModel):

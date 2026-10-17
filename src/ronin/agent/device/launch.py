@@ -23,7 +23,7 @@ from PIL import Image, ImageStat
 from ronin.agent.device.adb_control import AdbControl
 from ronin.agent.device.platform import Platform
 
-from ronin.agent.perception.perception import NAVIGATION_THRESHOLD
+from ronin.agent.perception.screen import NAVIGATION_THRESHOLD
 from ronin.errors import DeviceUnavailable, ObservationUnavailable
 from ronin.defaults import (
     BLANK_SCREEN_STDDEV,

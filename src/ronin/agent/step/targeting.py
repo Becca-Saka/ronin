@@ -1,25 +1,17 @@
-"""Turning a chosen target into something safe to touch, or refusing to.
+"""Everything that can stop an action before the device is touched.
 
-In marks mode the planner answers with a number rather than a point, which
-makes the answer checkable. A number naming nothing is caught here, before
-anything touches the device. It no longer surfaces three steps later, as a tap
-on empty space.
-
-Nothing in this module guesses. A target that cannot be resolved stops the step,
-and is recorded. A detection gap we count is worth more than one we hide.
+Nothing here guesses. A gap we count is worth more than one we hide.
 """
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional
 
 from ronin.agent.actuation.actions import (
     Action,
     ActionType,
 )
-from ronin.agent.history import ActionEntry, ActionResult
-from ronin.agent.grounding import marks
+from ronin.agent.memory.history import ActionEntry, ActionResult
 from ronin.agent.grounding.marks import resolve_mark
 from ronin.agent.step.staleness import has_target, target_moved
 from ronin.errors import ObservationUnavailable
@@ -40,20 +32,6 @@ def record_unexecuted(history, step: int, action_desc: str, observation: str) ->
 
 def is_target_not_listed(action) -> bool:
     return getattr(action, "type", None) == ActionType.TARGET_NOT_LISTED
-
-
-def save_unmatched_screen(media_manager, path: Path, snapshot) -> None:
-    """Keeps the screen a target was missing from, so the gap can be studied later.
-
-    Through the media manager, not straight to disk: this file outlives the run
-    like any other artifact, so declared secrets on screen get covered first.
-    """
-    try:
-        media_manager.save_redacted_bytes(
-            snapshot.raw_img_bytes, snapshot.gui_elements, path
-        )
-    except Exception as exc:
-        logger.warning("Could not save the unmatched screen: %s", exc)
 
 
 SCREEN_MOVED = (
@@ -109,40 +87,6 @@ class Decision:
 
 
 USABLE = Decision()
-
-
-def refuse_mark(
-    strikes: dict[str, list[marks.Box]],
-    refused: dict[str, list[marks.Box]],
-    phash: Optional[str],
-    index: Optional[int],
-    element_marks: Sequence[marks.Mark],
-) -> None:
-    """Records a failure to put text somewhere, and bans the place on the second.
-
-    Focus that did not move proves the tap reached nothing focusable. It does
-    not prove the element holds no text: a tap into the padding of a real field
-    does the same. Banning on one failure can make a genuine password field
-    untypable for the rest of the screen, so the first failure only leaves a
-    mark against the place.
-
-    Kept by place rather than by number. Numbers are handed out in reading
-    order over whatever the detector returned, so they do not survive a
-    detection appearing or disappearing between two looks at one screen.
-    """
-    mark = marks.find(element_marks, index) if index is not None else None
-    if phash is None or mark is None:
-        return
-
-    box = marks.box_of(mark.element)
-    first = strikes.setdefault(phash, [])
-    if not any(marks.is_same_element(mark.element, seen) for seen in first):
-        first.append(box)
-        logger.info("Element %d took no text. Trying it once more.", index)
-        return
-
-    refused.setdefault(phash, []).append(box)
-    logger.info("Element %d took no text twice. Its place will be skipped.", index)
 
 
 def stalled_reason(decision) -> str:

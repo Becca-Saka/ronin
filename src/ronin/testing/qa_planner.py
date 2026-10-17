@@ -13,7 +13,7 @@ from typing import List, Optional
 
 from pydantic import Field
 
-from ronin.agent.device_planner import (
+from ronin.agent.plan.planner import (
     GROUNDING_COORDINATES,
     GROUNDING_MARKS,
     DevicePlanner,

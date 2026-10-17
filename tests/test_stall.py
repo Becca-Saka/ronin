@@ -8,7 +8,7 @@ class StallTests(unittest.TestCase):
     """Steps that never reach the device cost a model call and change nothing."""
 
     def _stall(self):
-        from ronin.agent.step.stall import Stall
+        from ronin.agent.memory.stall import Stall
 
         return Stall()
 
@@ -91,7 +91,7 @@ class KeyboardRevealTests(unittest.TestCase):
     """
 
     def _ctx(self):
-        from ronin.agent.step.run_context import RunContext
+        from ronin.agent.run.context import RunContext
 
         return RunContext(history=None, loop_detector=None)
 
@@ -110,7 +110,7 @@ class KeyboardRevealTests(unittest.TestCase):
         return SimpleNamespace(current_phash=phash)
 
     def _reveal(self, device, snapshot, ctx):
-        from ronin.agent.step.stall import reveal_behind_keyboard
+        from ronin.agent.memory.stall import reveal_behind_keyboard
 
         return reveal_behind_keyboard(device, snapshot, ctx)
 

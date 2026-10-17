@@ -5,7 +5,7 @@ import unittest
 from ronin.agent.device.launch import SetupMode
 from types import SimpleNamespace
 from unittest.mock import Mock
-from ronin.agent.device_agent import (
+from ronin.agent.run.agent import (
     AgentHistory,
     DeviceAgent,
     RollingLoopDetector,
@@ -66,7 +66,7 @@ class PlannerAgreementTests(unittest.TestCase):
         )
 
     def _device_prompt(self):
-        from ronin.agent.device_planner import DevicePlanner
+        from ronin.agent.plan.planner import DevicePlanner
 
         planner = DevicePlanner.__new__(DevicePlanner)
         planner.use_multimodal_vision = False
@@ -80,7 +80,7 @@ class PlannerAgreementTests(unittest.TestCase):
         )
 
     def test_both_planners_carry_the_same_action_rules(self):
-        from ronin.agent.device_planner import DevicePlanner
+        from ronin.agent.plan.planner import DevicePlanner
 
         planner = DevicePlanner.__new__(DevicePlanner)
         shared = planner._action_vocabulary() + planner._action_constraints()
@@ -108,13 +108,13 @@ class VisionWeightsTests(unittest.TestCase):
     """The weights decide what the agent can see, so which weights must be fixed."""
 
     def test_the_detector_is_pinned_to_a_commit(self):
-        from ronin.agent.perception.image_descriptor import YOLO_REVISION
+        from ronin.agent.perception.detector import YOLO_REVISION
 
         self.assertRegex(YOLO_REVISION, r"^[0-9a-f]{40}$")
 
     def test_setup_prefetches_exactly_what_a_run_loads(self):
         """Otherwise setup warms one set of weights and the run downloads another."""
-        from ronin.agent.perception.image_descriptor import (
+        from ronin.agent.perception.detector import (
             YOLO_FILENAME,
             YOLO_REPO_ID,
             YOLO_REVISION,
@@ -191,7 +191,7 @@ class ElementFormattingTests(unittest.TestCase):
     """The restaurant list that caused a one-row mis-tap in a real run."""
 
     def _planner(self):
-        from ronin.agent.device_planner import DevicePlanner
+        from ronin.agent.plan.planner import DevicePlanner
 
         return DevicePlanner.__new__(DevicePlanner)
 

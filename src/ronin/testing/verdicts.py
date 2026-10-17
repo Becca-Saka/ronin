@@ -8,7 +8,7 @@ stop and missing evidence lives in one place.
 import logging
 from typing import List, Optional
 
-from ronin.agent.step.outcomes import DeviceRunResult
+from ronin.agent.run.outcomes import DeviceRunResult
 from ronin.testing import rules
 from ronin.testing.models import QAIssue, RuleVerification
 from ronin.testing.qa_planner import QAStepResponse

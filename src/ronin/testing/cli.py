@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from ronin.agent.device.platform import Platform
-from ronin.agent.device_planner import GROUNDING_COORDINATES
+from ronin.agent.plan.planner import GROUNDING_COORDINATES
 from ronin.app_discovery import find_journey_files, resolve_app_path
 from ronin.config import SETTINGS, Config, load_config
 from ronin.errors import UsageError

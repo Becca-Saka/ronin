@@ -26,7 +26,7 @@ class RefusedMarkTests(unittest.TestCase):
         return [Mark(index=17, element=element, refuses_text=refuses_text)]
 
     def _resolve(self, action, refuses_text):
-        from ronin.agent.device_planner import GROUNDING_MARKS
+        from ronin.agent.plan.planner import GROUNDING_MARKS
         from ronin.agent.step.targeting import resolve_mark
 
         return resolve_mark(action, self._marks(refuses_text), GROUNDING_MARKS)
@@ -82,7 +82,7 @@ class RefusalRecordingTests(unittest.TestCase):
     """Learning the fact, and carrying it to the next step's numbering."""
 
     def _ctx(self):
-        from ronin.agent.step.run_context import RunContext
+        from ronin.agent.run.context import RunContext
 
         return RunContext(history=None, loop_detector=None)
 
@@ -108,7 +108,7 @@ class RefusalRecordingTests(unittest.TestCase):
 
     def test_one_failure_is_not_yet_proof(self):
         """A tap into the padding of a real field also leaves focus unmoved."""
-        from ronin.agent.step.targeting import refuse_mark
+        from ronin.agent.grounding.marks import refuse_mark
 
         ctx = self._ctx()
         marks = self._marks_at((0, 0, 9, 9), (10, 20, 30, 40))
@@ -119,7 +119,7 @@ class RefusalRecordingTests(unittest.TestCase):
 
     def test_the_place_is_banned_on_the_second_failure(self):
         """A number is reading order over detections and does not survive them."""
-        from ronin.agent.step.targeting import refuse_mark
+        from ronin.agent.grounding.marks import refuse_mark
 
         ctx = self._ctx()
         marks = self._marks_at((0, 0, 9, 9), (10, 20, 30, 40))
@@ -129,7 +129,7 @@ class RefusalRecordingTests(unittest.TestCase):
         self.assertEqual(ctx.refused_marks, {"screenA": [(10, 20, 30, 40)]})
 
     def test_a_second_failure_elsewhere_bans_neither(self):
-        from ronin.agent.step.targeting import refuse_mark
+        from ronin.agent.grounding.marks import refuse_mark
 
         ctx = self._ctx()
         marks = self._marks_at((0, 0, 9, 9), (10, 20, 30, 40))
@@ -139,7 +139,7 @@ class RefusalRecordingTests(unittest.TestCase):
         self.assertEqual(ctx.refused_marks, {})
 
     def test_a_refusal_is_scoped_to_the_screen_it_happened_on(self):
-        from ronin.agent.step.targeting import refuse_mark
+        from ronin.agent.grounding.marks import refuse_mark
 
         ctx = self._ctx()
         marks = self._marks_at((10, 20, 30, 40))
@@ -150,7 +150,7 @@ class RefusalRecordingTests(unittest.TestCase):
         self.assertEqual(set(ctx.refused_marks), {"screenA", "screenB"})
 
     def test_an_unidentified_screen_records_nothing(self):
-        from ronin.agent.step.targeting import refuse_mark
+        from ronin.agent.grounding.marks import refuse_mark
 
         ctx = self._ctx()
         refuse_mark(ctx.text_strikes, ctx.refused_marks, None, 1, self._marks_at((10, 20, 30, 40)))
@@ -160,7 +160,7 @@ class RefusalRecordingTests(unittest.TestCase):
 
     def test_a_number_naming_nothing_records_nothing(self):
         """The planner can answer with a number the rebuild no longer has."""
-        from ronin.agent.step.targeting import refuse_mark
+        from ronin.agent.grounding.marks import refuse_mark
 
         ctx = self._ctx()
         refuse_mark(ctx.text_strikes, ctx.refused_marks, "screenA", 99, self._marks_at((10, 20, 30, 40)))
@@ -195,7 +195,7 @@ class RefusalRecordingTests(unittest.TestCase):
 
         from PIL import Image
 
-        from ronin.agent.device_planner import GROUNDING_MARKS
+        from ronin.agent.plan.planner import GROUNDING_MARKS
         from ronin.agent.perception.elements import BoundingBox, GUIElement
         from ronin.agent.step.observation import number_targets
 
@@ -239,7 +239,7 @@ class RefusalRecordingTests(unittest.TestCase):
 
         from PIL import Image
 
-        from ronin.agent.device_planner import GROUNDING_MARKS
+        from ronin.agent.plan.planner import GROUNDING_MARKS
         from ronin.agent.perception.elements import BoundingBox, GUIElement
         from ronin.agent.step.observation import number_targets
 
@@ -282,7 +282,7 @@ class RefusalRecordingTests(unittest.TestCase):
 
         from PIL import Image
 
-        from ronin.agent.device_planner import GROUNDING_MARKS
+        from ronin.agent.plan.planner import GROUNDING_MARKS
         from ronin.agent.perception.elements import BoundingBox, GUIElement
         from ronin.agent.step.observation import number_targets
 

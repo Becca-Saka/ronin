@@ -9,8 +9,8 @@ import unittest
 from unittest.mock import patch
 
 from ronin.agent.device.adb_control import AdbControl
-from ronin.agent.device.device_files import DeviceFiles
-from ronin.agent.device.device_session import DeviceSession
+from ronin.agent.device.files import DeviceFiles
+from ronin.agent.device.session import DeviceSession
 from ronin.agent.device.platform import Platform
 
 
