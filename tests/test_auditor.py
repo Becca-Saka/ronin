@@ -508,6 +508,12 @@ class AnsweredRulesOnlyTests(unittest.TestCase):
 
         self.assertEqual(kept, [])
 
+    def test_a_rule_it_was_shown_is_kept_however_the_id_was_written(self):
+        """A bracketed id is the same rule, so dropping it loses real evidence."""
+        kept = self._audited(("[expected:0]", "passed"), ("[security:0]", "passed"))
+
+        self.assertEqual([v.rule_id for v in kept], ["expected:0", "security:0"])
+
     def test_a_security_rule_that_does_not_exist_is_dropped(self):
         kept = self._audited(("security:4", "failed"), security=["Card masked"])
 
@@ -519,3 +525,23 @@ class AnsweredRulesOnlyTests(unittest.TestCase):
 
         self.assertEqual(len(kept), 1)
         self.assertIsNone(kept[0].rule_id)
+
+
+class BareIndexIsAmbiguousTests(unittest.TestCase):
+    """The auditor is shown both kinds of rule, so a bare index names neither."""
+
+    def test_a_bare_index_is_not_read_as_an_expected_outcome(self):
+        from ronin.testing.models import RuleVerification
+        from ronin.testing.qa_auditor import QAAuditor
+
+        answer = _assessment(
+            rule_verifications=[
+                RuleVerification(rule="0", status="passed", reasoning="r")
+            ]
+        )
+        llm = SimpleNamespace(generate_response=Mock(return_value=answer))
+        auditor = QAAuditor(llm, ["Order confirmed"], ["Card masked"])
+
+        kept = auditor.audit(b"png", screen_id="abc").rule_verifications
+
+        self.assertEqual([v.rule_id for v in kept], [None])

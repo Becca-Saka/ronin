@@ -63,7 +63,8 @@ class CrashRankingTests(unittest.TestCase):
             "outputs": [],
         }
         values.update(overrides)
-        return _terminal_outcome(**values)
+        status, reason, _cause = _terminal_outcome(**values) or (None, None, None)
+        return status, reason
 
     def test_a_crash_outranks_an_infeasible_verdict(self):
         """Reported as skipped, a crash looks like a scenario nobody ran."""

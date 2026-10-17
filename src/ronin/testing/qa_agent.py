@@ -41,6 +41,7 @@ from ronin.testing.verdicts import (
 )
 from ronin.testing.qa_auditor import Assessment, QAAuditor, ScreenWatch
 from ronin.testing.qa_planner import QAPlanner, QAStepResponse
+from ronin.errors import Cause
 from ronin.testing import transitions
 
 from ronin.agent.actuation.actions import WaitAction
@@ -217,6 +218,7 @@ class QAAgent:
                 scenario_name=test_case.scenario_name,
                 classification=test_case.classification,
                 status="UNSUPPORTED",
+                cause=Cause.SCENARIO.value,
                 duration=round(time.time() - start_time, 2),
                 failure_reason=unsupported,
             )
@@ -321,7 +323,7 @@ class QAAgent:
             self._settled_transitions(test_case, assessments)
         )
 
-        status, failure_reason = self._determine_status(
+        status, failure_reason, cause = self._determine_status(
             run_result=run_result,
             stop_reason=stop_reason,
             all_verifications=all_verifications,
@@ -337,6 +339,7 @@ class QAAgent:
             scenario_name=test_case.scenario_name,
             classification=test_case.classification,
             status=status,
+            cause=cause.value if cause else None,
             duration=round(duration, 2),
             steps_executed=run_result.steps_executed,
             rule_verifications=all_verifications,
@@ -394,7 +397,11 @@ class QAAgent:
             return terminal
 
         if run_result.status != "goal_reached" or not assessments:
-            return "UNVERIFIED", "The scenario did not produce verified completion evidence."
+            return (
+                "UNVERIFIED",
+                "The scenario did not produce verified completion evidence.",
+                Cause.AGENT,
+            )
 
         # Completion is the planner's call, because it is the only one told what
         # the scenario set out to do. The auditor is deliberately blind to the
@@ -410,6 +417,7 @@ class QAAgent:
                 "Nothing recorded during a run can settle these outcomes: "
                 + ", ".join(unprovable)
                 + ". They ask how the app performed, and Ronin measures no part of that.",
+                Cause.SCENARIO,
             )
 
         missing = _missing_required_ids(
@@ -419,6 +427,7 @@ class QAAgent:
             return (
                 "UNVERIFIED",
                 "Required verification evidence is missing or untested: " + ", ".join(missing),
+                Cause.EVIDENCE,
             )
 
         # Named last so a specific gap is reported in preference to this.
@@ -427,6 +436,7 @@ class QAAgent:
                 "UNVERIFIED",
                 "The scenario declared no expected outcome, so reaching the goal "
                 "rests on the planner's own word.",
+                Cause.SCENARIO,
             )
 
-        return "PASSED", None
+        return "PASSED", None, None

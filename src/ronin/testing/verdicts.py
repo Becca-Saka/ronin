@@ -9,6 +9,7 @@ import logging
 from typing import List, Optional
 
 from ronin.agent.run.outcomes import DeviceRunResult
+from ronin.errors import Cause
 from ronin.testing import rules
 from ronin.testing.models import QAIssue, RuleVerification
 from ronin.testing.qa_planner import QAStepResponse
@@ -30,13 +31,17 @@ def _terminal_outcome(
     # statements about the run. A scenario that crashed the app has found a
     # defect, whatever else the planner concluded about being able to proceed.
     if any(issue.issue_type == "crash_screen" for issue in issues):
-        return "FAILED", "App crashed: crash screen detected."
+        return "FAILED", "App crashed: crash screen detected.", None
     if run_result.status == "hook_stop" and stop_reason and "infeasible" in stop_reason.lower():
-        return "SKIPPED", stop_reason
+        return "SKIPPED", stop_reason, Cause.SCENARIO
     if run_result.status == "exception":
-        return "ERROR", run_result.failure_reason or "Execution exception"
+        return (
+            "ERROR",
+            run_result.failure_reason or "Execution exception",
+            run_result.cause or Cause.UNKNOWN,
+        )
     if run_result.status in ("loop_detected", "step_limit"):
-        return "UNVERIFIED", run_result.failure_reason
+        return "UNVERIFIED", run_result.failure_reason, Cause.AGENT
     critical = next(
         (
             issue
@@ -47,22 +52,30 @@ def _terminal_outcome(
         None,
     )
     if critical:
-        return "FAILED", f"Critical QA issue: {critical.description}"
+        return "FAILED", f"Critical QA issue: {critical.description}", None
     violated = _violated_security_rule(verifications)
     if violated:
-        return "FAILED", f"Security rule violated: {violated.rule}"
+        return "FAILED", f"Security rule violated: {violated.rule}", None
+    # Security rules never reach this. _violated_security_rule above fails on
+    # one anywhere, so what is left here is an expected outcome, which is a
+    # claim about the screen it names and not about any other.
+    settled = _settled(verifications)
     failed = next(
         (
             verification
-            for verification in _last_applicable(verifications).values()
-            if verification.status == "failed"
+            for (rule_id, _), verification in _per_screen(verifications).items()
+            if verification.status == "failed" and rule_id not in settled
         ),
         None,
     )
     if failed:
-        return "FAILED", f"Rule validation failed: {failed.rule}"
+        return "FAILED", f"Rule validation failed: {failed.rule}", None
     if outputs and not outputs[-1].is_scenario_feasible:
-        return "SKIPPED", outputs[-1].infeasibility_reason or "Scenario infeasible"
+        return (
+            "SKIPPED",
+            outputs[-1].infeasibility_reason or "Scenario infeasible",
+            Cause.SCENARIO,
+        )
     return None
 
 
@@ -86,19 +99,38 @@ def _unsupported_exposure(issue, findings) -> bool:
     return bool(here) and not any(finding.is_exposure() for finding in here)
 
 
-def _last_applicable(verifications: List[RuleVerification]) -> dict:
-    """The last answer from a screen the rule could apply to, per rule.
+def _per_screen(verifications: List[RuleVerification]) -> dict:
+    """The last answer for each rule, on each screen that could answer it.
 
-    Every rule is evaluated on every screen, so a scenario accumulates many
-    answers per rule. Screens the rule cannot apply to answer "untested", and
-    those say nothing about the rule. Reading them as the verdict would let
-    walking away from a field decide whether the field worked.
+    Every rule is put to every screen, so a scenario accumulates many answers
+    per rule. Screens the rule cannot apply to answer "untested", and those say
+    nothing about it. Reading them as the verdict would let walking away from a
+    field decide whether the field worked.
+
+    Kept per screen rather than per rule, because `applicable` is the auditor's
+    own claim and nothing can check it. One wrong claim then reaches only the
+    screen it was made about.
     """
     latest = {}
     for verification in verifications:
         if verification.rule_id and verification.applicable:
-            latest[verification.rule_id] = verification
+            latest[(verification.rule_id, verification.screen_name or "")] = verification
     return latest
+
+
+def _settled(verifications: List[RuleVerification]) -> set:
+    """The rules some screen ended on a pass.
+
+    A screen that saw an outcome hold is evidence of it, and a later answer
+    about a different screen does not take that away. A later answer about the
+    same screen does: there, the outcome stopped holding where it could be
+    seen.
+    """
+    return {
+        rule_id
+        for (rule_id, _), verification in _per_screen(verifications).items()
+        if verification.status == "passed"
+    }
 
 
 def _violated_security_rule(verifications: List[RuleVerification]):
@@ -127,16 +159,18 @@ def _missing_required_ids(
 
     The two kinds are judged differently because they mean different things.
 
-    An expected outcome is evidenced once some screen showed it holding. Many
+    An expected outcome is evidenced once a screen ended on a pass for it. Many
     outcomes can only be seen in passing — a field accepts a long address, and
-    the next screen has no such field. Letting the newest answer decide would
-    let leaving that screen erase the proof that it worked. A later "failed"
-    still counts, because the outcome stopped holding where it could be seen.
+    the next screen has no such field. A later "failed" about the same screen
+    takes the evidence away, because the outcome stopped holding where it could
+    be seen. A later "failed" about a different screen does not: the outcome
+    was never a claim about that screen.
 
     A security rule describes what must never happen. The planner reports on
     every rule on every screen, so a mention alone proves nothing. A rule
-    counts as required only once some screen could have broken it. Once
-    evidenced there, it stays evidenced, whatever later screens show.
+    counts as required only once some screen could have broken it. One pass
+    anywhere evidences it, and it stays evidenced whatever later screens show,
+    because a failure anywhere has already failed the scenario.
     """
     expected_ids = rules.ids(required_outcomes, rules.EXPECTED)
     security_ids = rules.ids(security_rules, rules.SECURITY)
@@ -152,12 +186,6 @@ def _missing_required_ids(
         and verification.applicable
         and verification.status == "passed"
     }
-    latest = _last_applicable(verifications)
-    settled = {
-        rule_id
-        for rule_id in expected_ids
-        if (verification := latest.get(rule_id))
-        and verification.status == "passed"
-    }
+    settled = _settled(verifications) & expected_ids
     required_ids = expected_ids | (security_ids & applicable)
     return sorted(required_ids - settled - (evidenced & security_ids))

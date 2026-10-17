@@ -10,8 +10,8 @@ class VerdictTests(unittest.TestCase):
 
         return QAAgent.__new__(QAAgent)
 
-    def _result(self, status="goal_reached", reason=None):
-        return SimpleNamespace(status=status, failure_reason=reason)
+    def _result(self, status="goal_reached", reason=None, cause=None):
+        return SimpleNamespace(status=status, failure_reason=reason, cause=cause)
 
     def _output(self, feasible=True):
         """What the planner answers: whether it can proceed."""
@@ -35,7 +35,8 @@ class VerdictTests(unittest.TestCase):
             "security_rules": [],
         }
         values.update(overrides)
-        return self._agent()._determine_status(**values)
+        status, reason, _cause = self._agent()._determine_status(**values)
+        return status, reason
 
     def test_model_done_without_observable_evidence_is_not_a_pass(self):
         """The planner wanting to be done is not evidence that it is.
@@ -251,7 +252,8 @@ class VerificationAggregationTests(unittest.TestCase):
             values["all_verifications"] = list(values["all_verifications"]) + [
                 self._verification("expected:0", "passed", rule="Order is confirmed")
             ]
-        return QAAgent.__new__(QAAgent)._determine_status(**values)
+        status, reason, _cause = QAAgent.__new__(QAAgent)._determine_status(**values)
+        return status, reason
 
     def test_an_outcome_checked_too_early_does_not_condemn_the_scenario(self):
         status, reason = self._verdict(
@@ -478,6 +480,17 @@ class RuleIdentityTests(unittest.TestCase):
 
         self.assertEqual(answer.rule_id, "security:2")
 
+    def test_an_id_still_bracketed_in_the_id_field_is_read_whole(self):
+        """The gate matches the id whole, and the brackets are the prompt's."""
+        answer = self._verification(rule="Order is confirmed", rule_id="[expected:3]")
+
+        self.assertEqual(answer.rule_id, "expected:3")
+
+    def test_an_id_padded_in_the_id_field_is_read_whole(self):
+        answer = self._verification(rule="prose", rule_id="  security:2  ")
+
+        self.assertEqual(answer.rule_id, "security:2")
+
     def test_an_assertion_with_no_id_keeps_none(self):
         """The auditor may raise a rule of its own, and those have no id."""
         answer = self._verification(rule="The subtotal adds up")
@@ -502,7 +515,7 @@ class EvidenceReachesTheGateTests(unittest.TestCase):
     def _verdict(self, verifications, required):
         from ronin.testing.qa_agent import QAAgent
 
-        return QAAgent.__new__(QAAgent)._determine_status(
+        status, reason, _cause = QAAgent.__new__(QAAgent)._determine_status(
             run_result=SimpleNamespace(status="goal_reached", failure_reason=None),
             stop_reason=None,
             all_verifications=verifications,
@@ -514,6 +527,7 @@ class EvidenceReachesTheGateTests(unittest.TestCase):
             required_outcomes=required,
             security_rules=[],
         )
+        return status, reason
 
     def test_an_outcome_answered_in_the_rule_field_passes_the_scenario(self):
         from ronin.testing.models import RuleVerification

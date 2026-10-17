@@ -44,6 +44,12 @@ class DeviceRunResult:
     steps_executed: int
     failure_reason: Optional[str]
     history: AgentHistory
+    cause: Optional[str] = None
+    """What kind of failure ended the run, read from the exception's type.
+
+    Set only where an exception was caught, because that is the only place its
+    type exists. A string, so nothing below has to import the enum.
+    """
 
 
 def flush_trail(

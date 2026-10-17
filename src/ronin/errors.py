@@ -15,6 +15,8 @@ caught into one of these types. Above that line, each handler names what it
 expects.
 """
 
+from enum import Enum
+
 
 class RoninError(Exception):
     """Base for a failure Ronin recognises and can describe."""
@@ -50,3 +52,62 @@ class UsageError(RoninError):
 
     The message goes to the person who typed the command. It says what to fix.
     """
+
+
+DEVICE_MODULES = ("selenium", "appium", "urllib3")
+"""Packages that speak to the device. A failure from one is not the app's."""
+
+PROVIDER_MODULES = ("litellm", "openai", "httpx", "httpx2", "typesafe_sdk")
+"""Packages that speak to a model service."""
+
+
+class Cause(str, Enum):
+    """Whose problem a scenario that reached no verdict is.
+
+    The status says what happened. The cause says what to do about it, which
+    is the question a reader of a red build actually has. A flaky emulator, an
+    exhausted API key and a thin audit all ended a scenario, and all three
+    want a different answer.
+
+    Nothing here is `app`. An app at fault is a FAILED scenario, and that
+    needs no cause.
+    """
+
+    DEVICE = "device"
+    """The device, the emulator or its tooling could not be driven."""
+
+    PROVIDER = "provider"
+    """A model service refused, timed out or ran out of credit."""
+
+    ARTIFACT = "artifact"
+    """Ronin could not write what a verdict rests on."""
+
+    AGENT = "agent"
+    """Ronin drove the app but never reached a state worth judging."""
+
+    EVIDENCE = "evidence"
+    """The run finished, and the marks do not settle what was asked."""
+
+    SCENARIO = "scenario"
+    """The scenario asked for something nothing in a run can settle."""
+
+    UNKNOWN = "unknown"
+    """Not recognised. Claiming a cause without evidence is how a report lies."""
+
+
+def cause_of(exc: BaseException) -> Cause:
+    """What kind of failure an exception is, read from its type.
+
+    By type and by the package it came from, never by its words: a message is
+    written for a person and changes between versions.
+    """
+    if isinstance(exc, (DeviceUnavailable, ObservationUnavailable)):
+        return Cause.DEVICE
+    if isinstance(exc, ArtifactWriteFailed):
+        return Cause.ARTIFACT
+    package = type(exc).__module__.split(".")[0]
+    if package in PROVIDER_MODULES:
+        return Cause.PROVIDER
+    if package in DEVICE_MODULES:
+        return Cause.DEVICE
+    return Cause.UNKNOWN

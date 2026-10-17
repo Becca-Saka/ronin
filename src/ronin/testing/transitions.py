@@ -97,6 +97,11 @@ def settle(
     message = TextMessage(content=PROMPT.format(screens=numbered, claims=claims))
     answer: TransitionVerdicts = llm.generate_response([message], TransitionVerdicts)
 
+    # This judge is shown expected outcomes and nothing else, so an answer
+    # naming a bare index names one of them.
+    for verdict in answer.verdicts:
+        verdict.rule_id = rules.as_id(verdict.rule_id or verdict.rule, rules.EXPECTED)
+
     # Only the claims that were put to it. An answer naming anything else is
     # about a rule this judge never saw, and a fabricated security verdict
     # would fail the scenario outright.

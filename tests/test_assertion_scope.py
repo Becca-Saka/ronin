@@ -83,7 +83,7 @@ class UnprovableOutcomeTests(unittest.TestCase):
     def test_the_scenario_says_what_could_not_be_settled(self):
         from ronin.testing.qa_agent import QAAgent
 
-        status, reason = QAAgent.__new__(QAAgent)._determine_status(
+        status, reason, _cause = QAAgent.__new__(QAAgent)._determine_status(
             run_result=__import__("types").SimpleNamespace(
                 status="goal_reached", failure_reason=None
             ),

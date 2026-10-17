@@ -62,6 +62,8 @@ class Assessment(BaseModel):
         if not isinstance(value, dict):
             return value
         normalized = dict(value)
+        if "screen_name" not in normalized and "current_screen" in normalized:
+            normalized["screen_name"] = normalized["current_screen"]
         verifications = normalized.get("rule_verifications")
         if isinstance(verifications, dict):
             normalized["rule_verifications"] = [

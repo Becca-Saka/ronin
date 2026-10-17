@@ -39,7 +39,7 @@ from ronin.agent.perception import keyboard
 from ronin.agent.artifacts.redaction import RedactedImages
 from ronin.agent.perception.screen import ScreenPerception
 from ronin.agent.memory.trail import SessionTrail
-from ronin.errors import TargetNotInteractive
+from ronin.errors import TargetNotInteractive, cause_of
 from ronin.llm.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -197,6 +197,7 @@ class DeviceAgent:
                 steps_executed=ctx.steps_executed,
                 failure_reason=f"Execution exception: {safe_error}",
                 history=ctx.history,
+                cause=cause_of(exc).value,
             )
 
     @staticmethod

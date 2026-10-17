@@ -45,6 +45,21 @@ def id_in(text) -> Optional[str]:
     return found.group(0) if found else None
 
 
+def as_id(text, kind: str) -> Optional[str]:
+    """The id an answer names, for a judge that was given one kind of rule.
+
+    A judge shown only expected outcomes answers "expected:4", and sometimes
+    answers "4". The bare number is unambiguous there, because one kind was
+    listed. It is not unambiguous for a judge shown both kinds, which is why
+    this takes the kind rather than assuming one.
+    """
+    found = id_in(text)
+    if found:
+        return found
+    bare = (text or "").strip() if isinstance(text, str) else ""
+    return rule_id(kind, int(bare)) if bare.isdigit() else None
+
+
 def is_kind(identifier: str, kind: str) -> bool:
     """Whether an id belongs to this kind of rule."""
     return (identifier or "").startswith(f"{kind}:")

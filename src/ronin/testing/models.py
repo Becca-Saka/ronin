@@ -132,6 +132,36 @@ class SensitiveFinding(BaseModel):
     """What was seen where a sensitive value could be, and what it looked like."""
 
     field: str = Field(..., description="What the value is, e.g. 'CVV' or 'card number'.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_the_names_a_finding_arrives_under(cls, value):
+        """Reads a finding under the names its two fields arrive with.
+
+        How a value was rendered comes back as `rendering`, `state`, `status`
+        or `type`. `type` is the ambiguous one: it names the value in some
+        answers and its rendering in others. The renderings are a closed set,
+        so which one it carries can be read off rather than guessed.
+
+        A missing name falls back to where the value was seen, which is what
+        the model gave instead of naming it.
+        """
+        if not isinstance(value, dict):
+            return value
+        finding = dict(value)
+        named = finding.pop("type", None)
+        if named in {rendering.value for rendering in Rendering}:
+            finding.setdefault("rendering", named)
+        elif named is not None:
+            finding.setdefault("field", named)
+        for alias in ("state", "status"):
+            if "rendering" not in finding and alias in finding:
+                finding["rendering"] = finding.pop(alias)
+        if "field" not in finding and "location" in finding:
+            finding["field"] = finding["location"]
+        if finding.get("quoted") is None:
+            finding["quoted"] = ""
+        return finding
     rendering: Rendering = Field(
         ...,
         description=(
@@ -170,6 +200,17 @@ class QAIssue(BaseModel):
     current_screen: Optional[str] = None
 
 
+STATUS_SPELLINGS = {
+    "pass": "passed",
+    "passed": "passed",
+    "fail": "failed",
+    "failed": "failed",
+    "untested": "untested",
+    "not_tested": "untested",
+}
+"""How a verdict's status is spelled, mapped to the three that are accepted."""
+
+
 class RuleVerification(BaseModel):
     """Represents the status of verifying a specific journey expectation or custom rule."""
     rule: str = Field(
@@ -186,21 +227,35 @@ class RuleVerification(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _read_the_id_from_whichever_field_carries_it(cls, value):
-        """Recovers the id when it arrived in `rule` instead of `rule_id`.
+    def _accept_the_shapes_a_verdict_arrives_in(cls, value):
+        """Reads a verdict however the model chose to write it.
 
-        The gate matches a verdict to its rule by id alone, so an id left in
-        the wrong field drops the verdict without a word, and the scenario
-        reports missing evidence for a rule that was answered.
+        One rejected verdict takes the whole assessment with it, and the
+        verdicts beside it were answers to other rules.
+
+        The id is the part the gate needs, and the gate matches it whole, so
+        it is read out of whichever field holds it and out of whatever else
+        was written around it. It stands in for `rule` when only the id was
+        given: an id names its rule as well as the words do.
+
+        An unrecognised status is left alone to be refused. A verdict is the
+        thing being recorded, and guessing at one invents evidence.
         """
-        if not isinstance(value, dict) or value.get("rule_id"):
+        if not isinstance(value, dict):
             return value
         from ronin.testing import rules
 
-        found = rules.id_in(value.get("rule"))
+        verdict = dict(value)
+        found = rules.id_in(verdict.get("rule_id")) or rules.id_in(verdict.get("rule"))
         if found:
-            value = {**value, "rule_id": found}
-        return value
+            verdict["rule_id"] = found
+        if not verdict.get("rule") and verdict.get("rule_id"):
+            verdict["rule"] = verdict["rule_id"]
+        verdict["status"] = STATUS_SPELLINGS.get(
+            str(verdict.get("status", "")).strip().lower().replace(" ", "_"),
+            verdict.get("status"),
+        )
+        return verdict
     status: Literal["passed", "failed", "untested"]
     applicable: bool = Field(
         default=True,
@@ -228,6 +283,14 @@ class ScenarioReport(BaseModel):
         "UNVERIFIED",
         "UNSUPPORTED",
     ]
+    cause: Optional[str] = Field(
+        default=None,
+        description=(
+            "Whose problem a scenario that reached no verdict is: the device, "
+            "a model provider, Ronin, the evidence or the scenario itself. "
+            "Absent on PASSED and on FAILED, where the app is the answer."
+        ),
+    )
     duration: float = 0.0
     steps_executed: int = 0
     rule_verifications: List[RuleVerification] = Field(default_factory=list)

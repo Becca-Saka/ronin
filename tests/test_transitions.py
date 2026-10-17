@@ -203,7 +203,7 @@ class GateIntegrationTests(unittest.TestCase):
     def _status(self, verifications, outcomes):
         from ronin.testing.qa_agent import QAAgent
 
-        return QAAgent.__new__(QAAgent)._determine_status(
+        status, reason, _cause = QAAgent.__new__(QAAgent)._determine_status(
             run_result=SimpleNamespace(status="goal_reached", failure_reason=None),
             stop_reason=None,
             all_verifications=verifications,
@@ -215,6 +215,7 @@ class GateIntegrationTests(unittest.TestCase):
             required_outcomes=outcomes,
             security_rules=[],
         )
+        return status, reason
 
     def test_a_scenario_passes_once_both_kinds_are_evidenced(self):
         outcomes = ["The cart shows a subtotal", outcome("Login reaches Location Access")]
@@ -281,3 +282,40 @@ class AnsweredClaimsOnlyTests(unittest.TestCase):
         settled = self._settle(self._answer(("expected:7", "passed")), outcomes)
 
         self.assertEqual(settled, [])
+
+
+class BareIndexTests(unittest.TestCase):
+    """A judge shown one kind of rule may answer with the bare index.
+
+    The route marker answered "0" for `expected:0`, with sound reasoning off
+    the screen order, and every answer was discarded as unlisted.
+    """
+
+    def test_a_bare_index_names_the_rule_of_the_kind_that_was_listed(self):
+        from ronin.testing import rules
+
+        self.assertEqual(rules.as_id("0", rules.EXPECTED), "expected:0")
+        self.assertEqual(rules.as_id("9", rules.EXPECTED), "expected:9")
+
+    def test_a_full_id_is_read_as_itself(self):
+        from ronin.testing import rules
+
+        self.assertEqual(rules.as_id("expected:4", rules.EXPECTED), "expected:4")
+        self.assertEqual(rules.as_id("[expected:4] prose", rules.EXPECTED), "expected:4")
+
+    def test_an_answer_naming_no_rule_names_nothing(self):
+        from ronin.testing import rules
+
+        self.assertIsNone(rules.as_id("the screens looked right", rules.EXPECTED))
+        self.assertIsNone(rules.as_id(None, rules.EXPECTED))
+
+    def test_the_route_marker_settles_a_claim_it_answered_bare(self):
+        llm = verdicts(("0", "passed", f"{SIGN_IN} then {LOCATION}"))
+
+        settled = transitions.settle(
+            llm,
+            [outcome("Tapping Login reaches the Location Access screen")],
+            [screen(SIGN_IN), screen(LOCATION)],
+        )
+
+        self.assertEqual([v.rule_id for v in settled], ["expected:0"])

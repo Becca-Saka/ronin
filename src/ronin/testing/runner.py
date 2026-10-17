@@ -12,7 +12,7 @@ from ronin.agent.perception.detector import YOLO_REPO_ID, YOLO_REVISION
 from ronin.agent.perception.blind import for_grounding
 from ronin.agent.plan.planner import GROUNDING_COORDINATES
 from ronin.agent.memory.replay import ReplayLedger
-from ronin.errors import ArtifactWriteFailed
+from ronin.errors import ArtifactWriteFailed, cause_of
 from .coverage import unevidenced_security_rules
 from .generator import ScenarioGenerator
 from .progress import ScenarioProgress
@@ -405,6 +405,7 @@ class RoninTestRunner:
                     scenario_name=scenario.scenario_name,
                     classification=scenario.classification,
                     status="ABORTED",
+                    cause=cause_of(error).value,
                     failure_reason=reason,
                 )
             )

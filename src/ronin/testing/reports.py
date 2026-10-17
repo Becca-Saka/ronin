@@ -18,6 +18,12 @@ def safe_artifact_stem(value: str) -> str:
     return stem or "journey"
 
 
+def _junit_type(scenario) -> str:
+    """The type a CI reader groups on, naming the cause when there is one."""
+    kind = f"Ronin{scenario.status.title()}"
+    return f"{kind}.{scenario.cause}" if scenario.cause else kind
+
+
 def _scrub(scrubber: SecretScrubber | None, value: str | None) -> str:
     return scrubber.scrub(value) if scrubber else value or ""
 
@@ -124,7 +130,8 @@ def _append_scenario(
             f"## Scenario {index}: {_scrub(scrubber, scenario.scenario_name)} "
             f"({scenario.test_id})",
             f"* **Classification**: `{scenario.classification}`",
-            f"* **Status**: {icon} {scenario.status}",
+            f"* **Status**: {icon} {scenario.status}"
+            + (f" ({scenario.cause})" if scenario.cause else ""),
             f"* **Steps Executed**: {scenario.steps_executed}",
             f"* **Duration**: {scenario.duration}s",
             "",
@@ -218,7 +225,7 @@ def _append_junit_case(
         element = ET.SubElement(
             testcase,
             "failure",
-            {"message": message, "type": f"Ronin{scenario.status.title()}"},
+            {"message": message, "type": _junit_type(scenario)},
         )
         details = [
             f"[{issue.severity.upper()}] {issue.issue_type}: "
@@ -231,7 +238,7 @@ def _append_junit_case(
         element = ET.SubElement(
             testcase,
             "error",
-            {"message": message, "type": f"Ronin{scenario.status.title()}"},
+            {"message": message, "type": _junit_type(scenario)},
         )
         element.text = message
     elif scenario.status == "SKIPPED":
