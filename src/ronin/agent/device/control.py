@@ -20,6 +20,7 @@ from ronin.agent.device.diagnostics import diagnose_avd_launch
 from ronin.agent.device.platform import Platform
 from ronin.defaults import (
     AVD_LAUNCH_TIMEOUT_MS,
+    IDLE_SESSION_TIMEOUT_SECONDS,
 )
 from ronin.errors import DeviceUnavailable, ObservationUnavailable
 
@@ -62,6 +63,7 @@ class DeviceControl:
             options.device_name = device_name
             options.app = app_path
             options.is_headless = is_headless
+            options.new_command_timeout = IDLE_SESSION_TIMEOUT_SECONDS
             options.set_capability("appium:enforceAppInstall", not reuse_app)
             self.adb_control = None
         else:
@@ -76,6 +78,7 @@ class DeviceControl:
             options.avd = device_name
             options.avd_launch_timeout = AVD_LAUNCH_TIMEOUT_MS
             options.avd_ready_timeout = AVD_LAUNCH_TIMEOUT_MS
+            options.new_command_timeout = IDLE_SESSION_TIMEOUT_SECONDS
             options.set_capability("appium:enforceAppInstall", not reuse_app)
             if keep_device:
                 self._skip_redundant_setup(options)

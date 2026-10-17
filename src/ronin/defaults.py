@@ -21,6 +21,11 @@ DEFAULT_RECORD = True
 # A cold emulator boot regularly exceeds Appium's 60s default.
 AVD_LAUNCH_TIMEOUT_MS = 180_000
 
+# Appium ends a session that sends no command for this long. Its default
+# allows for the gap between reading a screen and acting on it; a step here
+# waits on several model calls in between.
+IDLE_SESSION_TIMEOUT_SECONDS = 300
+
 # Settling waits for the screen to stop changing rather than sleeping blind.
 SETTLE_POLL_INTERVAL = 0.35
 SETTLE_STABLE_READINGS = 2

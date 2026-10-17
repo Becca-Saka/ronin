@@ -476,3 +476,25 @@ class WarmSessionTests(unittest.TestCase):
         self._control()._skip_redundant_setup(options)
 
         self.assertEqual(captured, {})
+
+
+class IdleSessionTests(unittest.TestCase):
+    """Appium ends a session that sends no command while a step is thinking."""
+
+    def test_both_platforms_ask_for_longer_than_appium_allows_by_default(self):
+        from ronin.defaults import IDLE_SESSION_TIMEOUT_SECONDS
+
+        self.assertGreater(IDLE_SESSION_TIMEOUT_SECONDS, 60)
+
+    def test_the_capability_reaches_the_driver(self):
+        from appium.options.android import UiAutomator2Options
+
+        from ronin.defaults import IDLE_SESSION_TIMEOUT_SECONDS
+
+        options = UiAutomator2Options()
+        options.new_command_timeout = IDLE_SESSION_TIMEOUT_SECONDS
+
+        self.assertEqual(
+            options.to_capabilities()["appium:newCommandTimeout"],
+            IDLE_SESSION_TIMEOUT_SECONDS,
+        )
