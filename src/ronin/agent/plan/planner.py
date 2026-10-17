@@ -12,6 +12,7 @@ from ronin.agent.actuation.actions import (
     CapabilityType,
 )
 from ronin.agent.plan.schema import (  # noqa: F401 - re-exported for callers
+    DescribeStepResponse,
     DeviceAction,
     DeviceStepResponse,
     DoneAction,
@@ -20,6 +21,7 @@ from ronin.agent.plan.schema import (  # noqa: F401 - re-exported for callers
 )
 from ronin.agent.grounding import (  # noqa: F401 - re-exported for callers
     GROUNDING_COORDINATES,
+    GROUNDING_DESCRIBE,
     GROUNDING_MARKS,
 )
 from ronin.llm.llm_client import LLMClient
@@ -27,6 +29,145 @@ from ronin.llm.messages import MultiPartMessage
 
 logger = logging.getLogger(__name__)
 
+COMMON_ACTIONS = """
+- "drag_and_drop": Drag from source to destination. Fields: `type`, `source_x`, `source_y`, `destination_x`, `destination_y`, `reason`.
+- "key_event": Trigger a key event. Fields: `type`, `key` (int keycode: 4=back, 3=home, 66=enter, 67=backspace), `reason`.
+- "swipe": Swipe from start to end. Fields: `type`, `start_x`, `start_y`, `end_x`, `end_y`, `reason`.
+- "wait": Let the screen finish loading or animating. Fields: `type`, `duration` (float seconds), `reason`. Use this instead of giving up when the screen looks empty or half-drawn.
+- "capability": System-level control. Fields: `type`, `capability`, `parameters` (dict), `reason`.
+  Available capabilities:
+{capabilities}
+- "done": Goal complete or execution must stop. Fields: `type`, `reason`.
+"""
+"""The actions every grounding mode offers, which name no target."""
+
+DESCRIBE_ACTIONS = """
+### Allowed Action Types
+Each action must have a `type` field set to one of:
+- "tap": Tap something. Fields: `type`, `target` (description), `reason`, and optional `count` (int) and `interval_ms` (int).
+- "type": Type text into a field. Fields: `type`, `text`, `target` (description), `reason`.
+- "clear": Clear a text field. Fields: `type`, `target` (description), `reason`.
+- "double_tap": Double-tap something. Fields: `type`, `target` (description), `reason`.
+- "long_press": Long press something. Fields: `type`, `duration` (float seconds), `target` (description), `reason`."""
+MARKS_ACTIONS = """
+### Allowed Action Types
+Each action must have a `type` field set to one of:
+- "tap": Tap an element. Fields: `type`, `mark` (int), `reason`, and optional `count` (int) and `interval_ms` (int).
+- "type": Type text into an element. Fields: `type`, `text`, `mark` (int), `reason`.
+- "clear": Clear a text field. Fields: `type`, `mark` (int), `reason`.
+- "double_tap": Double-tap an element. Fields: `type`, `mark` (int), `reason`.
+- "long_press": Long press an element. Fields: `type`, `duration` (float seconds), `mark` (int), `reason`.
+- "target_not_listed": The element you need is not numbered on the screenshot. Fields: `type`, `description` (what it looks like and roughly where), `reason`."""
+COORDINATE_ACTIONS = """
+### Allowed Action Types
+Each action must have a `type` field set to one of:
+- "tap": Tap at coordinates. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`, and optional `count` (int) and `interval_ms` (int).
+- "type": Type text into a field. Fields: `type`, `text`, `coordinates` as {"x": int, "y": int}, `reason`.
+- "clear": Clear a text field. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
+- "double_tap": Double-tap. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
+- "long_press": Long press. Fields: `type`, `duration` (float seconds), `coordinates` as {"x": int, "y": int}, `reason`."""
+
+DESCRIBE_CONSTRAINTS = """
+CRITICAL CONSTRAINTS:
+1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
+2. Nothing on this screen is listed or numbered. Name your target in `target`, describing it as you would point it out to someone looking at the screen: "the Email Address input field", "the Login button".
+3. Describe the thing itself: the words on it, the symbol on it, its shape, its colour. Say where it sits if that helps — "in the top right".
+4. Do not describe it by what is beside it. Naming a neighbour returns both: asking for the tick "opposite the back arrow" gives back the whole header bar instead of the tick.
+5. Do not identify it by its position in a sequence. "The second Add button" means nothing to what finds it, because that reads the picture rather than a list. Say what makes that one different — "the Add button on the Burger Palace card".
+6. The target must be visible on the screen in front of you. Do not name something you remember from an earlier screen, and do not name something you expect to appear.
+7. "type" focuses the field itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
+8. The soft keyboard blocks taps on anything behind it. If your next target is in the lower part of the screen (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app.
+9. If the history shows a description was not found, describe the same thing by a different feature of itself: the symbol on it, its shape, its colour, the words it carries. Do not make the description longer by adding what surrounds it. A short description of the thing beats a long one about its neighbourhood.
+10. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
+11. When a step asks for a number of taps, send one tap action with `count` set to that number. Never count taps yourself across several steps: the screen may not show how many have landed.
+"""
+MARKS_CONSTRAINTS = """
+CRITICAL CONSTRAINTS:
+1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
+2. Every element on the screenshot carries a number. Name the number in `mark`. Never send coordinates — they are not accepted.
+3. "type" focuses the element itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
+4. Choose only a number that appears in the list below. If what you need is not numbered, use "target_not_listed" and describe it. Do not pick the nearest number instead, and do not guess.
+5. The soft keyboard blocks taps on anything behind it. If your next target is in the lower region (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app.
+6. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
+8. When a step asks for a number of taps, send one tap action with `count` set to that number. Never count taps yourself across several steps: the screen may not show how many have landed.
+7. The numbers are redrawn every step. Use the numbers from the CURRENT screenshot and list, never one you remember from an earlier step.
+"""
+COORDINATE_CONSTRAINTS = """
+CRITICAL CONSTRAINTS:
+1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
+2. For "type", you MUST provide both `text` AND `coordinates` of the target field.
+3. "type" focuses the field at those coordinates itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
+4. The soft keyboard blocks taps on anything behind it. If your next target is a button or control in the lower half of the screen (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app. After dismissal, use the fresh element list for coordinates.
+5. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
+6. When the keyboard is visible and you need to TYPE into a field, use text_field/input elements from the CURRENT scan in the upper portion of the screen (above the keyboard). Ignore bottom-portion detections — those are keyboard keys.
+7. You MUST use center coordinates from the Current UI Elements list. If a target you need is missing because the keyboard obscures it, do not guess coordinates from older screenshots — dismiss the keyboard (rule 4) and plan from the next scan. Older screenshots in the message are context only. They are not a coordinate source.
+8. After any event that changes the layout — keyboard opening or closing, navigation, a modal, a scroll — treat the next element list as a new layout and re-read every coordinate from it.
+9. When a step asks for a number of taps, send one tap action with `count` set to that number. Never count taps yourself across several steps: the screen may not show how many have landed.
+"""
+
+RESPONSE_INSTRUCTIONS = """
+### Response Instructions
+1. Set `current_screen` to the descriptive name of the screen you currently see.
+2. Set `evaluation_previous_goal`: honestly assess whether your PREVIOUS action succeeded, failed, or is uncertain. Leave empty on the first step.
+3. Set `observation`: describe only what is currently visible.
+4. Set `reasoning`: explain why the chosen action is the best next step.
+5. Set `goal_satisfied` True when the goal's outcome is already visible on this screen, and put the evidence in `goal_evidence`. Judge the goal as stated: a post-login onboarding or permission screen still means a sign-in goal is met.
+6. Set `action`: choose exactly ONE action. If the goal is fully complete, use `done`.
+7. Set `external_navigation` to True if the action will temporarily leave the app.
+"""
+
+KEYBOARD_VISIBLE = (
+    "\n### Keyboard State\nVISIBLE — the soft keyboard is currently displayed. "
+    "Elements in the lower ~40% of the screen may be keyboard keys, not app UI.\n"
+)
+KEYBOARD_HIDDEN = (
+    "\n### Keyboard State\nHIDDEN — the soft keyboard is not visible. "
+    "All detected elements are app UI.\n"
+)
+
+PROMPT = """You are an AI agent controlling a mobile app to achieve a goal.
+Your job is to execute the steps below by interacting with the app one action at a time.
+
+### Goal / Instructions
+{goal}
+
+### Current UI Elements Detected {heading}
+{targets}
+{keyboard}
+### Action History (with system-observed outcomes)
+{history}
+"""
+
+DRIFT_SECTION = """
+### CONTEXT DRIFT WARNING
+{drift}
+"""
+TRAIL_SECTION = """
+### Session Trail — App Knowledge From This Session
+{trail}
+"""
+LOOP_SECTION = """
+### LOOP DETECTION ADVISORY
+{nudge}
+"""
+
+TARGET_ACTIONS = {
+    GROUNDING_DESCRIBE: DESCRIBE_ACTIONS,
+    GROUNDING_MARKS: MARKS_ACTIONS,
+}
+TARGET_CONSTRAINTS = {
+    GROUNDING_DESCRIBE: DESCRIBE_CONSTRAINTS,
+    GROUNDING_MARKS: MARKS_CONSTRAINTS,
+}
+TARGET_HEADINGS = {
+    GROUNDING_DESCRIBE: "(nothing is detected — name what you want)",
+    GROUNDING_MARKS: "(numbered on the screenshot)",
+}
+
+NO_TARGETS_LISTED = (
+    "Nothing on this screen has been detected or numbered. "
+    "Describe what you want to act on."
+)
 
 
 class DevicePlanner:
@@ -95,73 +236,16 @@ class DevicePlanner:
         Defined once: QAPlanner subclasses this planner, and when the two kept
         their own copies they drifted into contradicting each other.
         """
-        caps_desc = "\n".join(
+        capabilities = "\n".join(
             f"   - {cap.value}: {CAPABILITY_SCHEMAS.get(cap, '{}')}"
             for cap in CapabilityType
         )
-        if self.grounding == GROUNDING_MARKS:
-            targeting = """
-### Allowed Action Types
-Each action must have a `type` field set to one of:
-- "tap": Tap an element. Fields: `type`, `mark` (int), `reason`, and optional `count` (int) and `interval_ms` (int).
-- "type": Type text into an element. Fields: `type`, `text`, `mark` (int), `reason`.
-- "clear": Clear a text field. Fields: `type`, `mark` (int), `reason`.
-- "double_tap": Double-tap an element. Fields: `type`, `mark` (int), `reason`.
-- "long_press": Long press an element. Fields: `type`, `duration` (float seconds), `mark` (int), `reason`.
-- "target_not_listed": The element you need is not numbered on the screenshot. Fields: `type`, `description` (what it looks like and roughly where), `reason`."""
-        else:
-            targeting = """
-### Allowed Action Types
-Each action must have a `type` field set to one of:
-- "tap": Tap at coordinates. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`, and optional `count` (int) and `interval_ms` (int).
-- "type": Type text into a field. Fields: `type`, `text`, `coordinates` as {"x": int, "y": int}, `reason`.
-- "clear": Clear a text field. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
-- "double_tap": Double-tap. Fields: `type`, `coordinates` as {"x": int, "y": int}, `reason`.
-- "long_press": Long press. Fields: `type`, `duration` (float seconds), `coordinates` as {"x": int, "y": int}, `reason`."""
-
-        return (
-            targeting
-            + """
-- "drag_and_drop": Drag from source to destination. Fields: `type`, `source_x`, `source_y`, `destination_x`, `destination_y`, `reason`.
-- "key_event": Trigger a key event. Fields: `type`, `key` (int keycode: 4=back, 3=home, 66=enter, 67=backspace), `reason`.
-- "swipe": Swipe from start to end. Fields: `type`, `start_x`, `start_y`, `end_x`, `end_y`, `reason`.
-- "wait": Let the screen finish loading or animating. Fields: `type`, `duration` (float seconds), `reason`. Use this instead of giving up when the screen looks empty or half-drawn.
-- "capability": System-level control. Fields: `type`, `capability`, `parameters` (dict), `reason`.
-  Available capabilities:
-"""
-            + caps_desc
-            + """
-- "done": Goal complete or execution must stop. Fields: `type`, `reason`.
-"""
-        )
+        targeting = TARGET_ACTIONS.get(self.grounding, COORDINATE_ACTIONS)
+        return targeting + COMMON_ACTIONS.format(capabilities=capabilities)
 
     def _action_constraints(self) -> str:
         """The rules for choosing an action. Shared with QAPlanner — see above."""
-        if self.grounding == GROUNDING_MARKS:
-            return """
-CRITICAL CONSTRAINTS:
-1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
-2. Every element on the screenshot carries a number. Name the number in `mark`. Never send coordinates — they are not accepted.
-3. "type" focuses the element itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
-4. Choose only a number that appears in the list below. If what you need is not numbered, use "target_not_listed" and describe it. Do not pick the nearest number instead, and do not guess.
-5. The soft keyboard blocks taps on anything behind it. If your next target is in the lower region (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app.
-6. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
-8. When a step asks for a number of taps, send one tap action with `count` set to that number. Never count taps yourself across several steps: the screen may not show how many have landed.
-7. The numbers are redrawn every step. Use the numbers from the CURRENT screenshot and list, never one you remember from an earlier step.
-"""
-
-        return """
-CRITICAL CONSTRAINTS:
-1. Use "tap" for tapping/clicking and "type" for entering text. Never use "click" or "send_keys".
-2. For "type", you MUST provide both `text` AND `coordinates` of the target field.
-3. "type" focuses the field at those coordinates itself — do not spend a separate "tap" first. Only tap when you need focus without entering text.
-4. The soft keyboard blocks taps on anything behind it. If your next target is a button or control in the lower half of the screen (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app. After dismissal, use the fresh element list for coordinates.
-5. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
-6. When the keyboard is visible and you need to TYPE into a field, use text_field/input elements from the CURRENT scan in the upper portion of the screen (above the keyboard). Ignore bottom-portion detections — those are keyboard keys.
-7. You MUST use center coordinates from the Current UI Elements list. If a target you need is missing because the keyboard obscures it, do not guess coordinates from older screenshots — dismiss the keyboard (rule 4) and plan from the next scan. Older screenshots in the message are context only. They are not a coordinate source.
-8. After any event that changes the layout — keyboard opening or closing, navigation, a modal, a scroll — treat the next element list as a new layout and re-read every coordinate from it.
-9. When a step asks for a number of taps, send one tap action with `count` set to that number. Never count taps yourself across several steps: the screen may not show how many have landed.
-"""
+        return TARGET_CONSTRAINTS.get(self.grounding, COORDINATE_CONSTRAINTS)
 
     def _build_prompt(
         self,
@@ -175,51 +259,31 @@ CRITICAL CONSTRAINTS:
         marks: Optional[list] = None,
         screen_height: int = 0,
     ) -> str:
-        kb_line = ""
+        keyboard = ""
         if keyboard_open is True:
-            kb_line = "\n### Keyboard State\nVISIBLE — the soft keyboard is currently displayed. Elements in the lower ~40% of the screen may be keyboard keys, not app UI.\n"
+            keyboard = KEYBOARD_VISIBLE
         elif keyboard_open is False:
-            kb_line = "\n### Keyboard State\nHIDDEN — the soft keyboard is not visible. All detected elements are app UI.\n"
+            keyboard = KEYBOARD_HIDDEN
 
-        prompt = f"""You are an AI agent controlling a mobile app to achieve a goal.
-Your job is to execute the steps below by interacting with the app one action at a time.
-
-### Goal / Instructions
-{chr(10).join(f"- {step}" for step in goal_lines)}
-
-### Current UI Elements Detected {self._target_heading()}
-{self.format_targets(gui_elements, marks, screen_height)}
-{kb_line}
-### Action History (with system-observed outcomes)
-{history or "No actions executed yet."}
-"""
+        prompt = PROMPT.format(
+            goal="\n".join(f"- {step}" for step in goal_lines),
+            heading=self._target_heading(),
+            targets=self.format_targets(gui_elements, marks, screen_height),
+            keyboard=keyboard,
+            history=history or "No actions executed yet.",
+        )
         if drift_warning:
-            prompt += f"""
-### CONTEXT DRIFT WARNING
-{drift_warning}
-"""
+            prompt += DRIFT_SECTION.format(drift=drift_warning)
         if trail:
-            prompt += f"""
-### Session Trail — App Knowledge From This Session
-{trail}
-"""
+            prompt += TRAIL_SECTION.format(trail=trail)
         if loop_nudge:
-            prompt += f"""
-### LOOP DETECTION ADVISORY
-{loop_nudge}
-"""
-        prompt += self._action_vocabulary() + self._action_constraints()
-        prompt += """
-### Response Instructions
-1. Set `current_screen` to the descriptive name of the screen you currently see.
-2. Set `evaluation_previous_goal`: honestly assess whether your PREVIOUS action succeeded, failed, or is uncertain. Leave empty on the first step.
-3. Set `observation`: describe only what is currently visible.
-4. Set `reasoning`: explain why the chosen action is the best next step.
-5. Set `goal_satisfied` True when the goal's outcome is already visible on this screen, and put the evidence in `goal_evidence`. Judge the goal as stated: a post-login onboarding or permission screen still means a sign-in goal is met.
-6. Set `action`: choose exactly ONE action. If the goal is fully complete, use `done`.
-7. Set `external_navigation` to True if the action will temporarily leave the app.
-"""
-        return prompt
+            prompt += LOOP_SECTION.format(nudge=loop_nudge)
+        return (
+            prompt
+            + self._action_vocabulary()
+            + self._action_constraints()
+            + RESPONSE_INSTRUCTIONS
+        )
 
     ROW_BAND = 60
     DUPLICATE_OVERLAP = 0.9
@@ -283,18 +347,20 @@ Your job is to execute the steps below by interacting with the app one action at
 
     def step_response_model(self):
         """The schema the model answers in, which differs by grounding mode."""
+        if self.grounding == GROUNDING_DESCRIBE:
+            return DescribeStepResponse
         if self.grounding == GROUNDING_MARKS:
             return MarksStepResponse
         return DeviceStepResponse
 
     def _target_heading(self) -> str:
         """Says where the targets are, which differs by mode and must not lie."""
-        if self.grounding == GROUNDING_MARKS:
-            return "(numbered on the screenshot)"
-        return "(YOLO/OCR)"
+        return TARGET_HEADINGS.get(self.grounding, "(YOLO/OCR)")
 
     def format_targets(self, elements, marks=None, screen_height: int = 0) -> str:
         """The element list for the prompt, in whichever form the mode calls for."""
+        if self.grounding == GROUNDING_DESCRIBE:
+            return NO_TARGETS_LISTED
         if self.grounding == GROUNDING_MARKS:
             from ronin.agent.grounding import marks as marks_module
 

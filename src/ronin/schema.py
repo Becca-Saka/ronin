@@ -16,10 +16,10 @@ from typing import Any, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 PLATFORMS = ("android", "ios")
-GROUNDINGS = ("coordinates", "marks")
+GROUNDINGS = ("coordinates", "marks", "describe")
 
 Platform = Literal["android", "ios"]
-Grounding = Literal["coordinates", "marks"]
+Grounding = Literal["coordinates", "marks", "describe"]
 
 
 class Strict(BaseModel):

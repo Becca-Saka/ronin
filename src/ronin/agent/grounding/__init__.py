@@ -7,6 +7,7 @@ everything after that point is shared.
 
 GROUNDING_COORDINATES = "coordinates"
 GROUNDING_MARKS = "marks"
+GROUNDING_DESCRIBE = "describe"
 
 from ronin.agent.grounding.placement import (  # noqa: E402
     MAX_SCREEN_FRACTION,
@@ -17,6 +18,7 @@ from ronin.agent.grounding.placement import (  # noqa: E402
 
 __all__ = [
     "GROUNDING_COORDINATES",
+    "GROUNDING_DESCRIBE",
     "GROUNDING_MARKS",
     "MAX_SCREEN_FRACTION",
     "MIN_PRESENCE",

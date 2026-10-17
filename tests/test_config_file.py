@@ -306,12 +306,18 @@ class OneDeclarationTests(unittest.TestCase):
     def test_the_grounding_constants_match_the_schema(self):
         import typing
 
-        from ronin.agent.plan.planner import GROUNDING_COORDINATES, GROUNDING_MARKS
+        from ronin.agent.grounding import (
+            GROUNDING_COORDINATES,
+            GROUNDING_DESCRIBE,
+            GROUNDING_MARKS,
+        )
         from ronin.schema import GROUNDINGS
         from ronin.schema import Grounding as GroundingLiteral
 
         self.assertEqual(set(GROUNDINGS), set(typing.get_args(GroundingLiteral)))
-        self.assertEqual({GROUNDING_COORDINATES, GROUNDING_MARKS}, set(GROUNDINGS))
+        self.assertEqual(
+            {GROUNDING_COORDINATES, GROUNDING_MARKS, GROUNDING_DESCRIBE}, set(GROUNDINGS)
+        )
 
     def test_the_defaults_are_values_the_schema_allows(self):
         from ronin.config import BUILT_IN, coerce

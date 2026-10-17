@@ -12,6 +12,8 @@ from ronin.agent.actuation.actions import (
     ActionType,
 )
 from ronin.agent.memory.history import ActionEntry, ActionResult
+from ronin.agent.grounding import GROUNDING_DESCRIBE
+from ronin.agent.grounding.description import resolve_description
 from ronin.agent.grounding.marks import resolve_mark
 from ronin.agent.step.staleness import has_target, target_moved
 from ronin.errors import ObservationUnavailable
@@ -106,7 +108,9 @@ def stalled_reason(decision) -> str:
     )
 
 
-def evaluate(action, snapshot, device_control, grounding: str = "") -> Decision:
+def evaluate(
+    action, snapshot, device_control, grounding: str = "", grounder=None
+) -> Decision:
     """Everything that can stop an action before the device is touched."""
     if is_target_not_listed(action):
         logger.warning(
@@ -127,7 +131,12 @@ def evaluate(action, snapshot, device_control, grounding: str = "") -> Decision:
             target=action.description,
         )
 
-    unresolved, resolved = resolve_mark(action, snapshot.marks, grounding)
+    if grounding == GROUNDING_DESCRIBE:
+        unresolved, resolved = resolve_description(
+            action, grounder, snapshot.raw_img_bytes
+        )
+    else:
+        unresolved, resolved = resolve_mark(action, snapshot.marks, grounding)
     if unresolved:
         return Decision(ok=False, observation=unresolved)
     action = resolved or action

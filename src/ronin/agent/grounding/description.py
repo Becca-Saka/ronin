@@ -1,7 +1,9 @@
 """Grounding by description: the planner names a target, a model places it."""
 
 import logging
-from typing import Optional
+from typing import Optional, Tuple
+
+from ronin.agent.actuation.actions import TARGETED_ACTIONS, Action, Coordinates
 
 from ronin.agent.grounding.placement import (
     MAX_SCREEN_FRACTION,
@@ -63,3 +65,43 @@ class DecisionGrounder:
             present=present,
             box_confidence=box_confidence,
         )
+
+
+NOT_FOUND = (
+    "Not executed. Nothing on this screen was found for: {target}. Describe the "
+    "same thing by a different feature of itself — the words on it, its symbol, "
+    "its shape, its colour. A target below the fold cannot be found. A target "
+    "behind the keyboard cannot be found. Scroll it into view, or close the "
+    "keyboard with key_event 4, then look again."
+)
+
+
+def resolve_description(
+    action, grounder, screenshot: bytes
+) -> Tuple[Optional[str], Optional[Action]]:
+    """Turns a named target into the point to touch.
+
+    Returns (reason the step cannot proceed, action to run instead), which is
+    what resolve_mark returns for the same job done by number.
+    """
+    if action.type not in TARGETED_ACTIONS:
+        return None, None
+
+    target = getattr(action, "target", None)
+    if target is None:
+        return (
+            "Not executed. This action needs `target`: what to act on, described "
+            "as you would point it out to someone looking at the screen."
+        ), None
+
+    placed = grounder.ground(screenshot, target)
+    if placed is None:
+        return NOT_FOUND.format(target=target), None
+
+    x, y = placed.point
+    # Every describe variant carries this, set by actions._describe_variant.
+    resolved = type(action).coordinate_form(
+        coordinates=Coordinates(x=x, y=y), **action.model_dump(exclude={"target", "type"})
+    )
+    logger.info("%r resolves to (%d, %d).", target, x, y)
+    return None, resolved

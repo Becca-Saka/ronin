@@ -9,7 +9,7 @@ from ronin.agent.device.session import DeviceSession
 from ronin.agent.device.platform import Platform
 from ronin.agent.device.readiness import ensure_device_ready
 from ronin.agent.perception.detector import YOLO_REPO_ID, YOLO_REVISION
-from ronin.agent.perception.screen import ScreenPerception
+from ronin.agent.perception.blind import for_grounding
 from ronin.agent.plan.planner import GROUNDING_COORDINATES
 from ronin.agent.memory.replay import ReplayLedger
 from ronin.errors import ArtifactWriteFailed
@@ -197,7 +197,7 @@ class RoninTestRunner:
                 "Initializing emulator and starting remote webdriver session..."
             )
             device_control = session.start(is_headless=self.headless)
-            perception = ScreenPerception(session)
+            perception = for_grounding(self.grounding, session)
             total_scenarios = len(scenarios)
             for idx, scenario in enumerate(scenarios):
                 # Scenario evidence must not inherit screen names, actions, or
@@ -248,7 +248,7 @@ class RoninTestRunner:
                         session.session_id,
                     )
                     device_control = session.start(is_headless=self.headless)
-                    perception = ScreenPerception(session)
+                    perception = for_grounding(self.grounding, session)
 
                     usage_tracker.output_dir = session.telemetry_dir
 

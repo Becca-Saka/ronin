@@ -7,10 +7,17 @@ missing things cost one message rather than two boot cycles.
 
 from typing import Optional
 
-from ronin.agent.grounding import GROUNDING_COORDINATES, GROUNDING_MARKS
+from ronin.agent.grounding import (
+    GROUNDING_COORDINATES,
+    GROUNDING_DESCRIBE,
+    GROUNDING_MARKS,
+)
 from ronin.defaults import DEFAULT_GROUNDING
 from ronin.errors import UsageError
 from ronin.llm.credentials import missing_credentials
+from ronin.llm.jev_client import DEFAULT_DECISION_MODEL
+from ronin.utils.jev_deps import INSTALL_HINT as JEV_HINT
+from ronin.utils.jev_deps import missing_jev_packages
 from ronin.utils.vision_deps import INSTALL_HINT as VISION_HINT
 from ronin.utils.vision_deps import missing_vision_packages
 
@@ -20,24 +27,41 @@ DETECTED_GROUNDING = frozenset({GROUNDING_COORDINATES, GROUNDING_MARKS})
 CREDENTIAL_HINT = "Add them to a .env file in this directory, or export them."
 
 
-def missing_for_grounding(grounding: str) -> list[str]:
-    """What a grounding mode needs and does not have, named once with its fix."""
-    if grounding not in DETECTED_GROUNDING:
+def models_for(grounding: str) -> tuple[Optional[str], ...]:
+    """Models a grounding mode calls for beyond the planner's own."""
+    if grounding == GROUNDING_DESCRIBE:
+        return (DEFAULT_DECISION_MODEL,)
+    return ()
+
+
+def packages_for(grounding: str) -> list[str]:
+    """The extra a grounding mode needs and does not have, named with its fix."""
+    if grounding in DETECTED_GROUNDING:
+        absent, hint, why = (
+            missing_vision_packages(),
+            VISION_HINT,
+            f"grounding={grounding} reads detected elements",
+        )
+    elif grounding == GROUNDING_DESCRIBE:
+        absent, hint, why = (
+            missing_jev_packages(),
+            JEV_HINT,
+            "grounding=describe places targets with a decision model",
+        )
+    else:
         return []
-    absent = missing_vision_packages()
+
     if not absent:
         return []
-    return [
-        f"grounding={grounding} reads detected elements, which needs "
-        f"{', '.join(absent)}.\n" + VISION_HINT.replace("\n", "\n  ")
-    ]
+    return [f"{why}, which needs {', '.join(absent)}.\n" + hint.replace("\n", "\n  ")]
 
 
 def missing_for_models(*models: Optional[str]) -> list[str]:
-    """The credentials these models need and do not have."""
-    wanted = {
-        name: model for model in models for name in missing_credentials(model)
-    }
+    """The credentials these models need and do not have, each named once."""
+    wanted: dict[str, str] = {}
+    for model in models:
+        for name in missing_credentials(model):
+            wanted.setdefault(name, model or "")
     if not wanted:
         return []
     named = ", ".join(f"{name} (for {model})" for name, model in wanted.items())
@@ -54,6 +78,8 @@ def require_run(
     Every missing thing is named at once. Fixing them one error at a time
     costs a device boot for each.
     """
-    missing = missing_for_models(model, fast_model) + missing_for_grounding(grounding)
+    missing = missing_for_models(
+        model, fast_model, *models_for(grounding)
+    ) + packages_for(grounding)
     if missing:
         raise UsageError("This run cannot start:\n\n" + "\n\n".join(missing))

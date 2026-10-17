@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ronin.agent.device.session import DeviceSession
 from ronin.agent.device.platform import Platform
-from ronin.agent.perception.screen import ScreenPerception
+from ronin.agent.perception.blind import for_grounding
 from ronin.agent.run.outcomes import DeviceRunResult
 
 
@@ -35,7 +35,7 @@ def run_goal(
         return agent.run(
             goal=goal,
             device_control=device_control,
-            perception=ScreenPerception(session),
+            perception=for_grounding(agent.grounding, session),
             session_dir=session.screenshots_dir,
         )
     finally:

@@ -34,7 +34,7 @@ from ronin.agent.memory.stall import SPENT
 from ronin.agent.memory.replay import ReplayLedger, replay_known_path, target_label
 from ronin.agent.step import targeting
 from ronin.utils.secrets import SecretScrubber
-from ronin.agent.grounding import marks
+from ronin.agent.grounding import GROUNDING_DESCRIBE, marks
 from ronin.agent.perception import keyboard
 from ronin.agent.artifacts.redaction import RedactedImages
 from ronin.agent.perception.screen import ScreenPerception
@@ -73,6 +73,7 @@ class DeviceAgent:
         stop_when_satisfied: bool = False,
         replay_ledger: Optional[ReplayLedger] = None,
         grounding: str = GROUNDING_COORDINATES,
+        grounder=None,
     ):
         self.max_steps = max_steps
         self.settle_time = settle_time
@@ -80,6 +81,9 @@ class DeviceAgent:
         self.stop_when_satisfied = stop_when_satisfied
         self.replay_ledger = replay_ledger
         self.scrubber = SecretScrubber()
+        # Built here, so a missing extra or key stops the run before a device
+        # opens rather than on the first step that needs a target placed.
+        self.grounder = grounder or self._build_grounder()
 
         self.llm = LLMClient(model=model)
         self.fast_llm = (
@@ -101,6 +105,20 @@ class DeviceAgent:
 
         self.images = RedactedImages(self.scrubber)
         self.artifacts = StepArtifacts(self.images, self.scrubber)
+
+    def _build_grounder(self):
+        """The grounder describe mode places its targets with, or None."""
+        if self.grounding != GROUNDING_DESCRIBE:
+            return None
+        from ronin.agent.grounding.description import DecisionGrounder
+        from ronin.llm.jev_client import JevClient
+
+        return DecisionGrounder(JevClient(usage_callback=self._record_grounding))
+
+    def _record_grounding(self, call) -> None:
+        """Grounding calls cost what any other model call costs."""
+        if self.llm.usage_callback:
+            self.llm.usage_callback(call)
 
     def run(
         self,
@@ -224,7 +242,8 @@ class DeviceAgent:
             return ending
 
         decision = targeting.evaluate(
-            step_response.action, snapshot, device_control, self.grounding
+            step_response.action, snapshot, device_control, self.grounding,
+            self.grounder,
         )
         if not decision.ok:
             return self._blocked(step, step_response.action, decision, snapshot,

@@ -219,11 +219,44 @@ def _marks_variant(model, name: str):
     return variant
 
 
+def _describe_variant(model, name: str):
+    """The same action with coordinates replaced by a description of the target.
+
+    Built like the marks variant, for the same reason: a field the model
+    cannot omit and a field that does not exist leave nothing to get wrong.
+    """
+    fields = {
+        field_name: (info.annotation, info)
+        for field_name, info in model.model_fields.items()
+        if field_name != "coordinates"
+    }
+    fields["target"] = (
+        str,
+        Field(
+            ...,
+            description=(
+                "What to act on, described as you would point it out to "
+                "someone looking at the screen."
+            ),
+        ),
+    )
+    variant = create_model(name, **fields)
+    # Resolution turns the description back into this, once it has been placed.
+    variant.coordinate_form = model
+    return variant
+
+
 TypeMarkAction = _marks_variant(TypeAction, "TypeMarkAction")
 TapMarkAction = _marks_variant(TapAction, "TapMarkAction")
 ClearMarkAction = _marks_variant(ClearAction, "ClearMarkAction")
 DoubleTapMarkAction = _marks_variant(DoubleTapAction, "DoubleTapMarkAction")
 LongPressMarkAction = _marks_variant(LongPressAction, "LongPressMarkAction")
+
+TypeDescribeAction = _describe_variant(TypeAction, "TypeDescribeAction")
+TapDescribeAction = _describe_variant(TapAction, "TapDescribeAction")
+ClearDescribeAction = _describe_variant(ClearAction, "ClearDescribeAction")
+DoubleTapDescribeAction = _describe_variant(DoubleTapAction, "DoubleTapDescribeAction")
+LongPressDescribeAction = _describe_variant(LongPressAction, "LongPressDescribeAction")
 
 
 # Actions that touch a specific place, and so need a target resolved first.
@@ -257,6 +290,22 @@ Action = Annotated[
     | WaitAction
     | TargetNotListedAction,
     Field(discriminator="type")
+]
+
+
+# The same vocabulary, but targets are named in words only.
+DescribeAction = Annotated[
+    TypeDescribeAction
+    | TapDescribeAction
+    | DoubleTapDescribeAction
+    | LongPressDescribeAction
+    | ClearDescribeAction
+    | DragAndDropAction
+    | KeyEventAction
+    | SwipeAction
+    | CapabilityAction
+    | WaitAction,
+    Field(discriminator="type"),
 ]
 
 

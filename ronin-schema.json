@@ -280,7 +280,8 @@
             {
               "enum": [
                 "coordinates",
-                "marks"
+                "marks",
+                "describe"
               ],
               "type": "string"
             },
@@ -585,7 +586,8 @@
         {
           "enum": [
             "coordinates",
-            "marks"
+            "marks",
+            "describe"
           ],
           "type": "string"
         },

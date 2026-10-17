@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from ronin.agent.actuation.actions import Action, MarksAction
+from ronin.agent.actuation.actions import Action, DescribeAction, MarksAction
 
 
 class DoneAction(BaseModel):
@@ -18,6 +18,7 @@ class DoneAction(BaseModel):
 
 DeviceAction = Annotated[Action | DoneAction, Field(discriminator="type")]
 MarksDeviceAction = Annotated[MarksAction | DoneAction, Field(discriminator="type")]
+DescribeDeviceAction = Annotated[DescribeAction | DoneAction, Field(discriminator="type")]
 
 
 class DeviceStepResponse(BaseModel):
@@ -75,4 +76,12 @@ class MarksStepResponse(DeviceStepResponse):
 
     action: MarksDeviceAction = Field(
         ..., description="The single next action, naming its target by number."
+    )
+
+
+class DescribeStepResponse(DeviceStepResponse):
+    """The step response used in describe mode, where targets are named in words."""
+
+    action: DescribeDeviceAction = Field(
+        ..., description="The single next action, naming its target in words."
     )

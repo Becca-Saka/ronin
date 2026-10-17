@@ -6,23 +6,38 @@ from unittest import mock
 
 class GroundingRequirementTests(unittest.TestCase):
     def test_a_mode_that_reads_detections_needs_the_detector(self):
-        from ronin.preflight import missing_for_grounding
+        from ronin.preflight import packages_for
 
         with mock.patch("ronin.preflight.missing_vision_packages", return_value=["ultralytics"]):
             for mode in ("coordinates", "marks"):
-                self.assertIn("vision", missing_for_grounding(mode)[0])
+                self.assertIn("vision", packages_for(mode)[0])
 
-    def test_a_mode_that_names_its_target_does_not(self):
-        from ronin.preflight import missing_for_grounding
+    def test_a_mode_that_names_its_target_needs_no_detector(self):
+        from ronin.preflight import packages_for
 
-        with mock.patch("ronin.preflight.missing_vision_packages", return_value=["ultralytics"]):
-            self.assertEqual(missing_for_grounding("describe"), [])
+        with (
+            mock.patch("ronin.preflight.missing_vision_packages", return_value=["ultralytics"]),
+            mock.patch("ronin.preflight.missing_jev_packages", return_value=[]),
+        ):
+            self.assertEqual(packages_for("describe"), [])
+
+    def test_a_mode_that_names_its_target_needs_the_decision_sdk(self):
+        from ronin.preflight import packages_for
+
+        with mock.patch("ronin.preflight.missing_jev_packages", return_value=["typesafe_sdk"]):
+            self.assertIn("typesafe_sdk", packages_for("describe")[0])
+
+    def test_describe_mode_also_wants_the_decision_model_key(self):
+        from ronin.preflight import models_for
+
+        self.assertEqual(models_for("describe"), ("typesafe/jev-1.14.0",))
+        self.assertEqual(models_for("marks"), ())
 
     def test_an_installed_detector_is_not_reported(self):
-        from ronin.preflight import missing_for_grounding
+        from ronin.preflight import packages_for
 
         with mock.patch("ronin.preflight.missing_vision_packages", return_value=[]):
-            self.assertEqual(missing_for_grounding("marks"), [])
+            self.assertEqual(packages_for("marks"), [])
 
 
 class RunRefusalTests(unittest.TestCase):
