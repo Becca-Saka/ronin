@@ -1,0 +1,25 @@
+"""How a target the planner chose becomes a point on the device.
+
+Each mode names a target differently. Marks mode names it by a number drawn on
+the screenshot. Description mode names it in words. Both end in a point, and
+everything after that point is shared.
+"""
+
+GROUNDING_COORDINATES = "coordinates"
+GROUNDING_MARKS = "marks"
+
+from ronin.agent.grounding.placement import (  # noqa: E402
+    MAX_SCREEN_FRACTION,
+    MIN_PRESENCE,
+    Grounder,
+    Placement,
+)
+
+__all__ = [
+    "GROUNDING_COORDINATES",
+    "GROUNDING_MARKS",
+    "MAX_SCREEN_FRACTION",
+    "MIN_PRESENCE",
+    "Grounder",
+    "Placement",
+]

@@ -14,7 +14,7 @@ class RefusedMarkTests(unittest.TestCase):
 
     def _marks(self, refuses_text=False):
         from ronin.agent.perception.elements import BoundingBox, GUIElement
-        from ronin.agent.perception.marks import Mark
+        from ronin.agent.grounding.marks import Mark
 
         element = GUIElement(
             element="Text",
@@ -69,7 +69,7 @@ class RefusedMarkTests(unittest.TestCase):
         self.assertIsNotNone(resolved)
 
     def test_the_planner_is_told_which_numbers_hold_no_text(self):
-        from ronin.agent.perception.marks import describe
+        from ronin.agent.grounding.marks import describe
 
         listing = describe(self._marks(refuses_text=True), height=2400)
 
@@ -88,7 +88,7 @@ class RefusalRecordingTests(unittest.TestCase):
 
     def _marks_at(self, *boxes):
         from ronin.agent.perception.elements import BoundingBox, GUIElement
-        from ronin.agent.perception.marks import Mark
+        from ronin.agent.grounding.marks import Mark
 
         return [
             Mark(
@@ -330,7 +330,7 @@ class ElementIdentityTests(unittest.TestCase):
         )
 
     def test_the_same_box_is_the_same_element(self):
-        from ronin.agent.perception.marks import is_same_element
+        from ronin.agent.grounding.marks import is_same_element
 
         self.assertTrue(
             is_same_element(self._element((10, 300, 200, 340)), (10, 300, 200, 340))
@@ -338,7 +338,7 @@ class ElementIdentityTests(unittest.TestCase):
 
     def test_a_detector_nudging_the_box_is_still_the_same_element(self):
         """Detections wobble by a pixel or two between passes."""
-        from ronin.agent.perception.marks import is_same_element
+        from ronin.agent.grounding.marks import is_same_element
 
         self.assertTrue(
             is_same_element(self._element((11, 301, 201, 341)), (10, 300, 200, 340))
@@ -350,14 +350,14 @@ class ElementIdentityTests(unittest.TestCase):
         Matching loosely here would refuse typing into the field below the one
         that actually took no text.
         """
-        from ronin.agent.perception.marks import is_same_element
+        from ronin.agent.grounding.marks import is_same_element
 
         self.assertFalse(
             is_same_element(self._element((10, 330, 200, 370)), (10, 300, 200, 340))
         )
 
     def test_an_unrelated_box_is_a_different_element(self):
-        from ronin.agent.perception.marks import is_same_element
+        from ronin.agent.grounding.marks import is_same_element
 
         self.assertFalse(
             is_same_element(self._element((10, 900, 200, 940)), (10, 300, 200, 340))

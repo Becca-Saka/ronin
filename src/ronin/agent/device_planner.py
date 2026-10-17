@@ -15,13 +15,15 @@ from ronin.agent.actuation.actions import (
     CapabilityType,
     MarksAction,
 )
+from ronin.agent.grounding import (  # noqa: F401 - re-exported for callers
+    GROUNDING_COORDINATES,
+    GROUNDING_MARKS,
+)
 from ronin.llm.llm_client import LLMClient
 from ronin.llm.messages import MultiPartMessage
 
 logger = logging.getLogger(__name__)
 
-GROUNDING_COORDINATES = "coordinates"
-GROUNDING_MARKS = "marks"
 
 
 class DoneAction(BaseModel):
@@ -364,7 +366,7 @@ Your job is to execute the steps below by interacting with the app one action at
     def format_targets(self, elements, marks=None, screen_height: int = 0) -> str:
         """The element list for the prompt, in whichever form the mode calls for."""
         if self.grounding == GROUNDING_MARKS:
-            from ronin.agent.perception import marks as marks_module
+            from ronin.agent.grounding import marks as marks_module
 
             return marks_module.describe(marks or [], screen_height)
         return self._format_elements(elements)

@@ -11,7 +11,7 @@ from PIL import Image
 
 from ronin.agent.step.observation import PerceptionSnapshot
 from ronin.agent.perception.elements import BoundingBox, GUIElement
-from ronin.agent.perception.marks import Mark
+from ronin.agent.grounding.marks import Mark
 
 STAMP = "2026-01-01T00:00:00"
 

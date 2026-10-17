@@ -16,7 +16,8 @@ import imagehash
 from PIL import Image
 
 from ronin.agent.device_planner import GROUNDING_MARKS
-from ronin.agent.perception import marks
+from ronin.agent.grounding import marks
+from ronin.agent.perception import keyboard
 from ronin.agent.perception.perception import ScreenPerception
 from ronin.agent.perception.scan_dump import ScanInfo
 from ronin.agent.trail import SessionTrail
@@ -86,7 +87,7 @@ def number_targets(snapshot: PerceptionSnapshot, ctx, grounding: str) -> None:
     if grounding != GROUNDING_MARKS:
         return
 
-    targets, keys = marks.split_keyboard(
+    targets, keys = keyboard.split_keyboard(
         snapshot.gui_elements, ctx.keyboard_open, ctx.screen_height
     )
     raw_img = Image.open(io.BytesIO(snapshot.raw_img_bytes))
@@ -103,7 +104,7 @@ def number_targets(snapshot: PerceptionSnapshot, ctx, grounding: str) -> None:
 
     marked = io.BytesIO()
     marks.render(
-        raw_img, snapshot.marks, band=marks.keyboard_band(keys, width)
+        raw_img, snapshot.marks, band=keyboard.keyboard_band(keys, width)
     ).save(marked, format="PNG")
     snapshot.planner_img_bytes = marked.getvalue()
 

@@ -15,15 +15,12 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from ronin.agent.actuation.actions import (
-    TARGETED_ACTIONS,
     Action,
-    TEXT_FIELD_ACTIONS,
     ActionType,
-    Coordinates,
 )
 from ronin.agent.history import ActionEntry, ActionResult
-from ronin.agent.device_planner import GROUNDING_MARKS
-from ronin.agent.perception import marks
+from ronin.agent.grounding import marks
+from ronin.agent.grounding.marks import resolve_mark
 from ronin.agent.step.staleness import has_target, target_moved
 from ronin.errors import ObservationUnavailable
 
@@ -39,61 +36,6 @@ def record_unexecuted(history, step: int, action_desc: str, observation: str) ->
             result=ActionResult(success=False, observation=observation),
         )
     )
-
-
-def resolve_mark(action, element_marks, grounding: str = "") -> tuple:
-    """Turns a chosen number into the point to touch.
-
-    Returns (reason the step cannot proceed, action to run instead). A marks
-    action becomes its coordinate form here, because every mode ends in a point.
-    the number only decides who worked that point out.
-
-    In marks mode the number is the only accepted way to name a target. A
-    response carrying coordinates instead is refused rather than obeyed.
-    Accepting it would reinstate the invented coordinate that the numbering
-    exists to prevent, and we cannot tell a read-off coordinate from a guessed
-    one.
-    """
-    if action.type not in TARGETED_ACTIONS:
-        return None, None
-
-    index = getattr(action, "mark", None)
-    if grounding == GROUNDING_MARKS:
-        if index is None:
-            return (
-                "Not executed. This action needs `mark`. `mark` is the number on "
-                "the screenshot. Do not send coordinates. If the element you need "
-                "has no number, answer target_not_listed."
-            ), None
-    elif index is None:
-        if getattr(action, "coordinates", None) is None:
-            return "Not executed. This action needs `coordinates` of the target.", None
-        return None, None
-
-    mark = marks.find(element_marks, index)
-    if mark is None:
-        available = len(element_marks)
-        logger.warning("Element %s was chosen but only 1-%d exist.", index, available)
-        return (
-            f"Not executed. There is no element {index}. The numbers on this "
-            f"screen are 1 to {available}. Choose one of them."
-        ), None
-
-    if mark.refuses_text and action.type in TEXT_FIELD_ACTIONS:
-        return (
-            f"Not executed. Element {index} holds no text. Typing there did not "
-            "move the cursor, twice. Choose a different number. If no number is "
-            "the field you need, the field is off screen. Close the keyboard "
-            "with key_event 4, or scroll. Then look again."
-        ), None
-
-    x, y = mark.center
-    # Every marks variant carries this, set by actions._marks_variant.
-    resolved = type(action).coordinate_form(
-        coordinates=Coordinates(x=x, y=y), **action.model_dump(exclude={"mark", "type"})
-    )
-    logger.info("Element %s resolves to (%d, %d).", index, x, y)
-    return None, resolved
 
 
 def is_target_not_listed(action) -> bool:

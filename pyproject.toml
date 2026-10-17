@@ -31,6 +31,10 @@ vision = [
     "easyocr>=1.6.0",
     "huggingface-hub>=0.16.0",
 ]
+# The decision model is reached through its own SDK. See ronin.utils.jev_deps.
+jev = [
+    "typesafe-sdk>=0.7.5",
+]
 
 [project.scripts]
 ronin = "ronin.cli.main:main"

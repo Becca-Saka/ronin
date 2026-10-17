@@ -33,7 +33,7 @@ from ronin.agent.step.stall import SPENT
 from ronin.agent.replay import ReplayLedger, replay_known_path, target_label
 from ronin.agent.step import targeting
 from ronin.utils.secrets import SecretScrubber
-from ronin.agent.perception import marks
+from ronin.agent.perception import keyboard
 from ronin.agent.perception.media_manager import MediaManager
 from ronin.agent.perception.perception import ScreenPerception
 from ronin.agent.trail import SessionTrail
@@ -363,7 +363,7 @@ class DeviceAgent:
     ) -> DeviceStepResponse:
         # A keyboard commonly resizes the app and moves every field, so plan
         # from the current scan. Pre-keyboard coordinates are stale.
-        gui_elements = marks.annotate_keyboard_keys(
+        gui_elements = keyboard.annotate_keyboard_keys(
             snapshot.gui_elements, ctx.keyboard_open, ctx.screen_height
         )
         return planner.plan_step(

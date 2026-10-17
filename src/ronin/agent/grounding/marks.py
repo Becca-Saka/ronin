@@ -18,6 +18,12 @@ from typing import List, Optional, Sequence
 
 from PIL import Image, ImageDraw, ImageFont
 
+from ronin.agent.actuation.actions import (
+    TARGETED_ACTIONS,
+    TEXT_FIELD_ACTIONS,
+    Coordinates,
+)
+from ronin.agent.grounding import GROUNDING_MARKS
 from ronin.agent.perception.elements import GUIElement
 
 logger = logging.getLogger(__name__)
@@ -31,8 +37,6 @@ ROW_BAND = 25
 BADGE_PAD = 3
 BAND_COLOR = (36, 82, 168)
 # Where the soft keyboard starts, and how short a label has to be to be a key.
-KEYBOARD_TOP_FRACTION = 0.60
-KEY_LABEL_LENGTH = 2
 
 
 @dataclass(frozen=True)
@@ -109,95 +113,6 @@ def _overlap(a, b) -> float:
 def _center(element) -> tuple[int, int]:
     box = element.bounding_box
     return (box.x_min + box.x_max) // 2, (box.y_min + box.y_max) // 2
-
-
-def split_keyboard(
-    elements: List[GUIElement], keyboard_open: Optional[bool], screen_height: Optional[int]
-) -> tuple[List[GUIElement], List[GUIElement]]:
-    """Separates the soft keyboard's own keys from the app's controls.
-
-    An open keyboard is most of what is on screen. Numbering every letter would
-    bury the handful of app controls under a wall of badges, and the agent never
-    needs them. Text arrives through `type`, and Enter and Back are key events.
-
-    YOLO has no class for a keyboard, so this is geometry: low on the screen
-    with a label too short to be a sentence.
-    """
-    if not keyboard_open or not screen_height:
-        return list(elements or []), []
-
-    keyboard_top = int(screen_height * KEYBOARD_TOP_FRACTION)
-    kept, keys = [], []
-    for element in elements or []:
-        box = element.bounding_box
-        center_y = (box.y_min + box.y_max) // 2
-        looks_like_key = (
-            center_y >= keyboard_top
-            and len((element.text or "").strip()) <= KEY_LABEL_LENGTH
-        )
-        (keys if looks_like_key else kept).append(element)
-
-    # A second pass by position, because the label rule misses the wide keys —
-    # "?123", "space", "return". Anything sitting within the keyboard's own
-    # extent belongs to it whatever its label says.
-    if keys:
-        top = min(key.bounding_box.y_min for key in keys)
-        bottom = max(key.bounding_box.y_max for key in keys)
-        remaining = []
-        for element in kept:
-            center_y = (element.bounding_box.y_min + element.bounding_box.y_max) // 2
-            (keys if top <= center_y <= bottom else remaining).append(element)
-        kept = remaining
-        logger.info("Keyboard is open — %d key(s) left unnumbered.", len(keys))
-    return kept, keys
-
-
-def without_keyboard_keys(
-    elements: List[GUIElement], keyboard_open: Optional[bool], screen_height: Optional[int]
-) -> List[GUIElement]:
-    """The app's controls, with the soft keyboard's keys removed."""
-    return split_keyboard(elements, keyboard_open, screen_height)[0]
-
-
-def keyboard_band(keys: List[GUIElement], screen_width: int) -> Optional[tuple]:
-    """The region the keyboard occupies, as one rectangle.
-
-    Drawn so that the bare strip carrying no numbers is explained. Nothing here
-    carries a number because the keyboard covers it. Anything behind it needs
-    the keyboard dismissed first.
-    """
-    if not keys:
-        return None
-    boxes = [key.bounding_box for key in keys]
-    return (
-        0,
-        min(box.y_min for box in boxes),
-        screen_width,
-        max(box.y_max for box in boxes),
-    )
-
-
-def annotate_keyboard_keys(
-    elements: List[GUIElement], keyboard_open: Optional[bool], screen_height: Optional[int]
-) -> List[GUIElement]:
-    """Prefixes likely keyboard keys with [key] so the planner can tell them apart.
-
-    Used where the keys are still offered as targets. Where they are numbered
-    instead, see without_keyboard_keys — there they are not offered at all.
-    """
-    if not keyboard_open or not screen_height:
-        return elements
-
-    keyboard_top = int(screen_height * KEYBOARD_TOP_FRACTION)
-    annotated = []
-    for element in elements:
-        center_y = (element.bounding_box.y_min + element.bounding_box.y_max) // 2
-        text = (element.text or "").strip()
-        if center_y >= keyboard_top and len(text) <= KEY_LABEL_LENGTH:
-            element = copy(element)
-            element.text = f"[key] {text}" if text else "[key]"
-        annotated.append(element)
-    return annotated
 
 
 def _area(box) -> int:
@@ -473,3 +388,58 @@ def render(
             font=font,
         )
     return marked
+
+
+def resolve_mark(action, element_marks, grounding: str = "") -> tuple:
+    """Turns a chosen number into the point to touch.
+
+    Returns (reason the step cannot proceed, action to run instead). A marks
+    action becomes its coordinate form here, because every mode ends in a point.
+    the number only decides who worked that point out.
+
+    In marks mode the number is the only accepted way to name a target. A
+    response carrying coordinates instead is refused rather than obeyed.
+    Accepting it would reinstate the invented coordinate that the numbering
+    exists to prevent, and we cannot tell a read-off coordinate from a guessed
+    one.
+    """
+    if action.type not in TARGETED_ACTIONS:
+        return None, None
+
+    index = getattr(action, "mark", None)
+    if grounding == GROUNDING_MARKS:
+        if index is None:
+            return (
+                "Not executed. This action needs `mark`. `mark` is the number on "
+                "the screenshot. Do not send coordinates. If the element you need "
+                "has no number, answer target_not_listed."
+            ), None
+    elif index is None:
+        if getattr(action, "coordinates", None) is None:
+            return "Not executed. This action needs `coordinates` of the target.", None
+        return None, None
+
+    mark = find(element_marks, index)
+    if mark is None:
+        available = len(element_marks)
+        logger.warning("Element %s was chosen but only 1-%d exist.", index, available)
+        return (
+            f"Not executed. There is no element {index}. The numbers on this "
+            f"screen are 1 to {available}. Choose one of them."
+        ), None
+
+    if mark.refuses_text and action.type in TEXT_FIELD_ACTIONS:
+        return (
+            f"Not executed. Element {index} holds no text. Typing there did not "
+            "move the cursor, twice. Choose a different number. If no number is "
+            "the field you need, the field is off screen. Close the keyboard "
+            "with key_event 4, or scroll. Then look again."
+        ), None
+
+    x, y = mark.center
+    # Every marks variant carries this, set by actions._marks_variant.
+    resolved = type(action).coordinate_form(
+        coordinates=Coordinates(x=x, y=y), **action.model_dump(exclude={"mark", "type"})
+    )
+    logger.info("Element %s resolves to (%d, %d).", index, x, y)
+    return None, resolved

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from ronin.agent.history import AgentHistory
-from ronin.agent.perception import marks
+from ronin.agent.grounding import marks
 from ronin.agent.step.loop_detector import RollingLoopDetector
 from ronin.agent.step.stall import Stall
 

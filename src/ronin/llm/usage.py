@@ -1,9 +1,12 @@
-"""One completion, recorded.
+"""One model call, recorded, whichever route it took.
 
 Reads a provider response into a CallRecord. The token counts, cache counts and
 cost come from the usage block. The finish reason, latency, served model and
 generation id sit outside it. The record also keeps the whole response, which
 costs about a kilobyte and does not repeat the prompt.
+
+Completions and decisions have separate readers and one record, so a run's cost
+stays one number.
 """
 
 from dataclasses import dataclass, field
@@ -27,7 +30,10 @@ class CallRecord:
     """1 unless a schema mismatch forced the question to be asked again."""
 
     finish_reason: str
-    """"length" means the answer ran out of room. It then reads as a bad answer."""
+    """"length" means the answer ran out of room. It then reads as a bad answer.
+
+    Empty on a decision: a typed answer cannot run out of room.
+    """
 
     latency_ms: float
     cost: Optional[float]
@@ -79,4 +85,32 @@ def record(response, model: str, attempt: int) -> CallRecord:
         prompt_text_tokens=_detail(prompt_details, "text_tokens", None),
         cost_details=usage.get("cost_details") or {},
         raw=response.model_dump(),
+    )
+
+
+def record_decision(
+    response, model: str, latency_ms: float, cost: Optional[float]
+) -> CallRecord:
+    """Reads a decision response into the same record a completion produces.
+
+    A decision reports token counts and nothing else, so latency is measured by
+    the caller and cost comes from the model's price. The rest keeps its
+    default.
+    """
+    usage = response.usage
+    prompt_tokens = getattr(usage, "input_tokens", 0) or 0
+    completion_tokens = getattr(usage, "output_tokens", 0) or 0
+
+    return CallRecord(
+        model=model,
+        served_model=getattr(response, "model", model),
+        generation_id=getattr(response, "id", "") or "",
+        attempt=1,
+        finish_reason="",
+        latency_ms=latency_ms,
+        cost=cost,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=prompt_tokens + completion_tokens,
+        raw=response.model_dump() if hasattr(response, "model_dump") else {},
     )
