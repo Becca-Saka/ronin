@@ -5,6 +5,11 @@ one row per call carrying the whole response. Counts two kinds of call
 separately: answers cut off at the token limit, and questions asked twice after
 a schema mismatch.
 
+Written three times over, because a run can stop at three different moments.
+Each call is appended to a log as it happens. Each scenario leaves a rolled-up
+file. The run ends with the report. The log costs one line per call; rewriting
+the roll-up per call would rewrite a megabyte to add four kilobytes.
+
 A response quotes the values a journey declared secret, because the model
 writes its reasoning in its own words. The scrubber masks them before anything
 reaches disk.
@@ -15,6 +20,7 @@ import logging
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Optional
 from typing import Any, Dict
 
 from ronin.llm.usage import CallRecord
@@ -81,8 +87,29 @@ class LLMUsageTracker:
         self._scrubber = scrubber
         self.totals = Totals()
 
+    @property
+    def log_path(self) -> Path:
+        """Where each call is appended as it happens."""
+        return self.output_dir / "llm_calls.jsonl"
+
+    def _append(self, component_name: str, call: CallRecord) -> None:
+        """Keeps one call, before anything else can go wrong.
+
+        A crash inside a scenario takes the roll-up for that scenario with it,
+        and those are the calls around whatever caused the crash. Appending
+        loses only the call in flight.
+        """
+        try:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            row = self._scrubbed({"component": component_name} | asdict(call))
+            with self.log_path.open("a", encoding="utf-8") as log:
+                log.write(json.dumps(row) + "\n")
+        except Exception as exc:  # noqa: BLE001 - telemetry must not fail a run
+            logger.warning("Could not log the call: %s", exc)
+
     def add_call(self, component_name: str, call: CallRecord) -> None:
         """Callback to record a single LLM call for a specific component."""
+        self._append(component_name, call)
         self.totals.add(call)
         if call.finish_reason == TRUNCATED:
             logger.warning(
@@ -110,15 +137,32 @@ class LLMUsageTracker:
             return [self._scrubbed(item) for item in value]
         return value
 
+    def _write(self, filepath: Path) -> Path:
+        """Writes the totals, through a temporary file so a reader never sees half."""
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        temporary = filepath.with_suffix(filepath.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(self._scrubbed(asdict(self.totals)), indent=2), encoding="utf-8"
+        )
+        temporary.replace(filepath)
+        return filepath
+
+    def checkpoint(self) -> Optional[Path]:
+        """Writes what has been spent so far, to one file that keeps its name.
+
+        A run that dies between scenarios otherwise loses every call made by
+        the ones that passed. Written beside the partial reports, which exist
+        for the same reason.
+        """
+        try:
+            return self._write(self.output_dir / "llm_usage_partial.json")
+        except Exception as exc:  # noqa: BLE001 - telemetry must not fail a run
+            logger.warning("Could not checkpoint LLM usage: %s", exc)
+            return None
+
     def save_report(self) -> Path:
         """Serializes usage records to a JSON file in the assets directory."""
-        self.output_dir.mkdir(parents=True, exist_ok=True)
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filepath = self.output_dir / f"llm_usage_{timestamp}.json"
-
-        temporary = filepath.with_suffix(filepath.suffix + ".tmp")
-        payload = self._scrubbed(asdict(self.totals))
-        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        temporary.replace(filepath)
+        filepath = self._write(self.output_dir / f"llm_usage_{timestamp}.json")
         logger.info("LLM usage telemetry successfully saved to %s", filepath)
         return filepath

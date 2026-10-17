@@ -12,6 +12,9 @@ from ronin.utils.subprocess_runner import run_command, SubprocessRunError
 
 logger = logging.getLogger(__name__)
 
+SCREENRECORD_DIR = "/sdcard"
+"""Where the screenrecord binary writes, and what the sweep looks through."""
+
 MEDIA_PROJECTION_DIR = "/sdcard/Android/data/io.appium.settings/files"
 """Where the Appium Settings helper keeps a Media Projection recording.
 
@@ -55,6 +58,30 @@ class DeviceFiles:
         return True
 
     @staticmethod
+    def stop_screenrecord(serial: str, remote_path: str) -> None:
+        """Interrupts the recorder writing one file, and no other.
+
+        screenrecord writes the index that makes an MP4 playable only when it
+        stops. A file taken from a recorder that is still running has no
+        index, and no player will open it.
+
+        Matched on the file being written, because a device can be recording
+        more than once. A bare name would reach another run's recorder, or a
+        recording a person started, and stop that instead.
+        """
+        try:
+            run_command(
+                [
+                    "adb", "-s", serial, "shell",
+                    "pkill", "-INT", "-f", f"screenrecord.*{remote_path}",
+                ],
+                timeout=20,
+                log_command=False,
+            )
+        except SubprocessRunError as exc:
+            logger.debug("Could not interrupt screenrecord on %s: %s", serial, exc)
+
+    @staticmethod
     def list_directory(serial: str, remote_dir: str) -> list[str]:
         """Names of the entries in a device directory, empty when adb cannot answer."""
         try:
@@ -81,9 +108,9 @@ class DeviceFiles:
         anything a person put on the device.
         """
         removed = 0
-        for name in DeviceFiles.list_directory(serial, "/sdcard/"):
+        for name in DeviceFiles.list_directory(serial, SCREENRECORD_DIR):
             if STALE_RECORDING.fullmatch(name):
-                DeviceFiles.remove_file(serial, f"/sdcard/{name}")
+                DeviceFiles.remove_file(serial, f"{SCREENRECORD_DIR}/{name}")
                 removed += 1
         for name in DeviceFiles.list_directory(serial, MEDIA_PROJECTION_DIR):
             if RONIN_RECORDING.fullmatch(name):

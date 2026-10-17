@@ -272,6 +272,13 @@ class RoninTestRunner:
                     session,
                     artifact_scrubber,
                 )
+                usage_tracker.checkpoint()
+                try:
+                    session.checkpoint_recording()
+                except Exception as record_err:
+                    logger.warning(
+                        "Failed to save the scenario recording: %s", record_err
+                    )
 
         except BaseException as e:
             safe_error = artifact_scrubber.scrub(str(e)) or type(e).__name__

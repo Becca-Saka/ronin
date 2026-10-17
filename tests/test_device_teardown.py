@@ -19,7 +19,7 @@ class StaleRecordingSweepTests(unittest.TestCase):
 
     def _sweep(self, sdcard, helper_dir):
         listings = {
-            "/sdcard/": sdcard,
+            "/sdcard": sdcard,
             "/sdcard/Android/data/io.appium.settings/files": helper_dir,
         }
         with (
@@ -141,10 +141,7 @@ class UninstallPolicyTests(unittest.TestCase):
         return session
 
     def _clean(self, session, final=True):
-        with (
-            patch.object(DeviceSession, "discard_device_recordings"),
-            patch.object(AdbControl, "uninstall_app") as uninstall,
-        ):
+        with patch.object(AdbControl, "uninstall_app") as uninstall:
             session._clean_device(final=final)
         return uninstall
 
@@ -157,17 +154,6 @@ class UninstallPolicyTests(unittest.TestCase):
         uninstall = self._clean(self._session(), final=False)
 
         uninstall.assert_not_called()
-
-    def test_recovery_still_clears_recordings(self):
-        """The dead session's video is saved by then, and its file remains."""
-        session = self._session()
-        with (
-            patch.object(DeviceSession, "discard_device_recordings") as discard,
-            patch.object(AdbControl, "uninstall_app"),
-        ):
-            session._clean_device(final=False)
-
-        discard.assert_called_once()
 
     def test_an_app_this_run_installed_is_removed(self):
         uninstall = self._clean(self._session())
@@ -211,31 +197,29 @@ class UninstallPolicyTests(unittest.TestCase):
 
     def test_an_ios_session_is_left_to_simctl(self):
         """adb cannot reach a simulator."""
-        session = self._session(platform=Platform.IOS)
-
-        with (
-            patch.object(DeviceSession, "discard_device_recordings") as discard,
-            patch.object(AdbControl, "uninstall_app") as uninstall,
-        ):
-            session._clean_device(final=True)
+        uninstall = self._clean(self._session(platform=Platform.IOS))
 
         uninstall.assert_not_called()
-        discard.assert_not_called()
 
-    def test_recordings_are_cleared_before_the_app_goes(self):
-        """Uninstalling first would take the app's directory with it."""
+    def test_the_video_is_saved_before_the_app_goes(self):
+        """Saving is what takes the video off the device.
+
+        Uninstalling first would take the recorder's directory with it, and
+        the video with that.
+        """
         order = []
-        session = self._session()
+        session = self._session(_owns_appium=False)
+        session.device_control.quit = lambda: None
         with (
             patch.object(
                 DeviceSession,
-                "discard_device_recordings",
-                side_effect=lambda: order.append("recordings"),
+                "save_recording",
+                side_effect=lambda: order.append("recording"),
             ),
             patch.object(
                 AdbControl, "uninstall_app", side_effect=lambda *_: order.append("app")
             ),
         ):
-            session._clean_device(final=True)
+            session.close(final=True)
 
-        self.assertEqual(order, ["recordings", "app"])
+        self.assertEqual(order, ["recording", "app"])

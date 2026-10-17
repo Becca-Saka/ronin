@@ -196,24 +196,18 @@ class DeviceSession(DeviceRecording):
             )
         time.sleep(6)
         if self.record_session:
+            self.discard_stale_recordings()
             self.start_recording()
         return self.device_control
 
     def _clean_device(self, final: bool) -> None:
-        """Removes what this run left on the device, once its artifacts are saved.
+        """Removes the app this run installed, once its artifacts are saved.
 
-        A journey leaves behind the app it installed and whatever the recorder
-        wrote. Across a rotation of apps that fills the device, and a full
-        device fails runs for reasons that look nothing like storage.
-
-        Runs after the recording has been copied to the host, and before the
-        driver goes away, because the sessions most worth cleaning up after
-        are the ones whose driver is already gone.
+        Videos are not swept here. Saving one removes it from the device, and
+        one that could not be saved is the only copy there is. What earlier
+        runs abandoned is cleared at the next session's start instead.
         """
-        if self.platform != Platform.ANDROID:
-            return
-        self.discard_device_recordings()
-        if not final:
+        if self.platform != Platform.ANDROID or not final:
             return
         serial = (self.device_control.serial if self.device_control else None) or (
             AdbControl.resolve_emulator_serial(self.device_name)
