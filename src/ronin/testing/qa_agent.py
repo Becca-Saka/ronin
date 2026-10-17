@@ -109,20 +109,17 @@ class QAAgent:
         assets_dir: Path = Path("assets"),
         max_steps: int = 40,
         settle_time: float = 2.0,
-        use_multimodal_vision: bool = False,
         headless: bool = True,
         fast_model: str = None,
         replay_ledger: Optional[ReplayLedger] = None,
         grounding: str = GROUNDING_COORDINATES,
     ):
-        self._use_multimodal_vision = use_multimodal_vision
         self._grounding = grounding
 
         self._device_agent = DeviceAgent(
             model=model,
             max_steps=max_steps,
             settle_time=settle_time,
-            use_multimodal_vision=use_multimodal_vision,
             fast_model=fast_model,
             replay_ledger=replay_ledger,
             grounding=grounding,
@@ -229,7 +226,6 @@ class QAAgent:
 
         qa_planner = QAPlanner(
             llm_client=self._fast_llm,
-            use_multimodal_vision=self._use_multimodal_vision,
             test_case=test_case,
             security_rules=security_rules,
             scrubber=self._device_agent.scrubber,

@@ -26,12 +26,6 @@ def add_device_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-steps", type=int, help="Max steps per run")
     parser.add_argument("--settle-time", type=float, help="Seconds to wait after each action")
     parser.add_argument(
-        "--use-multimodal-vision",
-        action="store_true",
-        default=None,
-        help="Allow the LLM to override detected coordinates",
-    )
-    parser.add_argument(
         "--headless", action="store_true", default=None, help="Run the emulator headlessly"
     )
 
@@ -88,7 +82,6 @@ def run(args: argparse.Namespace, config: Config) -> int:
         fast_model=fast_model,
         max_steps=config.resolve("max_steps", args.max_steps),
         settle_time=config.resolve("settle_time", args.settle_time),
-        use_multimodal_vision=config.resolve("use_multimodal_vision", args.use_multimodal_vision),
         # A single goal is done when it is done; journeys keep auditing past it.
         stop_when_satisfied=True,
     )

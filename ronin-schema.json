@@ -356,18 +356,6 @@
           "description": "Another spelling of 'record'.",
           "title": "Record Session"
         },
-        "use_multimodal_vision": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Use Multimodal Vision"
-        },
         "env": {
           "additionalProperties": {
             "anyOf": [
@@ -672,18 +660,6 @@
       "default": null,
       "description": "Another spelling of 'record'.",
       "title": "Record Session"
-    },
-    "use_multimodal_vision": {
-      "anyOf": [
-        {
-          "type": "boolean"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Use Multimodal Vision"
     },
     "env": {
       "additionalProperties": {

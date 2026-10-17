@@ -53,7 +53,6 @@ class PlannerAgreementTests(unittest.TestCase):
         from ronin.testing.qa_planner import QAPlanner
 
         planner = QAPlanner.__new__(QAPlanner)
-        planner.use_multimodal_vision = False
         planner._test_case = SimpleNamespace(expected_outcomes=["Order confirmed"], setup=SetupMode.CLEAR_DATA)
         planner._security_rules = ["Card is masked"]
         return planner._build_qa_prompt(
@@ -69,7 +68,6 @@ class PlannerAgreementTests(unittest.TestCase):
         from ronin.agent.plan.planner import DevicePlanner
 
         planner = DevicePlanner.__new__(DevicePlanner)
-        planner.use_multimodal_vision = False
         return planner._build_prompt(
             goal_lines=["Sign in"],
             gui_elements=None,

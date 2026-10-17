@@ -68,7 +68,6 @@ class DeviceAgent:
         model: str = "openrouter/google/gemini-2.5-flash",
         max_steps: int = 40,
         settle_time: float = 2.0,
-        use_multimodal_vision: bool = False,
         fast_model: str = None,
         planner: Optional[DevicePlanner] = None,
         stop_when_satisfied: bool = False,
@@ -77,7 +76,6 @@ class DeviceAgent:
     ):
         self.max_steps = max_steps
         self.settle_time = settle_time
-        self.use_multimodal_vision = use_multimodal_vision
         self.grounding = grounding
         self.stop_when_satisfied = stop_when_satisfied
         self.replay_ledger = replay_ledger
@@ -95,10 +93,10 @@ class DeviceAgent:
             self._default_fast_planner = planner
         else:
             self._default_planner = DevicePlanner(
-                self.llm, use_multimodal_vision, grounding
+                self.llm, grounding
             )
             self._default_fast_planner = DevicePlanner(
-                self.fast_llm, use_multimodal_vision, grounding
+                self.fast_llm, grounding
             )
 
         self.images = RedactedImages(self.scrubber)

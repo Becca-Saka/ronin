@@ -276,7 +276,6 @@ class ScenarioIsolationTests(unittest.TestCase):
         from ronin.testing.qa_agent import QAAgent
 
         agent = QAAgent.__new__(QAAgent)
-        agent._use_multimodal_vision = False
         agent._fast_llm = object()
         agent._device_agent = SimpleNamespace(
             max_steps=40,

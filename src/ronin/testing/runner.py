@@ -84,7 +84,6 @@ class RoninTestRunner:
         reuse_app: bool = False,
         keep_app: bool = False,
         settle_time: float = 2.0,
-        use_multimodal_vision: bool = False,
         headless: bool = True,
         fast_model: str = None,
         record_session: bool = True,
@@ -101,7 +100,6 @@ class RoninTestRunner:
         self.max_steps = max_steps
         self.replay = replay
         self.settle_time = settle_time
-        self.use_multimodal_vision = use_multimodal_vision
         self.headless = headless
         self.fast_model = fast_model
         self.record_session = record_session
@@ -139,7 +137,6 @@ class RoninTestRunner:
             assets_dir=self.assets_dir,
             max_steps=self.max_steps,
             settle_time=self.settle_time,
-            use_multimodal_vision=self.use_multimodal_vision,
             headless=self.headless,
             fast_model=self.fast_model,
             replay_ledger=ReplayLedger() if self.replay else None,

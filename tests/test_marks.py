@@ -86,7 +86,6 @@ class MarkTests(unittest.TestCase):
 
         planner = DevicePlanner.__new__(DevicePlanner)
         planner.grounding = GROUNDING_MARKS
-        planner.use_multimodal_vision = False
 
         vocabulary = planner._action_vocabulary()
 

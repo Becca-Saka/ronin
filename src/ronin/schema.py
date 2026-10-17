@@ -76,7 +76,6 @@ class Settings(Strict):
     record_session: Optional[bool] = Field(
         default=None, description="Another spelling of 'record'."
     )
-    use_multimodal_vision: Optional[bool] = None
 
 
 class JourneySpec(Strict):

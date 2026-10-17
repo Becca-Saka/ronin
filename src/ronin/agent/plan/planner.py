@@ -38,11 +38,9 @@ class DevicePlanner:
     def __init__(
         self,
         llm_client: LLMClient,
-        use_multimodal_vision: bool = False,
         grounding: str = GROUNDING_COORDINATES,
     ):
         self.llm = llm_client
-        self.use_multimodal_vision = use_multimodal_vision
         # "marks" offers numbered elements and no coordinates, so a target the
         # planner cannot find becomes a refusal rather than an invented point.
         self.grounding = grounding
@@ -160,7 +158,7 @@ CRITICAL CONSTRAINTS:
 4. The soft keyboard blocks taps on anything behind it. If your next target is a button or control in the lower half of the screen (e.g. Login, Submit), dismiss the keyboard first with key_event 4 — on Android, back dismisses the soft keyboard without leaving the app. After dismissal, use the fresh element list for coordinates.
 5. Do NOT repeat an action that appears in your history unless the system outcome or your self-assessment shows it failed or was undone. Inability to visually confirm a result is NOT evidence of failure.
 6. When the keyboard is visible and you need to TYPE into a field, use text_field/input elements from the CURRENT scan in the upper portion of the screen (above the keyboard). Ignore bottom-portion detections — those are keyboard keys.
-7. You MUST use center coordinates from the Current UI Elements list. If a target you need is missing because the keyboard obscures it, do not guess coordinates from older screenshots — dismiss the keyboard (rule 4) and plan from the next scan. Older screenshots in the message are context only; they are not a coordinate source unless multimodal override is enabled.
+7. You MUST use center coordinates from the Current UI Elements list. If a target you need is missing because the keyboard obscures it, do not guess coordinates from older screenshots — dismiss the keyboard (rule 4) and plan from the next scan. Older screenshots in the message are context only. They are not a coordinate source.
 8. After any event that changes the layout — keyboard opening or closing, navigation, a modal, a scroll — treat the next element list as a new layout and re-read every coordinate from it.
 9. When a step asks for a number of taps, send one tap action with `count` set to that number. Never count taps yourself across several steps: the screen may not show how many have landed.
 """

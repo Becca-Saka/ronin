@@ -66,13 +66,12 @@ class QAPlanner(DevicePlanner):
     def __init__(
         self,
         llm_client: LLMClient,
-        use_multimodal_vision: bool,
         test_case,
         security_rules: List[str] = None,
         scrubber=None,
         grounding: str = GROUNDING_COORDINATES,
     ):
-        super().__init__(llm_client, use_multimodal_vision, grounding)
+        super().__init__(llm_client, grounding)
         self._test_case = test_case
         from ronin.utils.secrets import SecretScrubber
 

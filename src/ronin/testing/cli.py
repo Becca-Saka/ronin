@@ -44,7 +44,6 @@ class RoninCLI:
         parser.add_argument("--settle-time", type=float, help="Settle time after actions")
         parser.add_argument("--model", help="LiteLLM model to use")
         parser.add_argument("--fast-model", help="Cheaper/faster LiteLLM model for ReAct step planning")
-        parser.add_argument("--use-multimodal-vision", action="store_true", default=None, help="Toggle LLM coordinate overrides")
         parser.add_argument("--headless", action="store_true", default=None, help="Run android emulator headlessly")
         parser.add_argument(
             "--grounding",
@@ -138,9 +137,6 @@ class RoninCLI:
             assets_dir=Path(setting("output_dir", args.output_dir)),
             max_steps=int(setting("max_steps", args.max_steps)),
             settle_time=float(setting("settle_time", args.settle_time)),
-            use_multimodal_vision=_as_bool(
-                setting("use_multimodal_vision", args.use_multimodal_vision)
-            ),
             headless=_as_bool(setting("headless", args.headless)),
             fast_model=setting("fast_model", args.fast_model),
             record_session=(

@@ -70,7 +70,6 @@ BUILT_IN: dict[str, Any] = {
     "max_steps": DEFAULT_MAX_STEPS,
     "settle_time": DEFAULT_SETTLE_TIME,
     "headless": False,
-    "use_multimodal_vision": False,
     "grounding": DEFAULT_GROUNDING,
     "record": DEFAULT_RECORD,
 }
