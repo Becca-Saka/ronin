@@ -223,41 +223,59 @@ class DeviceControl:
 
 
 
+    def __focus_field(self, x, y, action: str) -> None:
+        """Puts the cursor in the field at (x, y), or refuses the action.
+
+        A field that is already focused at that point is left alone. Tapping
+        it again would open the keyboard, which scrolls the form away from the
+        very point that named the field.
+
+        When it does tap, it reads the keyboard on either side. A keyboard
+        that was closed and is now open is the form moving, so the point stops
+        being evidence of where the field is.
+        """
+        focus = self.focus
+        before = focus.rect()
+        if focus.contains(x, y):
+            focus.assert_at(x, y, action, before=before)
+            return
+        keyboard = self.is_keyboard_open()
+        self.tap(x, y)
+        focus.wait_for(x, y, before=before)
+        focus.assert_at(
+            x,
+            y,
+            action,
+            before=before,
+            layout_moved=keyboard is False and self.is_keyboard_open() is True,
+        )
+
     def type(self, text, x, y):
         if self.platform == Platform.IOS:
             self.tap(x, y)
             time.sleep(1.0)
             self.execute_script("mobile: type", {"text": text})
         else:
-            # The planner focuses a field in the preceding step. Avoid tapping it
-            # again after the keyboard has reflowed the layout when it is already
-            # the active element at the current coordinates.
-            before = self.focus.rect()
-            if not self.focus.contains(x, y):
-                self.tap(x, y)
-                self.focus.wait_for(x, y)
-            self.focus.assert_at(x, y, "TYPE", before=before)
+            self.__focus_field(x, y, "TYPE")
             self.driver.switch_to.active_element.send_keys(text)
 
     def clear(self, x, y):
         try:
-            before = self.focus.rect()
-            self.tap(x, y)
-            self.focus.wait_for(x, y)
-            if self.platform != Platform.IOS:
-                self.focus.assert_at(x, y, "CLEAR", before=before)
             if self.platform == Platform.IOS:
+                self.tap(x, y)
+                self.focus.wait_for(x, y)
                 self.driver.switch_to.active_element.clear()
-            else:
-                try:
-                    # Select All (Ctrl+A) and then Delete (Backspace) to ensure the field is completely cleared
-                    self.driver.press_keycode(29, metastate=28672)
-                    time.sleep(0.2)
-                    self.driver.press_keycode(67)
-                    time.sleep(0.2)
-                except Exception as e:
-                    logger.warning("Failed Ctrl+A clear on Android: %s. Trying fallback.", e)
-                    self.driver.switch_to.active_element.clear()
+                return
+            self.__focus_field(x, y, "CLEAR")
+            try:
+                # Select All (Ctrl+A) and then Delete (Backspace) to ensure the field is completely cleared
+                self.driver.press_keycode(29, metastate=28672)
+                time.sleep(0.2)
+                self.driver.press_keycode(67)
+                time.sleep(0.2)
+            except Exception as e:
+                logger.warning("Failed Ctrl+A clear on Android: %s. Trying fallback.", e)
+                self.driver.switch_to.active_element.clear()
         except Exception as e:
             logger.error("Failed to clear text field at (%s, %s): %s", x, y, e)
             raise
