@@ -15,7 +15,9 @@ from pydantic import Field
 
 from ronin.agent.plan.planner import (
     GROUNDING_COORDINATES,
+    GROUNDING_DESCRIBE,
     GROUNDING_MARKS,
+    DescribeDeviceAction,
     DevicePlanner,
     DeviceStepResponse,
     MarksDeviceAction,
@@ -57,6 +59,14 @@ class MarksQAStepResponse(QAStepResponse):
     )
 
 
+class DescribeQAStepResponse(QAStepResponse):
+    """The QA step response used in describe mode, where targets are named in words."""
+
+    action: DescribeDeviceAction = Field(
+        ..., description="The single next action, naming its target in words."
+    )
+
+
 class QAPlanner(DevicePlanner):
     """
     Planning + QA audit in one LLM call.
@@ -80,7 +90,13 @@ class QAPlanner(DevicePlanner):
         self._security_rules = security_rules or []
 
     def step_response_model(self):
-        """The QA schema the model answers in, matched to the grounding mode."""
+        """The QA schema the model answers in, matched to the grounding mode.
+
+        Every mode needs its own, because the QA fields sit on top of an action
+        whose target the mode decides.
+        """
+        if self.grounding == GROUNDING_DESCRIBE:
+            return DescribeQAStepResponse
         if self.grounding == GROUNDING_MARKS:
             return MarksQAStepResponse
         return QAStepResponse

@@ -45,9 +45,12 @@ def capture(
     current_phash = (
         str(perception.current_hash) if perception.current_hash else None
     )
-    logger.info(
-        "Perceived %d elements. pHash: %s", len(gui_elements), current_phash
-    )
+    # Describe mode detects nothing, so a count of what was detected says
+    # only which mode is running.
+    if gui_elements:
+        logger.info("Perceived %d elements. pHash: %s", len(gui_elements), current_phash)
+    else:
+        logger.info("Read the screen. pHash: %s", current_phash)
 
     if session_trail and current_phash:
         if prev_phash and current_phash != prev_phash:

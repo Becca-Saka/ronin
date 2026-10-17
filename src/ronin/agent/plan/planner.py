@@ -12,6 +12,7 @@ from ronin.agent.actuation.actions import (
     CapabilityType,
 )
 from ronin.agent.plan.schema import (  # noqa: F401 - re-exported for callers
+    DescribeDeviceAction,
     DescribeStepResponse,
     DeviceAction,
     DeviceStepResponse,

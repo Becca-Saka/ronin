@@ -280,3 +280,55 @@ def _blank_png() -> bytes:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlannerSchemaTests(unittest.TestCase):
+    """Every grounding mode needs its own schema in both planners.
+
+    QAPlanner overrides step_response_model, so a mode added to DevicePlanner
+    alone leaves QA answering with the wrong kind of target.
+    """
+
+    def _models(self, planner_class):
+        from ronin.agent.grounding import (
+            GROUNDING_COORDINATES,
+            GROUNDING_DESCRIBE,
+            GROUNDING_MARKS,
+        )
+
+        planner = planner_class.__new__(planner_class)
+        answered = {}
+        for mode in (GROUNDING_COORDINATES, GROUNDING_MARKS, GROUNDING_DESCRIBE):
+            planner.grounding = mode
+            answered[mode] = planner.step_response_model()
+        return answered
+
+    def _target_field(self, model):
+        """What the action in this schema names its target with."""
+        schema = model.model_json_schema()
+        fields = set()
+        for definition in schema.get("$defs", {}).values():
+            properties = definition.get("properties", {})
+            if properties.get("type", {}).get("const") == "tap":
+                fields |= set(properties) - {"type", "reason", "count", "interval_ms"}
+        return fields
+
+    def test_each_mode_names_its_target_its_own_way(self):
+        from ronin.agent.plan.planner import DevicePlanner
+        from ronin.testing.qa_planner import QAPlanner
+
+        for planner_class in (DevicePlanner, QAPlanner):
+            answered = self._models(planner_class)
+            self.assertEqual(self._target_field(answered["coordinates"]), {"coordinates"})
+            self.assertEqual(self._target_field(answered["marks"]), {"mark"})
+            self.assertEqual(self._target_field(answered["describe"]), {"target"})
+
+    def test_the_two_planners_never_share_a_schema(self):
+        from ronin.agent.plan.planner import DevicePlanner
+        from ronin.testing.qa_planner import QAPlanner
+
+        device = self._models(DevicePlanner)
+        qa = self._models(QAPlanner)
+        for mode in device:
+            self.assertIsNot(device[mode], qa[mode], f"{mode} shares a schema")
+            self.assertIn("is_scenario_feasible", qa[mode].model_fields)
