@@ -88,6 +88,22 @@ def record(response, model: str, attempt: int) -> CallRecord:
     )
 
 
+def _request_id(response) -> str:
+    """The id the decision service gave this call, or nothing when it gave none.
+
+    Asked for by its own name, because a decision response carries no `id` and
+    reading one stored a blank for every call. It is the only handle on a
+    single call, so it is what a question to the vendor has to quote.
+
+    Guarded because the SDK raises when the header is absent, and telemetry
+    must not be the thing that ends a grounding call.
+    """
+    try:
+        return response.request_id or ""
+    except Exception:  # noqa: BLE001 - vendor boundary
+        return ""
+
+
 def record_decision(
     response, model: str, latency_ms: float, cost: Optional[float]
 ) -> CallRecord:
@@ -104,7 +120,7 @@ def record_decision(
     return CallRecord(
         model=model,
         served_model=getattr(response, "model", model),
-        generation_id=getattr(response, "id", "") or "",
+        generation_id=_request_id(response),
         attempt=1,
         finish_reason="",
         latency_ms=latency_ms,

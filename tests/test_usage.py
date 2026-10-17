@@ -132,3 +132,45 @@ class UsageTotalsTests(unittest.TestCase):
 
         for name in ("total_calls", "total_estimated_cost_usd", "components"):
             self.assertIn(name, written)
+
+
+class DecisionRecordTests(unittest.TestCase):
+    """A decision call reports less than a completion, and names itself differently."""
+
+    def _response(self, request_id="req_01a1", raises=False):
+        from types import SimpleNamespace
+
+        class Response(SimpleNamespace):
+            @property
+            def request_id(self):
+                if raises:
+                    raise RuntimeError("The response did not include a request ID.")
+                return request_id
+
+        return Response(
+            model="jev-1.14.0",
+            usage=SimpleNamespace(input_tokens=3216, output_tokens=36),
+        )
+
+    def _record(self, response):
+        from ronin.llm.usage import record_decision
+
+        return record_decision(response, "typesafe/jev-1.14.0", 264.0, 0.000135)
+
+    def test_the_call_is_named_by_the_id_the_service_gave_it(self):
+        """A decision response carries no `id`, so reading one stored a blank."""
+        self.assertEqual(self._record(self._response()).generation_id, "req_01a1")
+
+    def test_a_response_that_names_no_call_is_still_recorded(self):
+        """The SDK raises when the header is absent, and usage must not raise."""
+        record = self._record(self._response(raises=True))
+
+        self.assertEqual(record.generation_id, "")
+        self.assertEqual(record.total_tokens, 3252)
+
+    def test_the_tokens_a_decision_reports_are_what_is_counted(self):
+        record = self._record(self._response())
+
+        self.assertEqual(record.prompt_tokens, 3216)
+        self.assertEqual(record.completion_tokens, 36)
+        self.assertEqual(record.total_tokens, 3252)
