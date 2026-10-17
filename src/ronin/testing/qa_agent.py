@@ -41,6 +41,7 @@ from ronin.testing.verdicts import (
 )
 from ronin.testing.qa_auditor import Assessment, QAAuditor, ScreenWatch
 from ronin.testing.qa_planner import QAPlanner, QAStepResponse
+from ronin.testing import transitions
 
 from ronin.agent.actuation.actions import WaitAction
 
@@ -316,6 +317,10 @@ class QAAgent:
                     assessment.screen_name, issue.description,
                 )
 
+        all_verifications.extend(
+            self._settled_transitions(test_case, assessments)
+        )
+
         status, failure_reason = self._determine_status(
             run_result=run_result,
             stop_reason=stop_reason,
@@ -338,6 +343,30 @@ class QAAgent:
             detected_issues=all_issues,
             failure_reason=scrub(failure_reason or "") or None,
         )
+
+    def _settled_transitions(
+        self, test_case: GeneratedTestCase, assessments: List[Assessment]
+    ) -> List[RuleVerification]:
+        """Evidence for the outcomes no single screenshot could carry.
+
+        The gate requires every expected outcome, and the auditor is never
+        shown the ones about reaching a screen. Without this they are demanded
+        and unanswerable, and a scenario that did everything asked of it
+        reports missing evidence.
+
+        A failure here leaves them unevidenced, which is the honest answer:
+        the judgement did not happen, so nothing was judged.
+        """
+        try:
+            return transitions.settle(
+                self._fast_llm,
+                test_case.expected_outcomes,
+                assessments,
+                scrubber=self._device_agent.scrubber,
+            )
+        except Exception as exc:  # noqa: BLE001 - model boundary
+            logger.warning("Could not judge the transitions of this scenario: %s", exc)
+            return []
 
     def _determine_status(
         self,

@@ -172,14 +172,35 @@ class QAIssue(BaseModel):
 
 class RuleVerification(BaseModel):
     """Represents the status of verifying a specific journey expectation or custom rule."""
-    rule: str
+    rule: str = Field(
+        ...,
+        description="The words of the rule being answered, as they were listed.",
+    )
     rule_id: Optional[str] = Field(
         default=None,
         description=(
-            "Stable ID supplied in the prompt, such as expected:0 or security:1. "
-            "Dynamic assertions may omit it."
+            "Stable ID supplied in the prompt, such as expected:0 or security:1, "
+            "and nothing else. Dynamic assertions may omit it."
         ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _read_the_id_from_whichever_field_carries_it(cls, value):
+        """Recovers the id when it arrived in `rule` instead of `rule_id`.
+
+        The gate matches a verdict to its rule by id alone, so an id left in
+        the wrong field drops the verdict without a word, and the scenario
+        reports missing evidence for a rule that was answered.
+        """
+        if not isinstance(value, dict) or value.get("rule_id"):
+            return value
+        from ronin.testing import rules
+
+        found = rules.id_in(value.get("rule"))
+        if found:
+            value = {**value, "rule_id": found}
+        return value
     status: Literal["passed", "failed", "untested"]
     applicable: bool = Field(
         default=True,

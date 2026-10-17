@@ -12,7 +12,7 @@ from typing import Optional
 import imagehash
 from PIL import Image
 
-from ronin.agent.perception.elements import GUIElement, ScanInfo
+from ronin.agent.perception.elements import GUIElement, ScanInfo, reason_for
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class BlindPerception:
         width, height = raw.size
         self.last_scan_info = ScanInfo(
             mode="describe",
-            reason="first_pass" if self._prev_hash is None else "screen_read",
+            reason=reason_for(distance),
             phash=str(self.current_hash),
             phash_distance=distance,
             screen_width=width,

@@ -11,13 +11,11 @@ from ronin.agent.perception.detector import (
     OCR_RELEVANT_TYPES,
     ImageDescriptor,
 )
-from ronin.agent.perception.elements import ScanInfo
+from ronin.agent.perception.elements import NAVIGATION_THRESHOLD, ScanInfo
 
 logger = logging.getLogger(__name__)
 
 # --- Tunable thresholds (adjust per device/app after calibration) ---
-# pHash-256 distance above which the screen is treated as a full navigation event.
-NAVIGATION_THRESHOLD = 80
 # Per-element mean absolute pixel error (0–255) above which an element is dirty.
 DIRTY_THRESHOLD = 4.0
 # Minimum IoU to consider two same-class elements the same element across frames.

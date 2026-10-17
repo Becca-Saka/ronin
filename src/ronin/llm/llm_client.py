@@ -5,6 +5,7 @@ Supports standard messaging and structured output via Pydantic schemas.
 
 import json
 import logging
+from typing import TypeVar, overload
 
 import litellm
 from pydantic import BaseModel, ValidationError
@@ -15,6 +16,8 @@ from .messages import Message, TextMessage
 logger = logging.getLogger(__name__)
 
 STRUCTURED_ATTEMPTS = 2
+
+Answer = TypeVar("Answer", bound=BaseModel)
 
 
 class LLMClient:
@@ -30,12 +33,28 @@ class LLMClient:
         self._model = model
         self.usage_callback = usage_callback
 
+    @overload
+    def generate_response(self, messages: list[Message]) -> str: ...
+
+    @overload
+    def generate_response(
+        self, messages: list[Message], response_model: None
+    ) -> str: ...
+
+    @overload
+    def generate_response(
+        self, messages: list[Message], response_model: type[Answer]
+    ) -> Answer: ...
+
     def generate_response(
         self,
         messages: list[Message],
         response_model: type[BaseModel] | None = None,
     ) -> str | BaseModel:
         """Sends a message sequence to the LLM and returns the completion.
+
+        Overloaded so a caller asking for a model is given that model, rather
+        than a union it has to assert its way out of.
 
         Args:
             messages: A list of Message objects (text, image, multipart) to send.

@@ -9,6 +9,35 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+NAVIGATION_THRESHOLD = 80
+"""pHash-256 distance above which a frame is a screen the run just arrived at."""
+
+FIRST_PASS = "first_pass"
+NAVIGATION = "navigation"
+LAYOUT_SHIFT = "layout_shift"
+OCR_REFRESH = "ocr_refresh"
+STABLE = "stable"
+
+ARRIVALS = (FIRST_PASS, NAVIGATION, LAYOUT_SHIFT)
+"""The reasons that mean a pass found a screen the run was not already on.
+
+Kept beside the names rather than copied by each consumer. A consumer holding
+its own list cannot see a producer report a reason the list does not have, and
+the audit that reason was meant to trigger then never runs.
+"""
+
+
+def reason_for(distance: Optional[int]) -> str:
+    """Why a pass happened, as far as one frame and the last one can say.
+
+    Distance alone cannot tell a reflow from a stable screen, so nothing here
+    answers `layout_shift`. That needs the elements, and a mode that detects
+    none has none to compare.
+    """
+    if distance is None:
+        return FIRST_PASS
+    return NAVIGATION if distance >= NAVIGATION_THRESHOLD else STABLE
+
 
 class BoundingBox(BaseModel):
     """A detected element's box in screenshot pixels, top-left origin."""

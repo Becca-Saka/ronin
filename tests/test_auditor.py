@@ -354,3 +354,168 @@ class ScreenWatchTests(unittest.TestCase):
         watch.look(self._snapshot("A", "stable"))
 
         self.assertEqual(watch.look(self._snapshot("A", "stable")), [])
+
+
+class ScanVocabularyTests(unittest.TestCase):
+    """The audit fires on a reason, so the producers have to speak it.
+
+    A mode naming its passes something the trigger does not know is silently
+    never audited, and every outcome then reports as unevidenced.
+    """
+
+    def _perception(self):
+        from ronin.agent.perception.blind import BlindPerception
+
+        return BlindPerception(SimpleNamespace())
+
+    def _frame(self, perception, image):
+        import io
+
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        perception.device_session = SimpleNamespace(
+            device_control=SimpleNamespace(get_screenshot=lambda: buffer.getvalue())
+        )
+        perception.perceive()
+        return perception.last_scan_info.reason
+
+    def _image(self, seed):
+        from PIL import Image
+
+        image = Image.new("RGB", (120, 240), "white")
+        for y in range(0, 240, 8):
+            for x in range(0, 120, 8):
+                shade = (x * seed + y * (seed + 3)) % 256
+                image.putpixel((x, y), (shade, shade, shade))
+        return image
+
+    def test_every_reason_describe_mode_reports_is_one_the_trigger_knows(self):
+        from ronin.agent.perception import elements
+
+        known = {
+            elements.FIRST_PASS,
+            elements.NAVIGATION,
+            elements.LAYOUT_SHIFT,
+            elements.OCR_REFRESH,
+            elements.STABLE,
+        }
+        perception = self._perception()
+
+        reasons = {
+            self._frame(perception, self._image(seed)) for seed in (1, 1, 29, 29)
+        }
+
+        self.assertTrue(reasons <= known, f"unknown reasons: {reasons - known}")
+
+    def test_the_first_look_is_an_arrival(self):
+        from ronin.agent.perception import elements
+
+        reason = self._frame(self._perception(), self._image(1))
+
+        self.assertEqual(reason, elements.FIRST_PASS)
+        self.assertIn(reason, elements.ARRIVALS)
+
+    def test_the_same_screen_twice_is_not_an_arrival(self):
+        from ronin.agent.perception import elements
+
+        perception = self._perception()
+        self._frame(perception, self._image(1))
+
+        reason = self._frame(perception, self._image(1))
+
+        self.assertEqual(reason, elements.STABLE)
+        self.assertNotIn(reason, elements.ARRIVALS)
+
+    def test_a_distance_past_the_threshold_is_an_arrival(self):
+        from ronin.agent.perception import elements
+
+        self.assertEqual(
+            elements.reason_for(elements.NAVIGATION_THRESHOLD), elements.NAVIGATION
+        )
+        self.assertIn(elements.NAVIGATION, elements.ARRIVALS)
+        self.assertEqual(
+            elements.reason_for(elements.NAVIGATION_THRESHOLD - 1), elements.STABLE
+        )
+
+    def test_each_describe_mode_arrival_is_audited(self):
+        """One audit per screen arrived at, which is what marks mode gets."""
+        from ronin.agent.perception import elements
+        from ronin.testing.qa_auditor import ScreenWatch
+
+        audited = []
+        watch = ScreenWatch(
+            SimpleNamespace(audit=lambda png, sid: audited.append(sid) or _assessment())
+        )
+
+        watch.look(
+            SimpleNamespace(
+                raw_img_bytes=b"png",
+                current_phash="A",
+                scan_info=SimpleNamespace(reason=elements.FIRST_PASS),
+            )
+        )
+        watch.look(
+            SimpleNamespace(
+                raw_img_bytes=b"png",
+                current_phash="B",
+                scan_info=SimpleNamespace(reason=elements.NAVIGATION),
+            )
+        )
+
+        self.assertEqual(audited, ["A", "B"])
+
+
+class AnsweredRulesOnlyTests(unittest.TestCase):
+    """The auditor may answer the rules it was shown, and no others.
+
+    A verdict naming an unlisted rule would settle an outcome nothing looked
+    at, or fail the scenario on a security rule never put to it.
+    """
+
+    def _audited(self, *verdicts, expected=None, security=None):
+        from ronin.testing.models import RuleVerification
+        from ronin.testing.qa_auditor import QAAuditor
+
+        answer = _assessment(
+            rule_verifications=[
+                RuleVerification(rule=rid or "a rule", rule_id=rid, status=status, reasoning="r")
+                for rid, status in verdicts
+            ]
+        )
+        llm = SimpleNamespace(generate_response=Mock(return_value=answer))
+        auditor = QAAuditor(
+            llm,
+            expected if expected is not None else ["Order confirmed"],
+            security if security is not None else ["Card masked"],
+        )
+        return auditor.audit(b"png", screen_id="abc").rule_verifications
+
+    def test_the_rules_it_was_shown_are_kept(self):
+        kept = self._audited(("expected:0", "passed"), ("security:0", "passed"))
+
+        self.assertEqual([v.rule_id for v in kept], ["expected:0", "security:0"])
+
+    def test_an_outcome_it_was_not_shown_is_dropped(self):
+        """A transition outcome is blanked before the prompt, so it is not its to answer."""
+        from ronin.testing.models import AssertionScope, ExpectedOutcome
+
+        kept = self._audited(
+            ("expected:0", "passed"),
+            expected=[
+                ExpectedOutcome(statement="Login reaches Home", scope=AssertionScope.TRANSITION)
+            ],
+        )
+
+        self.assertEqual(kept, [])
+
+    def test_a_security_rule_that_does_not_exist_is_dropped(self):
+        kept = self._audited(("security:4", "failed"), security=["Card masked"])
+
+        self.assertEqual(kept, [])
+
+    def test_a_rule_it_raised_itself_is_kept(self):
+        """Dynamic assertions carry no id, and settle nothing either way."""
+        kept = self._audited((None, "failed"))
+
+        self.assertEqual(len(kept), 1)
+        self.assertIsNone(kept[0].rule_id)

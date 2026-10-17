@@ -21,6 +21,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from ronin.agent.perception import elements
 from ronin.llm.llm_client import LLMClient
 from ronin.llm.messages import MultiPartMessage
 from ronin.testing import rules
@@ -128,7 +129,7 @@ only what this screen shows.
 """
 
 
-ENTERING = ("navigation", "first_pass", "layout_shift")
+ENTERING = elements.ARRIVALS
 """Scan reasons that mean a different screen, rather than the same one working.
 
 A layout shift is fewer than half the previous elements still matching, which
@@ -222,8 +223,10 @@ class QAAuditor:
         self._llm = llm_client
         # Outcomes keep the index they were given, so a verdict still names the
         # rule it answers even though only some of them are asked about.
-        self._rules = rules.every_rule(
-            rules.on_screen_only(expected_outcomes), security_rules
+        on_screen = rules.on_screen_only(expected_outcomes)
+        self._rules = rules.every_rule(on_screen, security_rules)
+        self._asked = rules.listed_ids(on_screen, rules.EXPECTED) | rules.listed_ids(
+            security_rules, rules.SECURITY
         )
         self._scrubber = scrubber
         self._by_screen: dict[str, Assessment] = {}
@@ -250,11 +253,32 @@ class QAAuditor:
 
         logger.info("Auditing the current screen against the rules...")
         assessment: Assessment = self._llm.generate_response([message], Assessment)
+        self._only_what_was_asked(assessment)
         self._clean(assessment)
 
         if screen_id:
             self._by_screen[screen_id] = assessment
         return self._kept(assessment)
+
+    def _only_what_was_asked(self, assessment: Assessment) -> None:
+        """Drops verdicts naming a rule this screen was never shown.
+
+        A verdict carrying an id that was not listed is not evidence about
+        that rule. It would settle an outcome nothing looked at, or fail the
+        scenario on a security rule the auditor was never asked.
+
+        A verdict with no id is kept. The auditor may raise a rule of its own,
+        and one that names nothing settles nothing either way.
+        """
+        kept = [
+            verify
+            for verify in assessment.rule_verifications
+            if verify.rule_id is None or verify.rule_id in self._asked
+        ]
+        dropped = len(assessment.rule_verifications) - len(kept)
+        if dropped:
+            logger.warning("Ignored %d verdict(s) naming a rule that was not listed.", dropped)
+        assessment.rule_verifications = kept
 
     @staticmethod
     def _kept(assessment: Assessment) -> Assessment:

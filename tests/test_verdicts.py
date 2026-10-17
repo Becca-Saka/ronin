@@ -442,3 +442,87 @@ class AbortReportingTests(unittest.TestCase):
 
         self.assertEqual(failed, 1)
         self.assertEqual([r.test_id for r in reports], ["TS_1", "TS_2"])
+
+
+class RuleIdentityTests(unittest.TestCase):
+    """The id names the rule, whichever field the auditor put it in.
+
+    The gate matches a verdict to its rule by id alone, so an id read from
+    nowhere discards an answer the auditor gave.
+    """
+
+    def _verification(self, **fields):
+        from ronin.testing.models import RuleVerification
+
+        return RuleVerification(status="passed", reasoning="because", **fields)
+
+    def test_an_id_in_the_id_field_is_kept(self):
+        answer = self._verification(rule="Order is confirmed", rule_id="expected:3")
+
+        self.assertEqual(answer.rule_id, "expected:3")
+
+    def test_an_id_in_the_rule_field_is_read_from_there(self):
+        """The auditor answers this way more often than not."""
+        answer = self._verification(rule="expected:0")
+
+        self.assertEqual(answer.rule_id, "expected:0")
+
+    def test_the_prompt_line_it_was_read_from_still_names_its_rule(self):
+        """The rules reach the auditor as `- [expected:0] ...` and come back whole."""
+        answer = self._verification(rule="[expected:11] Checkout shows the CVV field")
+
+        self.assertEqual(answer.rule_id, "expected:11")
+
+    def test_a_security_id_is_recovered_the_same_way(self):
+        answer = self._verification(rule="security:2 — the CVV must stay masked")
+
+        self.assertEqual(answer.rule_id, "security:2")
+
+    def test_an_assertion_with_no_id_keeps_none(self):
+        """The auditor may raise a rule of its own, and those have no id."""
+        answer = self._verification(rule="The subtotal adds up")
+
+        self.assertIsNone(answer.rule_id)
+
+    def test_a_number_that_is_not_an_id_is_not_read_as_one(self):
+        answer = self._verification(rule="The cart shows 2 items at 3:15")
+
+        self.assertIsNone(answer.rule_id)
+
+    def test_the_id_field_wins_when_both_carry_one(self):
+        """It is the field the prompt asked for, so it is the deliberate answer."""
+        answer = self._verification(rule="[expected:9] Payment screen", rule_id="expected:9")
+
+        self.assertEqual(answer.rule_id, "expected:9")
+
+
+class EvidenceReachesTheGateTests(unittest.TestCase):
+    """An answered outcome must settle its rule, not report as unevidenced."""
+
+    def _verdict(self, verifications, required):
+        from ronin.testing.qa_agent import QAAgent
+
+        return QAAgent.__new__(QAAgent)._determine_status(
+            run_result=SimpleNamespace(status="goal_reached", failure_reason=None),
+            stop_reason=None,
+            all_verifications=verifications,
+            all_issues=[],
+            qa_outputs=[
+                SimpleNamespace(is_scenario_feasible=True, infeasibility_reason=None)
+            ],
+            assessments=[SimpleNamespace(rule_verifications=[], detected_issues=[])],
+            required_outcomes=required,
+            security_rules=[],
+        )
+
+    def test_an_outcome_answered_in_the_rule_field_passes_the_scenario(self):
+        from ronin.testing.models import RuleVerification
+
+        answered = RuleVerification(
+            rule="expected:0", status="passed", reasoning="The screen shows it"
+        )
+
+        status, reason = self._verdict([answered], ["Sign-in screen is visible"])
+
+        self.assertEqual(status, "PASSED")
+        self.assertIsNone(reason)
