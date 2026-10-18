@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 
 STRUCTURED_ATTEMPTS = 2
 
+# Which provider answers decides whether a structured answer carries content.
+# A response can match the schema and hold nothing. Fallbacks stay off so a
+# route to another provider fails loudly, rather than spending a device on a
+# suite nothing can judge.
+PROVIDER_PREFERENCE = {"order": ["together"], "allow_fallbacks": False}
+
 Answer = TypeVar("Answer", bound=BaseModel)
 
 
@@ -104,7 +110,10 @@ class LLMClient:
         kwargs: dict = {
             "model": self._model,
             "messages": [m.to_dict() for m in messages],
-            "extra_body": {"plugins": [{"id": "response-healing"}]},
+            "extra_body": {
+                "plugins": [{"id": "response-healing"}],
+                "provider": PROVIDER_PREFERENCE,
+            },
         }
         if response_model:
             kwargs["response_format"] = {

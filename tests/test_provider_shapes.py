@@ -114,3 +114,37 @@ class FindingShapeTests(unittest.TestCase):
         """The whole point of the enum survives the renaming."""
         self.assertTrue(self._finding(type="value", location="CVV", quoted="321").is_exposure())
         self.assertFalse(self._finding(type="masked", location="CVV").is_exposure())
+
+
+class ProviderRoutingTests(unittest.TestCase):
+    """Which provider answers decides whether the answer carries content.
+
+    A response can match the schema and hold nothing, so the pin is what keeps
+    a run on a provider that answers with content. A pin that never reaches the
+    request buys nothing, so the request is what these read.
+    """
+
+    def _send(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from ronin.llm.llm_client import LLMClient
+        from ronin.llm.messages import TextMessage
+
+        answer = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))]
+        )
+        with mock.patch("litellm.completion", return_value=answer) as completion:
+            LLMClient(model="openrouter/test/model").generate_response(
+                [TextMessage(content="hi")]
+            )
+        return completion.call_args.kwargs["extra_body"]
+
+    def test_every_call_names_the_provider_it_wants(self):
+        self.assertEqual(self._send()["provider"]["order"], ["together"])
+
+    def test_a_route_elsewhere_fails_rather_than_answering(self):
+        self.assertFalse(self._send()["provider"]["allow_fallbacks"])
+
+    def test_the_pin_does_not_displace_the_healing_plugin(self):
+        self.assertEqual(self._send()["plugins"], [{"id": "response-healing"}])
