@@ -7,6 +7,7 @@ import logging
 import time
 from typing import Optional
 
+from ronin.agent.device.adb_control import AdbControl
 from ronin.agent.device.platform import Platform
 from ronin.utils.subprocess_runner import run_command
 
@@ -124,15 +125,18 @@ class DeviceState:
             logger.debug("Appium is_keyboard_shown() unavailable, using native fallback")
 
         if self.control.platform == Platform.ANDROID:
-            try:
-                serial = self.control.serial or self.control.device_name
-                result = run_command(
-                    ["adb", "-s", serial, "shell", "dumpsys", "input_method"],
-                    capture_output=True, text=True, timeout=3.0,
-                )
-                return "mInputShown=true" in (result.stdout or "")
-            except Exception as e:  # noqa: BLE001 - driver boundary
-                logger.debug("ADB keyboard check failed: %s", e)
+            # `serial` is read at session start, so a control built but not
+            # yet connected has none. This probe must degrade, never raise.
+            serial = getattr(self.control, "serial", None) or getattr(
+                self.control, "device_name", None
+            )
+            shown = (
+                AdbControl.ask(serial, "dumpsys", "input_method", timeout=3.0)
+                if serial
+                else None
+            )
+            if shown is not None:
+                return "mInputShown=true" in shown
 
         elif self.control.platform == Platform.IOS:
             try:

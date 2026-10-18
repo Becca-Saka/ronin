@@ -1,7 +1,7 @@
 from enum import Enum
-from typing import Any, Literal, Annotated
+from typing import Annotated, Any, Literal, get_args, get_origin
 
-from pydantic import BaseModel, Field, create_model, model_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
 
 # --- Basic Building Blocks ---
@@ -38,7 +38,14 @@ class ActionType(str, Enum):
     TARGET_NOT_LISTED = "target_not_listed"
 
 
-class CapabilityType(str, Enum):
+class CapabilityKind(str, Enum):
+    """The device states a scenario can ask for.
+
+    The value is the discriminator of the matching model below, so adding a
+    capability means adding a model and a member, and the planner vocabulary
+    and the dispatch both follow from the union.
+    """
+
     LOCATION = "location"
     NETWORK = "network"
     BATTERY = "battery"
@@ -54,23 +61,158 @@ class CapabilityType(str, Enum):
     ACCESSIBILITY = "accessibility"
 
 
-CAPABILITY_SCHEMAS = {
-    CapabilityType.LOCATION: "{'latitude': float, 'longitude': float}",
-    CapabilityType.NETWORK: "{'mode': 'offline' | 'online' | 'wifi_only' | 'data_only' | 'airplane'}",
-    CapabilityType.BATTERY: "{'level': int, 'charging': bool}",
-    CapabilityType.TIMEZONE: "{'timezone': str (e.g., 'America/New_York')}",
-    CapabilityType.LOCALE: "{'language': str (e.g., 'fr'), 'country': str (e.g., 'FR')}",
-    CapabilityType.PERMISSION: "{'permission': 'camera' | 'location' | 'notifications' | 'photos' | 'contacts', 'grant': bool}",
-    CapabilityType.INTERRUPT: "{'type': 'low_memory' | 'incoming_call', 'phone': str}",
-    CapabilityType.CLIPBOARD: "{'text': str}",
-    CapabilityType.BIOMETRIC: "{'action': 'match' | 'unmatch' | 'enroll', 'finger_id': int}",
-    CapabilityType.DEEPLINK: "{'url': str}",
-    CapabilityType.APP_STATE: "{'action': 'clear_data' | 'force_stop'}",
-    CapabilityType.MEDIA_INJECT: "{'local_path': str}",
-    CapabilityType.ACCESSIBILITY: "{'enabled': bool}"
+class CapabilityModel(BaseModel):
+    """A capability, which takes the fields it declares and no others.
+
+    Extra fields are refused rather than dropped. The prompt tells the model to
+    send only what a capability lists, and without this that is advice: a stale
+    `parameters` object validates, disappears, and the capability runs on its
+    defaults as though it had been asked for.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class LocationCapability(CapabilityModel):
+    kind: Literal[CapabilityKind.LOCATION] = CapabilityKind.LOCATION
+    latitude: float
+    longitude: float
+
+
+class NetworkCapability(CapabilityModel):
+    kind: Literal[CapabilityKind.NETWORK] = CapabilityKind.NETWORK
+    mode: Literal["offline", "online", "wifi_only", "data_only", "airplane"]
+
+
+class BatteryCapability(CapabilityModel):
+    kind: Literal[CapabilityKind.BATTERY] = CapabilityKind.BATTERY
+    level: int = Field(..., ge=0, le=100)
+    charging: bool = True
+
+
+class TimezoneCapability(CapabilityModel):
+    kind: Literal[CapabilityKind.TIMEZONE] = CapabilityKind.TIMEZONE
+    timezone: str = Field(..., min_length=1, description="An IANA name, e.g. 'America/New_York'.")
+
+
+class LocaleCapability(CapabilityModel):
+    kind: Literal[CapabilityKind.LOCALE] = CapabilityKind.LOCALE
+    language: str = Field(..., min_length=1, description="An ISO code, e.g. 'fr'.")
+    country: str = Field(default="", description="An ISO code, e.g. 'FR'. May be empty.")
+
+
+class PermissionCapability(CapabilityModel):
+    kind: Literal[CapabilityKind.PERMISSION] = CapabilityKind.PERMISSION
+    permission: Literal[
+        "camera", "location", "notifications", "photos", "contacts", "storage"
+    ]
+    grant: bool
+
+
+class InterruptCapability(CapabilityModel):
+    kind: Literal[CapabilityKind.INTERRUPT] = CapabilityKind.INTERRUPT
+    type: Literal["low_memory", "incoming_call"]
+    phone: str = Field(default="555-5555", description="Used by 'incoming_call' only.")
+
+
+class BiometricCapability(CapabilityModel):
+    kind: Literal[CapabilityKind.BIOMETRIC] = CapabilityKind.BIOMETRIC
+    action: Literal["match", "unmatch", "enroll"]
+    type: Literal["faceId", "touchId"] = "faceId"
+    finger_id: int = Field(default=1, ge=1)
+
+
+class ClipboardCapability(CapabilityModel):
+    kind: Literal[CapabilityKind.CLIPBOARD] = CapabilityKind.CLIPBOARD
+    text: str
+
+
+class DeeplinkCapability(CapabilityModel):
+    kind: Literal[CapabilityKind.DEEPLINK] = CapabilityKind.DEEPLINK
+    url: str = Field(..., min_length=1)
+
+
+class AppStateCapability(CapabilityModel):
+    kind: Literal[CapabilityKind.APP_STATE] = CapabilityKind.APP_STATE
+    action: Literal["force_stop", "clear_data"]
+
+
+class MediaInjectCapability(CapabilityModel):
+    kind: Literal[CapabilityKind.MEDIA_INJECT] = CapabilityKind.MEDIA_INJECT
+    local_path: str = Field(..., min_length=1)
+
+
+class AccessibilityCapability(CapabilityModel):
+    kind: Literal[CapabilityKind.ACCESSIBILITY] = CapabilityKind.ACCESSIBILITY
+    enabled: bool
+
+
+Capability = Annotated[
+    LocationCapability
+    | NetworkCapability
+    | BatteryCapability
+    | TimezoneCapability
+    | LocaleCapability
+    | PermissionCapability
+    | InterruptCapability
+    | BiometricCapability
+    | ClipboardCapability
+    | DeeplinkCapability
+    | AppStateCapability
+    | MediaInjectCapability
+    | AccessibilityCapability,
+    Field(discriminator="kind"),
+]
+
+CAPABILITY_MODELS: dict[CapabilityKind, type[BaseModel]] = {
+    model.model_fields["kind"].default: model
+    for model in (
+        LocationCapability,
+        NetworkCapability,
+        BatteryCapability,
+        TimezoneCapability,
+        LocaleCapability,
+        PermissionCapability,
+        InterruptCapability,
+        BiometricCapability,
+        ClipboardCapability,
+        DeeplinkCapability,
+        AppStateCapability,
+        MediaInjectCapability,
+        AccessibilityCapability,
+    )
 }
 
 
+def _field_spec(field) -> str:
+    """One field as the prompt shows it: its choices, or its type."""
+    if get_origin(field.annotation) is Literal:
+        return " | ".join(repr(choice) for choice in get_args(field.annotation))
+    return getattr(field.annotation, "__name__", str(field.annotation))
+
+
+def capability_vocabulary() -> str:
+    """The capability listing for the planner prompt, read off the models.
+
+    Generated rather than written out, so a new capability costs no prompt
+    edit and the model stays the one statement of its own fields.
+
+    Each line is the object to send, `kind` included, because that is what the
+    schema takes. A field with a default is marked, so the reader can tell what
+    it has to decide from what it may leave out.
+    """
+    lines = []
+    for kind, model in CAPABILITY_MODELS.items():
+        fields = [f'"kind": "{kind.value}"']
+        for name, field in model.model_fields.items():
+            if name == "kind":
+                continue
+            spec = _field_spec(field)
+            if not field.is_required():
+                spec += f" (optional, default {field.default!r})"
+            fields.append(f'"{name}": {spec}')
+        lines.append("   - {" + ", ".join(fields) + "}")
+    return "\n".join(lines)
 
 # --- Action Definitions ---
 
@@ -163,10 +305,9 @@ class SwipeAction(BaseModel):
 
 class CapabilityAction(BaseModel):
     type: Literal[ActionType.CAPABILITY] = ActionType.CAPABILITY
-    capability: CapabilityType = Field(..., description="The system capability to control.")
-    parameters: dict = Field(
-        default_factory=dict,
-        description="Key-value parameters for the capability (e.g. {'latitude': 37.77, 'longitude': -122.41} or {'mode': 'offline'} or {'permission': 'camera', 'grant': True})."
+    capability: Capability = Field(
+        ...,
+        description="The device state to set, named by its 'kind' and that kind's own fields.",
     )
     reason: str = Field(..., description="How the capability control helps achieve the test goal.")
 

@@ -33,6 +33,14 @@ class RunContext:
     keyboard_dismissed: set[str] = field(default_factory=set)
     """Screens whose keyboard was already pulled down once to look behind it."""
 
+    capability_receipts: list = field(default_factory=list)
+    """What the device reported about each capability a step applied.
+
+    Kept because a scenario can declare a capability it needs and then never
+    reach it. Without the receipts the gate cannot tell that from a scenario
+    that applied one and had it confirmed, so both would pass.
+    """
+
     recovered: set[str] = field(default_factory=set)
     """Screens already handed to a recovery planner."""
 

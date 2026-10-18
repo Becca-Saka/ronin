@@ -1,0 +1,51 @@
+"""How each platform names the states a capability asks for.
+
+Shared by the code that applies a capability and the code that reads it back,
+so the two cannot drift. A receipt compared against a different spelling of
+the same state reads as a mismatch, and refuses a capability that worked.
+"""
+
+# Appium network connection bitmask: 1 airplane, 2 wifi, 4 data, 6 all.
+APPIUM_NETWORK_TYPES = {
+    "offline": 1,
+    "airplane": 1,
+    "wifi_only": 2,
+    "data_only": 4,
+    "online": 6,
+}
+
+# Which radios each mode leaves on, as `mobile: setConnectivity` takes them.
+CONNECTIVITY = {
+    "offline": {"wifi": False, "data": False, "airplane": True},
+    "airplane": {"wifi": False, "data": False, "airplane": True},
+    "online": {"wifi": True, "data": True, "airplane": False},
+    "wifi_only": {"wifi": True, "data": False, "airplane": False},
+    "data_only": {"wifi": False, "data": True, "airplane": False},
+}
+
+ANDROID_PERMISSIONS = {
+    "camera": "android.permission.CAMERA",
+    "location": "android.permission.ACCESS_FINE_LOCATION",
+    "contacts": "android.permission.READ_CONTACTS",
+    "storage": "android.permission.READ_EXTERNAL_STORAGE",
+    "notifications": "android.permission.POST_NOTIFICATIONS",
+    "photos": "android.permission.READ_MEDIA_IMAGES",
+}
+
+# simctl's own service names. 'notifications' is absent on purpose: simctl has
+# no notification service, and the service that would cover it is 'all', which
+# grants every other permission too.
+IOS_PRIVACY_SERVICES = {
+    "location": "location",
+    "camera": "camera",
+    "photos": "photos",
+    "contacts": "contacts",
+}
+
+TALKBACK_PACKAGE = "com.google.android.marvin.talkback"
+TALKBACK = f"{TALKBACK_PACKAGE}/com.google.android.marvin.talkback.TalkBackService"
+"""The screen reader, as a component. The package is the one the device
+installs, so the preflight and the write name the same thing."""
+
+# What `mobile: queryAppState` answers. 1 is installed and not running.
+APP_NOT_RUNNING = 1

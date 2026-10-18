@@ -1,0 +1,201 @@
+"""The `mobile:` vocabulary, in one place.
+
+The session already holds a driver, and the driver wraps most device state on
+both platforms. It also reads back what it sets, which adb and simctl mostly
+do not: `getConnectivity` answers the question `setConnectivity` asked, and
+`queryAppState` answers `terminateApp`.
+
+Reaching past the driver to adb or simctl means hand-building argv twice, once
+per platform, and inventing a read for each. So this is the first place a
+capability looks, and adb or simctl is the fallback for what the driver has no
+method for.
+
+Two kinds of call, named apart on purpose. `change` must work, and raises when
+it does not. `ask` is a read, and answers None when the driver will not say. A state that
+cannot be read is not the same as a state that is wrong.
+"""
+
+import base64
+import logging
+from typing import Any, Optional
+
+from ronin.errors import DeviceUnavailable
+
+logger = logging.getLogger(__name__)
+
+
+class DriverCommands:
+    """Named `mobile:` methods over one driver session."""
+
+    def __init__(self, driver):
+        self.driver = driver
+
+    def change(self, method: str, params: Optional[dict] = None) -> Any:
+        """One state-changing method, or the reason the driver refused it.
+
+        Raises:
+            DeviceUnavailable: The driver could not run the method. A driver
+                that lacks it raises the same way as one whose device refused,
+                because neither leaves the state the caller asked for.
+        """
+        try:
+            return self.driver.execute_script(f"mobile: {method}", params or {})
+        except Exception as exc:  # noqa: BLE001 - driver boundary
+            raise DeviceUnavailable(f"The driver could not run '{method}': {exc}") from exc
+
+    def ask(self, method: str, params: Optional[dict] = None) -> Any:
+        """One read, or None when the driver will not answer it."""
+        try:
+            return self.driver.execute_script(f"mobile: {method}", params or {})
+        except Exception as exc:  # noqa: BLE001 - driver boundary
+            logger.warning("The driver could not read '%s': %s", method, exc)
+            return None
+
+    # --- State both platforms can set ---
+
+    def set_clipboard(self, text: str) -> None:
+        """Sets the clipboard, which carries its content base64 encoded."""
+        encoded = base64.b64encode(text.encode()).decode()
+        self.change("setClipboard", {"content": encoded, "contentType": "plaintext"})
+
+    def clipboard(self) -> Optional[str]:
+        """The clipboard text, decoded from the base64 the driver answers."""
+        answer = self.ask("getClipboard", {"contentType": "plaintext"})
+        if not isinstance(answer, str) or not answer:
+            return None
+        try:
+            return base64.b64decode(answer).decode()
+        except (ValueError, UnicodeDecodeError):
+            logger.warning("The clipboard answer was not base64 text")
+            return None
+
+    def open_deeplink(self, url: str) -> None:
+        self.change("deepLink", {"url": url})
+
+    def terminate_app(self, app_id: str) -> None:
+        self.change("terminateApp", {"appId": app_id, "bundleId": app_id})
+
+    def clear_app(self, app_id: str) -> None:
+        self.change("clearApp", {"appId": app_id, "bundleId": app_id})
+
+    def app_state(self, app_id: str) -> Optional[int]:
+        """The app's lifecycle state as the platform's own enum.
+
+        0 not installed, 1 not running, 2 running in background suspended,
+        3 running in background, 4 running in foreground. The same scale on
+        both platforms.
+        """
+        answer = self.ask("queryAppState", {"appId": app_id, "bundleId": app_id})
+        return answer if isinstance(answer, int) else None
+
+    # --- State one platform sets its own way ---
+
+    def set_connectivity(self, wifi: bool, data: bool, airplane: bool) -> None:
+        """Android only. Takes the three radios apart rather than as a bitmask."""
+        self.change(
+            "setConnectivity",
+            {"wifi": wifi, "data": data, "airplaneMode": airplane},
+        )
+
+    def connectivity(self) -> Optional[dict]:
+        """Android only. What the three radios report."""
+        answer = self.ask("getConnectivity")
+        return answer if isinstance(answer, dict) else None
+
+    def set_android_location(self, latitude: float, longitude: float) -> None:
+        """Sets the mocked location, which takes the pair at the top level."""
+        self.change(
+            "setGeolocation", {"latitude": latitude, "longitude": longitude}
+        )
+
+    def android_location(self) -> Optional[dict]:
+        """Where the device thinks it is, after dropping the cached answer.
+
+        `getGeolocation` reads a cache that `setGeolocation` does not clear.
+        Without the refresh it reports the place before the change, and
+        a receipt then refuses every location that was set correctly.
+        """
+        self.ask("refreshGpsCache")
+        answer = self.ask("getGeolocation")
+        return answer if isinstance(answer, dict) else None
+
+    def set_ios_location(self, latitude: float, longitude: float) -> None:
+        self.change(
+            "setSimulatedLocation", {"latitude": latitude, "longitude": longitude}
+        )
+
+    def ios_location(self) -> Optional[dict]:
+        answer = self.ask("getSimulatedLocation")
+        return answer if isinstance(answer, dict) else None
+
+    def change_android_permissions(
+        self, app_id: str, permissions: list[str], grant: bool
+    ) -> None:
+        self.change(
+            "changePermissions",
+            {
+                "permissions": permissions,
+                "appPackage": app_id,
+                "action": "grant" if grant else "revoke",
+            },
+        )
+
+    def android_permissions(self, app_id: str) -> Optional[list]:
+        """The permissions the package currently holds."""
+        answer = self.ask(
+            "getPermissions", {"type": "granted", "appPackage": app_id}
+        )
+        return answer if isinstance(answer, list) else None
+
+    def set_ios_permission(self, app_id: str, service: str, grant: bool) -> None:
+        self.change(
+            "setPermission",
+            {"access": {service: "yes" if grant else "no"}, "bundleId": app_id},
+        )
+
+    def ios_permission(self, app_id: str, service: str) -> Optional[str]:
+        """"yes", "no" or "unset" for one service, as the driver reports it."""
+        answer = self.ask(
+            "getPermission", {"service": service, "bundleId": app_id}
+        )
+        return answer if isinstance(answer, str) else None
+
+    def send_android_trim_memory(self, app_id: str) -> None:
+        self.change(
+            "sendTrimMemory", {"pkg": app_id, "level": "RUNNING_CRITICAL"}
+        )
+
+    def send_ios_memory_warning(self) -> None:
+        self.change("sendMemoryWarning")
+
+    def gsm_call(self, phone: str) -> None:
+        """Android emulator only."""
+        self.change("gsmCall", {"phoneNumber": phone, "action": "call"})
+
+    def fingerprint(self, finger_id: int) -> None:
+        """Android emulator only."""
+        self.change("fingerprint", {"fingerprintId": finger_id})
+
+    def set_ios_voice_over(self, enabled: bool) -> None:
+        self.change("enableVoiceOver" if enabled else "disableVoiceOver")
+
+    def ios_voice_over(self) -> Optional[bool]:
+        answer = self.ask("isVoiceOverEnabled")
+        return answer if isinstance(answer, bool) else None
+
+    def configure_ios_localization(self, language: str, country: str) -> None:
+        """Booted simulator only. The locale is per device, not per app."""
+        locale = {"name": f"{language}_{country}"} if country else {"name": language}
+        self.change(
+            "configureLocalization",
+            {"locale": locale, "keyboard": {"name": language, "layout": "QWERTY"}},
+        )
+
+    def ios_device_info(self) -> Optional[dict]:
+        """Locale, timezone, model and appearance, as the device reports them."""
+        answer = self.ask("deviceInfo")
+        return answer if isinstance(answer, dict) else None
+
+    def ios_battery(self) -> Optional[dict]:
+        answer = self.ask("batteryInfo")
+        return answer if isinstance(answer, dict) else None

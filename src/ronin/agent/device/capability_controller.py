@@ -1,16 +1,55 @@
+"""Setting the device states a scenario asks for.
+
+Every capability arrives as its own model, and every one is dispatched by an
+explicit case. A capability this platform cannot apply raises, because the
+alternative is a scenario that reads as having run offline while the device
+stayed online.
+
+The driver comes first and adb or simctl second. The session already holds a
+driver, the driver speaks to both platforms in one vocabulary, and it reads
+back what it sets. A command line is the fallback for what it has no method
+for, and for a device the driver answers about but cannot change.
+"""
+
 import logging
 import os
-from ronin.agent.device.platform import Platform
-from ronin.agent.actuation.actions import CapabilityType
-from ronin.errors import ActionRejected, DeviceUnavailable
-from ronin.utils.subprocess_runner import run_command
+from typing import Callable, Optional
+
+from ronin.agent.actuation.actions import (
+    AccessibilityCapability,
+    AppStateCapability,
+    BatteryCapability,
+    BiometricCapability,
+    Capability,
+    ClipboardCapability,
+    DeeplinkCapability,
+    InterruptCapability,
+    LocaleCapability,
+    LocationCapability,
+    MediaInjectCapability,
+    NetworkCapability,
+    PermissionCapability,
+    TimezoneCapability,
+)
+from ronin.agent.device import capability_receipts
 from ronin.agent.device.adb_control import AdbControl
+from ronin.agent.device.capability_maps import (
+    ANDROID_PERMISSIONS,
+    APPIUM_NETWORK_TYPES,
+    CONNECTIVITY,
+    IOS_PRIVACY_SERVICES,
+    TALKBACK,
+)
+from ronin.agent.device.driver_commands import DriverCommands
+from ronin.agent.device.platform import Platform
+from ronin.agent.device.receipts import Receipt
+from ronin.agent.device.simctl_control import BATTERY_STATES, SimctlControl
+from ronin.errors import ActionRejected, DeviceUnavailable
 
 logger = logging.getLogger(__name__)
 
-
 class CapabilityController:
-    """Dispatches system-level state commands (mock location, permission grants, battery overrides) to active devices."""
+    """Dispatches system-level state commands to the active device."""
 
     def __init__(self, device_control):
         """Initializes CapabilityController with active device controls.
@@ -22,6 +61,7 @@ class CapabilityController:
         self.driver = device_control.driver
         self.platform = device_control.platform
         self.adb_control = getattr(device_control, "adb_control", None)
+        self.commands = DriverCommands(device_control.driver)
 
     def get_udid_or_serial(self) -> str:
         """Resolves the current device serial number (Android) or UDID (iOS).
@@ -46,326 +86,386 @@ class CapabilityController:
                 return name
             return "emulator-5554"
 
-    def execute(self, capability: CapabilityType, parameters: dict):
-        """Routes capability actions to the platform-specific implementation methods.
+    def execute(self, capability: Capability) -> Optional[Receipt]:
+        """Applies one capability, reads the state back, or refuses it.
 
         Args:
-            capability: Enum value representing the CapabilityType.
-            parameters: Key-value parameters defining the target values (e.g. coordinates or mode).
-        """
-        logger.info(
-            "Executing capability control: %s with params %s",
-            capability.value,
-            parameters,
-        )
-        udid_or_serial = self.get_udid_or_serial()
+            capability: The device state to set.
 
-        method_name = f"_handle_{capability.value}"
-        if hasattr(self, method_name):
-            try:
-                getattr(self, method_name)(udid_or_serial, parameters)
-            except Exception as e:
-                logger.error("Failed to execute capability %s: %s", capability.value, e)
-                raise ActionRejected(
-                    f"Capability {capability.value} failed: {e}"
-                ) from e
+        Returns:
+            What the device reports about the state, or None where nothing can
+            read it back.
+
+        Raises:
+            ActionRejected: The capability could not be applied here, or the
+                device reports a state other than the one asked for. Nothing
+                may read the device as being in the requested state.
+        """
+        logger.info("Executing capability control: %s", capability.kind.value)
+        target = self.get_udid_or_serial()
+        try:
+            self._apply(target, capability)
+        except ActionRejected:
+            raise
+        except Exception as exc:
+            logger.error(
+                "Failed to execute capability %s: %s", capability.kind.value, exc
+            )
+            raise ActionRejected(
+                f"Capability {capability.kind.value} failed: {exc}"
+            ) from exc
+
+        receipt = capability_receipts.read_back(
+            self.platform, target, capability, self.commands, self._known_package()
+        )
+        if receipt is None:
+            return None
+        if receipt.unreadable:
+            logger.warning("Capability applied but not confirmed. %s", receipt)
+        elif not receipt.confirmed:
+            raise ActionRejected(f"The device did not take the state. {receipt}")
         else:
-            logger.warning("Unsupported capability type: %s", capability.value)
+            logger.info("Capability confirmed. %s", receipt)
+        return receipt
+
+    def _apply(self, target: str, capability: Capability) -> None:
+        """Routes one capability to the method that applies it.
+
+        Matched on the model rather than looked up by name. The wildcard below
+        refuses a capability with no case rather than ignoring it, and
+        `test_every_capability_has_a_case_in_the_dispatch` is what catches one
+        before a device does.
+        """
+        match capability:
+            case LocationCapability():
+                self._location(target, capability)
+            case NetworkCapability():
+                self._network(target, capability)
+            case BatteryCapability():
+                self._battery(target, capability)
+            case TimezoneCapability():
+                self._timezone(capability)
+            case LocaleCapability():
+                self._locale(target, capability)
+            case PermissionCapability():
+                self._permission(target, capability)
+            case InterruptCapability():
+                self._interrupt(target, capability)
+            case BiometricCapability():
+                self._biometric(capability)
+            case ClipboardCapability():
+                self._clipboard(capability)
+            case DeeplinkCapability():
+                self._deeplink(target, capability)
+            case AppStateCapability():
+                self._app_state(target, capability)
+            case MediaInjectCapability():
+                self._media_inject(target, capability)
+            case AccessibilityCapability():
+                self._accessibility(target, capability)
+            case _:
+                raise ActionRejected(
+                    f"No handler for capability {capability.kind.value}"
+                )
+
+    def _refuse(self, capability: Capability, detail: str) -> ActionRejected:
+        """The refusal to raise, naming the capability and this platform."""
+        return ActionRejected(
+            f"{capability.kind.value} cannot be applied on "
+            f"{self.platform.value}: {detail}"
+        )
+
+    def _package(self, capability: Capability) -> str:
+        """The app under test, which several capabilities act on.
+
+        Raises:
+            ActionRejected: No package is known, so the capability would be
+                applied to nothing.
+        """
+        package = self.driver.capabilities.get("appPackage") or getattr(
+            self.device_control, "package_id", None
+        )
+        if not package:
+            raise self._refuse(capability, "the app package id is not known")
+        return package
+
+    def _or_else(self, doing: str, driver: Callable, command: Callable) -> None:
+        """The driver's way, and the command line when the driver has no way.
+
+        A driver missing a method and a device refusing one raise alike, so
+        both land here. Falling back on either is right: the command line is
+        the older path and works where the driver is not built for the device.
+
+        When both fail, the driver's reason leads. It names the constraint, where the command line reports the symptom.
+        Refused a call on a physical phone, the driver says "gsmCall is
+        only available for emulators". `adb emu` only exits non-zero,
+        with nothing to say.
+
+        Raises:
+            DeviceUnavailable: Neither way worked, carrying both reasons.
+        """
+        refusal = None
+        try:
+            driver()
+            return
+        except DeviceUnavailable as exc:
+            refusal = exc
+            logger.warning(
+                "The driver could not %s (%s). Using the command line.", doing, exc
+            )
+        try:
+            command()
+        except DeviceUnavailable as failure:
+            raise DeviceUnavailable(
+                f"Could not {doing}. The driver refused: {refusal}. "
+                f"The command line then failed: {failure}"
+            ) from failure
 
     # --- Platform Handler Implementations ---
 
-    def _handle_location(self, udid_or_serial: str, params: dict):
-        lat = params.get("latitude")
-        lng = params.get("longitude")
-        if lat is None or lng is None:
-            raise ValueError("Location requires 'latitude' and 'longitude'")
-
+    def _location(self, target: str, capability: LocationCapability) -> None:
         if self.platform == Platform.IOS:
-            cmd = ["xcrun", "simctl", "location", udid_or_serial, "set", f"{lat},{lng}"]
-            logger.info("iOS location mock: %s", " ".join(cmd))
-            run_command(cmd, check=True)
-        else:
-            logger.info("Android location mock: %s, %s", lat, lng)
-            AdbControl.mock_location(udid_or_serial, lat, lng)
-
-    def _handle_network(self, udid_or_serial: str, params: dict):
-        mode = str(params.get("mode", "online")).lower()
-        if self.platform == Platform.ANDROID:
-            success = False
-            if mode in ("offline", "airplane"):
-                try:
-                    logger.info("Enabling airplane mode via ADB connectivity service")
-                    AdbControl.set_airplane_mode(udid_or_serial, True)
-                    success = True
-                except DeviceUnavailable as e:
-                    logger.warning(
-                        "ADB connectivity control failed: %s. Falling back to Appium set_network_connection.",
-                        e,
-                    )
-            elif mode == "online":
-                try:
-                    logger.info("Disabling airplane mode via ADB connectivity service")
-                    AdbControl.set_airplane_mode(udid_or_serial, False)
-                    success = True
-                except DeviceUnavailable as e:
-                    logger.warning(
-                        "ADB connectivity control failed: %s. Falling back to Appium set_network_connection.",
-                        e,
-                    )
-
-            if not success:
-                # Appium Network Connection IDs: 1 (Airplane), 2 (Wifi), 4 (Data), 6 (All)
-                type_id = 6
-                if mode in ("offline", "airplane"):
-                    type_id = 1
-                elif mode == "wifi_only":
-                    type_id = 2
-                elif mode == "data_only":
-                    type_id = 4
-                logger.info(
-                    "Setting Android network connection to type: %d (%s) via Appium",
-                    type_id,
-                    mode,
-                )
-                self.driver.set_network_connection(type_id)
-        else:
-            logger.warning("Network throttling not supported on iOS Simulator.")
-
-    def _handle_battery(self, udid_or_serial: str, params: dict):
-        level = int(params.get("level", 100))
-        charging = bool(params.get("charging", True))
-
-        if self.platform == Platform.IOS:
-            state = "charged" if charging else "discharged"
-            cmd = [
-                "xcrun",
-                "simctl",
-                "status_bar",
-                udid_or_serial,
-                "override",
-                "--batteryLevel",
-                str(level),
-                "--batteryState",
-                state,
-            ]
-            logger.info("iOS status bar override: %s", " ".join(cmd))
-            run_command(cmd, check=True)
-        else:
-            logger.info(
-                "Setting Android battery level to %d, charging=%s", level, charging
+            self._or_else(
+                "set the location",
+                lambda: self.commands.set_ios_location(
+                    capability.latitude, capability.longitude
+                ),
+                lambda: SimctlControl.set_location(
+                    target, capability.latitude, capability.longitude
+                ),
             )
-            AdbControl.set_battery_status(udid_or_serial, level, charging)
-
-    def _handle_timezone(self, udid_or_serial: str, params: dict):
-        tz = params.get("timezone")
-        if not tz:
-            raise ValueError("Timezone requires 'timezone' parameter")
-
-        if self.platform == Platform.ANDROID:
-            logger.info("Setting Android timezone: %s", tz)
-            AdbControl.set_timezone(udid_or_serial, tz)
-            # Must restart app for timezone to take effect
-            package = self.driver.capabilities.get("appPackage") or getattr(
-                self.device_control, "package_id", None
-            )
-            if package:
-                logger.info("Restarting app %s to apply timezone changes", package)
-                AdbControl.force_stop_app(udid_or_serial, package)
-                AdbControl.start_app_via_monkey(udid_or_serial, package)
         else:
-            logger.warning("Timezone change not supported on iOS Simulator via simctl.")
-
-    def _handle_locale(self, udid_or_serial: str, params: dict):
-        lang = params.get("language")
-        country = params.get("country", "")
-        if not lang:
-            raise ValueError("Locale requires 'language' parameter")
-
-        if self.platform == Platform.ANDROID:
-            locale_str = f"{lang}-{country}" if country else lang
-            package = self.driver.capabilities.get("appPackage") or getattr(
-                self.device_control, "package_id", None
-            )
-            if package:
-                logger.info("Setting Android locale: %s", locale_str)
-                AdbControl.set_app_locale(udid_or_serial, package, locale_str)
-            else:
-                logger.warning("Cannot set Android locale without target package ID")
-        else:
-            logger.warning(
-                "Locale change must be passed at boot/app launch on iOS Simulator."
+            self._or_else(
+                "set the location",
+                lambda: self.commands.set_android_location(
+                    capability.latitude, capability.longitude
+                ),
+                lambda: AdbControl.mock_location(
+                    target, capability.latitude, capability.longitude
+                ),
             )
 
-    def _handle_permission(self, udid_or_serial: str, params: dict):
-        perm = params.get("permission")
-        grant = bool(params.get("grant", True))
-        package = self.driver.capabilities.get("appPackage") or getattr(
-            self.device_control, "package_id", None
+    def _network(self, target: str, capability: NetworkCapability) -> None:
+        if self.platform != Platform.ANDROID:
+            raise self._refuse(
+                capability,
+                "the simulator shares the host network connection, and the "
+                "condition inducers that would change it need a real device",
+            )
+
+        radios = CONNECTIVITY[capability.mode]
+        self._or_else(
+            f"set connectivity to {capability.mode}",
+            lambda: self.commands.set_connectivity(**radios),
+            lambda: self._network_by_command(target, capability.mode),
         )
 
-        if not perm:
-            raise ValueError("Permission requires 'permission' parameter")
-        if not package:
-            raise ValueError("Permission requires target app package ID/bundle ID")
+    def _network_by_command(self, target: str, mode: str) -> None:
+        """Airplane mode through adb, and the rest through Appium's bitmask."""
+        if mode in ("offline", "airplane", "online"):
+            AdbControl.set_airplane_mode(target, mode != "online")
+            return
+        self.driver.set_network_connection(APPIUM_NETWORK_TYPES[mode])
 
-        action = "grant" if grant else "revoke"
+    def _battery(self, target: str, capability: BatteryCapability) -> None:
         if self.platform == Platform.IOS:
-            service_map = {
-                "location": "location",
-                "camera": "camera",
-                "notifications": "all",
-                "photos": "photos",
-                "contacts": "contacts",
-            }
-            service = service_map.get(perm.lower(), perm.lower())
-            cmd = [
-                "xcrun",
-                "simctl",
-                "privacy",
-                udid_or_serial,
-                action,
-                service,
-                package,
-            ]
-            logger.info("iOS permission command: %s", " ".join(cmd))
-            run_command(cmd, check=True)
+            state = BATTERY_STATES[0] if capability.charging else BATTERY_STATES[2]
+            SimctlControl.override_battery(target, capability.level, state)
         else:
-            perm_map = {
-                "camera": "android.permission.CAMERA",
-                "location": "android.permission.ACCESS_FINE_LOCATION",
-                "contacts": "android.permission.READ_CONTACTS",
-                "storage": "android.permission.READ_EXTERNAL_STORAGE",
-            }
-            android_perm = perm_map.get(perm.lower(), perm)
-            logger.info(
-                "Android permission command: %s for package %s", android_perm, package
+            AdbControl.set_battery_status(
+                target, capability.level, capability.charging
             )
-            AdbControl.set_app_permission(udid_or_serial, package, android_perm, grant)
 
-    def _handle_interrupt(self, udid_or_serial: str, params: dict):
-        int_type = str(params.get("type", "low_memory")).lower()
-        if int_type == "low_memory":
+    def _timezone(self, capability: TimezoneCapability) -> None:
+        """Refused on both platforms, because neither offers a path that works.
+
+        On Android the system zone is `persist.sys.timezone`, which the shell
+        user cannot set. A write to `settings global timezone` changes
+        nothing the device reads. Reading that setting back confirms
+        the write while the clock stays where it was. simctl sets no zone at all.
+        """
+        raise self._refuse(
+            capability,
+            "no supported path sets the system zone, and the one that looks "
+            "like it does is not read by the device",
+        )
+
+    def _locale(self, target: str, capability: LocaleCapability) -> None:
+        if self.platform == Platform.IOS:
+            self.commands.configure_ios_localization(
+                capability.language, capability.country
+            )
+            return
+        package = self._package(capability)
+        locale = (
+            f"{capability.language}-{capability.country}"
+            if capability.country
+            else capability.language
+        )
+        AdbControl.set_app_locale(target, package, locale)
+
+    def _permission(self, target: str, capability: PermissionCapability) -> None:
+        package = self._package(capability)
+
+        if self.platform == Platform.IOS:
+            service = IOS_PRIVACY_SERVICES.get(capability.permission)
+            if not service:
+                raise self._refuse(
+                    capability,
+                    f"'{capability.permission}' names no simctl privacy service",
+                )
+            action = "grant" if capability.grant else "revoke"
+            self._or_else(
+                f"{action} {service}",
+                lambda: self.commands.set_ios_permission(
+                    package, service, capability.grant
+                ),
+                lambda: SimctlControl.set_privacy(target, action, service, package),
+            )
+            return
+
+        permission = ANDROID_PERMISSIONS.get(capability.permission)
+        if not permission:
+            raise self._refuse(
+                capability, f"'{capability.permission}' names no Android permission"
+            )
+        self._or_else(
+            f"change {permission}",
+            lambda: self.commands.change_android_permissions(
+                package, [permission], capability.grant
+            ),
+            lambda: AdbControl.set_app_permission(
+                target, package, permission, capability.grant
+            ),
+        )
+
+    def _interrupt(self, target: str, capability: InterruptCapability) -> None:
+        if capability.type == "low_memory":
             if self.platform == Platform.IOS:
-                cmd = [
-                    "xcrun",
-                    "simctl",
-                    "notify_post",
-                    udid_or_serial,
-                    "com.apple.CoreSimulator.SimDevice.MemoryNotification",
-                ]
-                logger.info("iOS Memory Warning: %s", " ".join(cmd))
-                run_command(cmd, check=True)
-            else:
-                package = self.driver.capabilities.get("appPackage") or getattr(
-                    self.device_control, "package_id", None
+                self._or_else(
+                    "post a memory warning",
+                    self.commands.send_ios_memory_warning,
+                    lambda: SimctlControl.notify_low_memory(target),
                 )
-                if package:
-                    pid = AdbControl.get_app_pid(udid_or_serial, package)
-                    if pid:
-                        logger.info("Android low memory simulation for PID: %s", pid)
-                        AdbControl.simulate_low_memory(udid_or_serial, pid)
-        elif int_type == "incoming_call":
-            phone = params.get("phone", "555-5555")
-            if self.platform == Platform.ANDROID:
-                logger.info("Android incoming call: %s", phone)
-                AdbControl.simulate_incoming_call(udid_or_serial, phone)
-            else:
-                logger.warning(
-                    "Incoming call simulation not supported on iOS Simulator via simctl."
-                )
-
-    def _handle_clipboard(self, udid_or_serial: str, params: dict):
-        text = params.get("text", "")
-        logger.info("Setting device clipboard: %s", text)
-        self.driver.set_clipboard_text(text)
-
-    def _handle_biometric(self, udid_or_serial: str, params: dict):
-        action = str(params.get("action", "match")).lower()
-        if self.platform == Platform.IOS:
-            enroll = action in ("enroll", "match")
-            self.device_control.execute_script(
-                "mobile: enrollBiometric", {"isEnabled": enroll}
+                return
+            package = self._package(capability)
+            self._or_else(
+                "send a trim-memory signal",
+                lambda: self.commands.send_android_trim_memory(package),
+                lambda: self._trim_memory_by_pid(target, package, capability),
             )
-            if action in ("match", "unmatch"):
-                biometric_type = params.get("type", "faceId")
-                match_val = action == "match"
-                self.device_control.execute_script(
-                    "mobile: sendBiometricMatch",
-                    {"type": biometric_type, "match": match_val},
+            return
+
+        if self.platform != Platform.ANDROID:
+            raise self._refuse(
+                capability, "simctl cannot place a call into the simulator"
+            )
+        self._or_else(
+            "place a call",
+            lambda: self.commands.gsm_call(capability.phone),
+            lambda: AdbControl.simulate_incoming_call(target, capability.phone),
+        )
+
+    def _trim_memory_by_pid(
+        self, target: str, package: str, capability: Capability
+    ) -> None:
+        """The adb path, which needs the pid the driver did not."""
+        pid = AdbControl.get_app_pid(target, package)
+        if not pid:
+            raise self._refuse(
+                capability, f"{package} is not running, so it has no pid"
+            )
+        AdbControl.simulate_low_memory(target, pid)
+
+    def _biometric(self, capability: BiometricCapability) -> None:
+        if self.platform == Platform.IOS:
+            enroll = capability.action in ("enroll", "match")
+            self.commands.change("enrollBiometric", {"isEnabled": enroll})
+            if capability.action in ("match", "unmatch"):
+                self.commands.change(
+                    "sendBiometricMatch",
+                    {
+                        "type": capability.type,
+                        "match": capability.action == "match",
+                    },
                 )
         else:
-            finger_id = int(params.get("finger_id", 1))
-            self.driver.finger_print(finger_id)
+            self._or_else(
+                "touch the fingerprint sensor",
+                lambda: self.commands.fingerprint(capability.finger_id),
+                lambda: self.driver.finger_print(capability.finger_id),
+            )
 
-    def _handle_deeplink(self, udid_or_serial: str, params: dict):
-        url = params.get("url")
-        if not url:
-            raise ValueError("Deep Link requires 'url' parameter")
+    def _clipboard(self, capability: ClipboardCapability) -> None:
+        logger.info("Setting device clipboard")
+        self.commands.set_clipboard(capability.text)
+
+    def _deeplink(self, target: str, capability: DeeplinkCapability) -> None:
+        if self.platform == Platform.IOS:
+            self._or_else(
+                "open a URL",
+                lambda: self.commands.open_deeplink(capability.url),
+                lambda: SimctlControl.open_url(target, capability.url),
+            )
+            return
+        package = self._package(capability)
+        self._or_else(
+            "open a deep link",
+            lambda: self.commands.open_deeplink(capability.url),
+            lambda: AdbControl.open_deeplink(target, capability.url, package),
+        )
+
+    def _app_state(self, target: str, capability: AppStateCapability) -> None:
+        package = self._package(capability)
+
+        if capability.action == "force_stop":
+            self._or_else(
+                "terminate the app",
+                lambda: self.commands.terminate_app(package),
+                lambda: self._terminate_by_command(target, package),
+            )
+            return
+
+        if self.platform != Platform.ANDROID:
+            self._or_else(
+                "clear the app container",
+                lambda: self.commands.clear_app(package),
+                lambda: (_ for _ in ()).throw(
+                    self._refuse(capability, "simctl cannot clear an installed app")
+                ),
+            )
+            return
+        AdbControl.clear_app_data(target, package)
+
+    def _terminate_by_command(self, target: str, package: str) -> None:
+        if self.platform == Platform.IOS:
+            SimctlControl.terminate(target, package)
+        else:
+            AdbControl.force_stop_app(target, package)
+
+    def _media_inject(self, target: str, capability: MediaInjectCapability) -> None:
+        if not os.path.exists(capability.local_path):
+            raise self._refuse(capability, f"no file at '{capability.local_path}'")
 
         if self.platform == Platform.IOS:
-            cmd = ["xcrun", "simctl", "openurl", udid_or_serial, url]
-            logger.info("iOS open URL: %s", " ".join(cmd))
-            run_command(cmd, check=True)
+            SimctlControl.add_media(target, capability.local_path)
         else:
-            package = self.driver.capabilities.get("appPackage") or getattr(
-                self.device_control, "package_id", None
-            )
-            logger.info("Android open deep link: %s for package %s", url, package)
-            AdbControl.open_deeplink(udid_or_serial, url, package)
+            destination = f"/sdcard/Pictures/{os.path.basename(capability.local_path)}"
+            AdbControl.push_file(target, capability.local_path, destination)
+            AdbControl.scan_media_file(target, destination)
 
-    def _handle_app_state(self, udid_or_serial: str, params: dict):
-        action = str(params.get("action", "force_stop")).lower()
-        package = self.driver.capabilities.get("appPackage") or getattr(
+    def _accessibility(self, target: str, capability: AccessibilityCapability) -> None:
+        if self.platform == Platform.IOS:
+            self.commands.set_ios_voice_over(capability.enabled)
+            return
+        AdbControl.set_accessibility_service(target, TALKBACK, capability.enabled)
+
+    def _known_package(self) -> Optional[str]:
+        """The app under test, or None. Unlike `_package`, this never raises.
+
+        A receipt is read after the capability was applied, so a missing
+        package there is not a reason to fail the capability a second time.
+        """
+        return self.driver.capabilities.get("appPackage") or getattr(
             self.device_control, "package_id", None
         )
-        if not package:
-            raise ValueError(
-                "App State control requires target app package ID/bundle ID"
-            )
-
-        if action == "force_stop":
-            if self.platform == Platform.IOS:
-                cmd = ["xcrun", "simctl", "terminate", udid_or_serial, package]
-                logger.info("iOS terminate app: %s", " ".join(cmd))
-                run_command(cmd, check=True)
-            else:
-                logger.info("Android force stop app: %s", package)
-                AdbControl.force_stop_app(udid_or_serial, package)
-        elif action == "clear_data":
-            if self.platform == Platform.ANDROID:
-                logger.info("Android clear app data: %s", package)
-                AdbControl.clear_app_data(udid_or_serial, package)
-            else:
-                logger.warning(
-                    "Clearing iOS App data not supported directly via simctl."
-                )
-
-    def _handle_media_inject(self, udid_or_serial: str, params: dict):
-        local_path = params.get("local_path")
-        if not local_path or not os.path.exists(local_path):
-            raise ValueError(
-                f"Media Inject requires a valid, existing 'local_path'. Provided: {local_path}"
-            )
-
-        if self.platform == Platform.IOS:
-            cmd = ["xcrun", "simctl", "addmedia", udid_or_serial, local_path]
-            logger.info("iOS simctl add media: %s", " ".join(cmd))
-            run_command(cmd, check=True)
-        else:
-            dest_path = f"/sdcard/Pictures/{os.path.basename(local_path)}"
-            logger.info("Android media push: %s to %s", local_path, dest_path)
-            AdbControl.push_file(udid_or_serial, local_path, dest_path)
-            AdbControl.scan_media_file(udid_or_serial, dest_path)
-
-    def _handle_accessibility(self, udid_or_serial: str, params: dict):
-        enabled = bool(params.get("enabled", True))
-        if self.platform == Platform.ANDROID:
-            service = "com.google.android.talkback/com.google.android.marvin.talkback.TalkBackService"
-            logger.info(
-                "Setting Android accessibility service %s: enabled=%s", service, enabled
-            )
-            AdbControl.set_accessibility_service(udid_or_serial, service, enabled)
-        else:
-            logger.warning(
-                "Accessibility toggle capability not supported on iOS Simulator via simctl."
-            )

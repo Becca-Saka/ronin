@@ -1,9 +1,11 @@
 import logging
 import time
+from typing import Optional
 
 from ronin.agent.actuation.actions import Action, ActionPlan, ActionType
 from ronin.agent.device.control import DeviceControl
 from ronin.agent.device.capability_controller import CapabilityController
+from ronin.agent.device.receipts import Receipt
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +22,16 @@ class ActionOrchestrator:
         self.capability_controller = CapabilityController(device_control)
         self._scrubber = scrubber
 
-    def execute(self, action: Action) -> None:
-        """Execute a single Action object. Used by DeviceAgent."""
-        self._run_action(action)
+    def execute(self, action: Action) -> Optional[Receipt]:
+        """Execute a single Action object. Used by DeviceAgent.
+
+        Returns:
+            What the device reported about a capability this action set, or
+            None for every other kind of action. The caller keeps it, because
+            a scenario that declared a device state has to show the state was
+            reached and not only asked for.
+        """
+        return self._run_action(action)
 
     def orchestrate(self, action_plan: ActionPlan) -> None:
         """Execute all actions in an ActionPlan. Kept for backward compatibility."""
@@ -65,7 +74,7 @@ class ActionOrchestrator:
         elif action.type == ActionType.KEY_EVENT and action.key not in ALLOWED_KEYCODES:
             raise ValueError(f"Unsupported key code: {action.key}")
 
-    def _run_action(self, action: Action) -> None:
+    def _run_action(self, action: Action) -> Optional[Receipt]:
         if action.type == ActionType.TARGET_NOT_LISTED:
             raise ValueError(
                 "target_not_listed reports a missing target and has nothing to "
@@ -157,9 +166,9 @@ class ActionOrchestrator:
             case ActionType.CAPABILITY:
                 logger.info(
                     "Executing action: %s capability=%s — %s",
-                    action.type, action.capability, self._reason(action),
+                    action.type, action.capability.kind.value, self._reason(action),
                 )
-                self.capability_controller.execute(action.capability, action.parameters)
+                return self.capability_controller.execute(action.capability)
             case _:
                 raise ValueError(f"Unsupported action type: {action.type}")
         time.sleep(1.5)

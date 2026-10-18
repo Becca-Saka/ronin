@@ -13,7 +13,7 @@ are built here rather than at each exit.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Literal, Optional
 
 from ronin.errors import Cause
@@ -45,6 +45,9 @@ class DeviceRunResult:
     steps_executed: int
     failure_reason: Optional[str]
     history: AgentHistory
+    capability_receipts: list = field(default_factory=list)
+    """What the device reported about each capability the run applied."""
+
     cause: Optional[Cause] = None
     """What kind of failure ended the run, read from the exception's type.
 
@@ -74,6 +77,7 @@ def loop_detected(
         steps_executed=ctx.steps_executed,
         failure_reason=failure_reason,
         history=ctx.history,
+        capability_receipts=ctx.capability_receipts,
     )
 
 
@@ -89,6 +93,7 @@ def step_limit(
         steps_executed=ctx.steps_executed,
         failure_reason=f"Reached maximum step limit ({limit}) before goal was completed.",
         history=ctx.history,
+        capability_receipts=ctx.capability_receipts,
     )
 
 
@@ -143,6 +148,7 @@ def hook_stop(
         steps_executed=ctx.steps_executed,
         failure_reason="Execution stopped by step hook (crash, infeasibility, or critical issue).",
         history=ctx.history,
+        capability_receipts=ctx.capability_receipts,
     )
 
 
@@ -170,4 +176,5 @@ def goal_reached(
         steps_executed=ctx.steps_executed,
         failure_reason=None,
         history=ctx.history,
+        capability_receipts=ctx.capability_receipts,
     )

@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, model_validator
 from typing import Dict, List, Literal, Optional
 
 # Trail models live in agent/trail.py — re-exported here for backward compatibility.
+from ronin.agent.actuation.actions import CapabilityKind
 from ronin.agent.device.launch import SetupMode  # noqa: F401
 from ronin.agent.memory.trail import SessionTrail, TrailElement, ScreenEntry  # noqa: F401
 
@@ -92,6 +93,16 @@ class GeneratedTestCase(BaseModel):
             "What must be true for this scenario to pass. Give at least one. "
             "A separate component judges these, so a scenario that declares "
             "none cannot be judged at all."
+        ),
+    )
+    required_capabilities: List[CapabilityKind] = Field(
+        default_factory=list,
+        description=(
+            "Device states this scenario cannot run without, named by kind. "
+            "Declare one only where the scenario is about that state, such as "
+            "'network' for a scenario about losing connectivity. A target that "
+            "cannot apply one skips the scenario instead of testing something "
+            "else."
         ),
     )
     setup: SetupMode = Field(

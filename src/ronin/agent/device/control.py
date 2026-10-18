@@ -401,8 +401,14 @@ class DeviceControl:
             except Exception as e:
                 logger.warning("Failed to kill emulator: %s", e)
 
-    def execute_script(self, script, args):
-        self.driver.execute_script(script, args if isinstance(args, list) else [args])
+    def execute_script(self, script, args=None):
+        """Runs one driver extension command and returns what it answered.
+
+        The params go through as one object. Appium reads them as `args[0]`,
+        so wrapping them in a list arrives as a list where an object belongs,
+        and the driver refuses the call rather than ignoring the extra layer.
+        """
+        return self.driver.execute_script(script, args or {})
 
     def _resolve_bundle_id(self) -> str | None:
         """Lazily resolve and cache the iOS bundle ID from driver capabilities."""

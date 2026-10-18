@@ -33,7 +33,12 @@ from ronin.testing.models import (
     ScenarioReport,
     SensitiveFinding,
 )
-from ronin.testing.capabilities import unsupported_reason
+from ronin.agent.device import restoration
+from ronin.testing.capabilities import (
+    target_of,
+    unconfirmed_capabilities,
+    unsupported_reason,
+)
 from ronin.agent.plan.planner import GROUNDING_COORDINATES
 from ronin.testing import rules
 from ronin.testing.verdicts import (
@@ -211,7 +216,10 @@ class QAAgent:
 
             return None
 
-        unsupported = unsupported_reason(test_case)
+        # Read against the device in front of us, so a scenario whose
+        # capability this target cannot apply is skipped rather than failing a
+        # step inside itself.
+        unsupported = unsupported_reason(test_case, target_of(device_control))
         if unsupported:
             return ScenarioReport(
                 test_id=test_case.test_id,
@@ -250,17 +258,21 @@ class QAAgent:
         )
 
         try:
-            run_result: DeviceRunResult = self._device_agent.run(
-                goal=test_case.steps_instructions,
-                device_control=device_control,
-                perception=perception,
-                session_dir=session_dir,
-                session_trail=session_trail,
-                step_hook=step_hook,
-                planner_override=qa_planner,
-                max_steps=step_budget,
-                setup=test_case.setup,
-            )
+            # Scenarios share one device, and SetupMode restores the app and
+            # not the system around it. Without this, one scenario that goes
+            # offline decides what every later scenario was testing.
+            with restoration.preserved(device_control):
+                run_result: DeviceRunResult = self._device_agent.run(
+                    goal=test_case.steps_instructions,
+                    device_control=device_control,
+                    perception=perception,
+                    session_dir=session_dir,
+                    session_trail=session_trail,
+                    step_hook=step_hook,
+                    planner_override=qa_planner,
+                    max_steps=step_budget,
+                    setup=test_case.setup,
+                )
         finally:
             self._device_agent.replay_ledger = replay
 
@@ -330,6 +342,7 @@ class QAAgent:
             qa_outputs=qa_outputs,
             assessments=assessments,
             required_outcomes=test_case.expected_outcomes,
+            required_capabilities=test_case.required_capabilities,
             security_rules=security_rules,
         )
 
@@ -381,6 +394,7 @@ class QAAgent:
         required_outcomes: Sequence[ExpectedOutcome | str],
         security_rules: Sequence[str],
         all_findings: Optional[List[SensitiveFinding]] = None,
+        required_capabilities: Sequence = (),
     ):
         # Feasibility stays the planner's call: it is a statement about whether
         # the agent can proceed, not about whether the app is correct.
@@ -417,6 +431,23 @@ class QAAgent:
                 + ", ".join(unprovable)
                 + ". They ask how the app performed, and Ronin measures no part of that.",
                 Cause.SCENARIO,
+            )
+
+        # A declared capability that never reached the device leaves every
+        # outcome below it describing a state the run never entered.
+        unconfirmed = (
+            unconfirmed_capabilities(
+                required_capabilities, run_result.capability_receipts
+            )
+            if required_capabilities
+            else []
+        )
+        if unconfirmed:
+            return (
+                "UNVERIFIED",
+                "The scenario declared device states it never had confirmed: "
+                + ", ".join(unconfirmed),
+                Cause.EVIDENCE,
             )
 
         missing = _missing_required_ids(

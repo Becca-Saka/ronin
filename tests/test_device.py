@@ -301,8 +301,12 @@ class ScenarioIsolationTests(unittest.TestCase):
             expected_outcomes=["the Login button is visible"],
         )
 
+        # A serial-less control is enough: the capability preflight reads the
+        # platform, and reads nothing off a device it cannot address.
+        device_control = SimpleNamespace(platform=Platform.ANDROID, serial="")
+
         report = agent.execute_scenario(
-            case, [], object(), perception, Path("unused"), session_trail=object()
+            case, [], device_control, perception, Path("unused"), session_trail=object()
         )
 
         perception.reset.assert_called_once_with()

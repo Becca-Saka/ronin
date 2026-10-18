@@ -451,7 +451,9 @@ class DeviceAgent:
         error: Optional[str] = None
         last_external_nav = ctx.last_external_nav
         try:
-            ActionOrchestrator(device_control, self.scrubber).execute(action)
+            receipt = ActionOrchestrator(device_control, self.scrubber).execute(action)
+            if receipt is not None:
+                ctx.capability_receipts.append(receipt)
             last_external_nav = step_response.external_navigation
             ctx.stall.action_dispatched()
         except TargetNotInteractive as exc:

@@ -8,8 +8,7 @@ import logging
 from typing import List, Optional
 
 from ronin.agent.actuation.actions import (
-    CAPABILITY_SCHEMAS,
-    CapabilityType,
+    capability_vocabulary,
 )
 from ronin.agent.plan.schema import (  # noqa: F401 - re-exported for callers
     DescribeDeviceAction,
@@ -35,7 +34,10 @@ COMMON_ACTIONS = """
 - "key_event": Trigger a key event. Fields: `type`, `key` (int keycode: 4=back, 3=home, 66=enter, 67=backspace), `reason`.
 - "swipe": Swipe from start to end. Fields: `type`, `start_x`, `start_y`, `end_x`, `end_y`, `reason`.
 - "wait": Let the screen finish loading or animating. Fields: `type`, `duration` (float seconds), `reason`. Use this instead of giving up when the screen looks empty or half-drawn.
-- "capability": System-level control. Fields: `type`, `capability`, `parameters` (dict), `reason`.
+- "capability": System-level control. Send exactly:
+  {{"type": "capability", "capability": <one object below>, "reason": "..."}}
+  Send no field an object does not list. A field the object does not name is
+  refused, and the whole action with it.
   Available capabilities:
 {capabilities}
 - "done": Goal complete or execution must stop. Fields: `type`, `reason`.
@@ -237,12 +239,8 @@ class DevicePlanner:
         Defined once: QAPlanner subclasses this planner, and when the two kept
         their own copies they drifted into contradicting each other.
         """
-        capabilities = "\n".join(
-            f"   - {cap.value}: {CAPABILITY_SCHEMAS.get(cap, '{}')}"
-            for cap in CapabilityType
-        )
         targeting = TARGET_ACTIONS.get(self.grounding, COORDINATE_ACTIONS)
-        return targeting + COMMON_ACTIONS.format(capabilities=capabilities)
+        return targeting + COMMON_ACTIONS.format(capabilities=capability_vocabulary())
 
     def _action_constraints(self) -> str:
         """The rules for choosing an action. Shared with QAPlanner — see above."""

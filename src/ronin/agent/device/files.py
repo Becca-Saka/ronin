@@ -8,7 +8,8 @@ which is why the sweep matches a shape rather than a name.
 import logging
 import re
 
-from ronin.utils.subprocess_runner import run_command, SubprocessRunError
+from ronin.agent.device.adb_control import AdbControl
+from ronin.errors import DeviceUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -34,25 +35,16 @@ class DeviceFiles:
     @staticmethod
     def remove_file(serial: str, remote_path: str) -> None:
         """Deletes one file from the device, saying nothing if it is already gone."""
-        try:
-            run_command(
-                ["adb", "-s", serial, "shell", "rm", "-f", remote_path],
-                timeout=20,
-                log_command=False,
-            )
-        except SubprocessRunError as exc:
-            logger.debug("Could not remove %s: %s", remote_path, exc)
+        AdbControl.ask(serial, "rm", "-f", remote_path)
 
     @staticmethod
     def pull_file(serial: str, remote_path: str, local_path: str) -> bool:
         """Copies a file off the device, reporting whether it arrived."""
         try:
-            run_command(
-                ["adb", "-s", serial, "pull", remote_path, local_path],
-                timeout=120,
-                check=True,
+            AdbControl.adb(
+                serial, "pull", remote_path, local_path, doing="pull a file"
             )
-        except SubprocessRunError as exc:
+        except DeviceUnavailable as exc:
             logger.debug("Could not pull %s: %s", remote_path, exc)
             return False
         return True
@@ -69,31 +61,13 @@ class DeviceFiles:
         more than once. A bare name would reach another run's recorder, or a
         recording a person started, and stop that instead.
         """
-        try:
-            run_command(
-                [
-                    "adb", "-s", serial, "shell",
-                    "pkill", "-INT", "-f", f"screenrecord.*{remote_path}",
-                ],
-                timeout=20,
-                log_command=False,
-            )
-        except SubprocessRunError as exc:
-            logger.debug("Could not interrupt screenrecord on %s: %s", serial, exc)
+        AdbControl.ask(serial, "pkill", "-INT", "-f", f"screenrecord.*{remote_path}")
 
     @staticmethod
     def list_directory(serial: str, remote_dir: str) -> list[str]:
         """Names of the entries in a device directory, empty when adb cannot answer."""
-        try:
-            result = run_command(
-                ["adb", "-s", serial, "shell", "ls", remote_dir],
-                timeout=20,
-                log_command=False,
-            )
-        except SubprocessRunError as exc:
-            logger.debug("Could not list %s on %s: %s", remote_dir, serial, exc)
-            return []
-        return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+        listed = AdbControl.ask(serial, "ls", remote_dir)
+        return [line.strip() for line in (listed or "").splitlines() if line.strip()]
 
     @staticmethod
     def remove_stale_recordings(serial: str) -> int:

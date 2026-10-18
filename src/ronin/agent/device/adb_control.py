@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -13,11 +14,53 @@ from ronin.utils.subprocess_runner import run_command, SubprocessRunError
 logger = logging.getLogger(__name__)
 
 class AdbControl:
-    """Provides shell interfaces and wrapper utilities for working with Android devices via ADB."""
+    """Provides shell interfaces and wrapper utilities for working with Android devices via ADB.
 
-    ADB = "adb"
-    BASE_SETTINGS = ["adb", "shell", "settings"]
-    BASE_SYSTEM = ["adb", "shell", "settings", "put", "system"]
+    Three ways to reach a device, and the choice between them is the whole
+    contract. `adb` and `shell` must succeed and raise when they do not. `ask`
+    is a read, and answers None when the device will not say: a question adb
+    cannot answer is not the same as a command that failed.
+
+    Every one takes the serial and builds the argv, because a call site that
+    forgets `-s` does not fail. adb picks the only attached device, which is
+    correct until a run has two.
+    """
+
+    @staticmethod
+    def adb(serial: str, *args: str, doing: str = ""):
+        """One adb command against one device. Must succeed."""
+        return AdbControl.run_adb_command(["adb", "-s", serial, *args], doing=doing)
+
+    @staticmethod
+    def shell(serial: str, *args: str, doing: str = ""):
+        """One adb shell command against one device. Must succeed."""
+        return AdbControl.adb(serial, "shell", *args, doing=doing)
+
+    @staticmethod
+    def _capture(command: list[str], timeout: float = 20) -> Optional[str]:
+        """stdout from one command, or None when it will not run.
+
+        Reports nothing rather than raising. Callers use this where a failure
+        is a legitimate answer, so a raise here would turn "the device says no"
+        into "the run is over".
+        """
+        try:
+            result = run_command(command, timeout=timeout, log_command=False)
+        except (SubprocessRunError, subprocess.TimeoutExpired, OSError) as exc:
+            logger.debug("Could not run %s: %s", " ".join(command), exc)
+            return None
+        output = (result.stdout or "").strip()
+        return output or None
+
+    @staticmethod
+    def ask(serial: str, *args: str, timeout: float = 20) -> Optional[str]:
+        """One shell read from one device, or None when it will not answer."""
+        return AdbControl._capture(["adb", "-s", serial, "shell", *args], timeout)
+
+    @staticmethod
+    def ask_adb(serial: str, *args: str, timeout: float = 20) -> Optional[str]:
+        """One non-shell adb read, such as an emulator console query."""
+        return AdbControl._capture(["adb", "-s", serial, *args], timeout)
 
     @staticmethod
     def run_adb_command(command, doing: str = ""):
@@ -121,20 +164,11 @@ class AdbControl:
         disabled at runtime, so it outranks anything read from the APK. It
         needs the package installed.
         """
-        try:
-            result = run_command(
-                [
-                    "adb", "-s", serial, "shell", "cmd", "package", "resolve-activity",
-                    "--brief", "-c", LAUNCHER_CATEGORY, package_id,
-                ],
-                timeout=20,
-                log_command=False,
-            )
-        except SubprocessRunError as exc:
-            logger.debug("resolve-activity failed for %s: %s", package_id, exc)
-            return None
-
-        lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+        resolved = AdbControl.ask(
+            serial, "cmd", "package", "resolve-activity", "--brief",
+            "-c", LAUNCHER_CATEGORY, package_id,
+        )
+        lines = [line.strip() for line in (resolved or "").splitlines() if line.strip()]
         if not lines:
             return None
         component = lines[-1]
@@ -187,13 +221,9 @@ class AdbControl:
         so an emulator that has gone offline looks exactly like no emulator at
         all. Reading the states apart from that tells the two cases apart.
         """
-        try:
-            result = run_command(["adb", "devices"], timeout=20, log_command=False)
-        except SubprocessRunError as exc:
-            logger.debug("Could not list devices: %s", exc)
-            return {}
+        listed = AdbControl._capture(["adb", "devices"])
         states = {}
-        for line in (result.stdout or "").splitlines()[1:]:
+        for line in (listed or "").splitlines()[1:]:
             parts = line.split()
             if len(parts) >= 2:
                 states[parts[0]] = parts[1]
@@ -223,16 +253,7 @@ class AdbControl:
     @staticmethod
     def boot_completed(serial: str) -> bool:
         """Whether Android has finished booting on a device."""
-        try:
-            result = run_command(
-                ["adb", "-s", serial, "shell", "getprop", "sys.boot_completed"],
-                timeout=20,
-                log_command=False,
-            )
-        except SubprocessRunError as exc:
-            logger.debug("Could not read boot state of %s: %s", serial, exc)
-            return False
-        return (result.stdout or "").strip() == "1"
+        return AdbControl.ask(serial, "getprop", "sys.boot_completed") == "1"
 
     @staticmethod
     def uninstall_app(serial: str, package_id: str) -> bool:
@@ -258,8 +279,10 @@ class AdbControl:
             enabled: True to show touch highlights, False to turn them off.
         """
         val = "1" if enabled else "0"
-        command = ["adb", "-s", serial, "shell", "settings", "put", "system", "show_touches", val]
-        AdbControl.run_adb_command(command, doing="toggle tap highlights")
+        AdbControl.shell(
+            serial, "settings", "put", "system", "show_touches", val,
+            doing="toggle tap highlights",
+        )
 
     @staticmethod
     def toggle_pointer_location(serial: str, enabled: bool):
@@ -270,8 +293,10 @@ class AdbControl:
             enabled: True to show trace details, False to turn them off.
         """
         val = "1" if enabled else "0"
-        command = ["adb", "-s", serial, "shell", "settings", "put", "system", "pointer_location", val]
-        AdbControl.run_adb_command(command, doing="toggle pointer location")
+        AdbControl.shell(
+            serial, "settings", "put", "system", "pointer_location", val,
+            doing="toggle pointer location",
+        )
         logger.info("Pointer location %s", 'enabled' if enabled else 'disabled')
 
     @staticmethod
@@ -299,56 +324,36 @@ class AdbControl:
         'adb emu avd name' needs the emulator console auth token and prints
         nothing without it, so read the boot property instead.
         """
-        for command in (
-            ["adb", "-s", serial, "shell", "getprop", "ro.boot.qemu.avd_name"],
-            ["adb", "-s", serial, "emu", "avd", "name"],
-        ):
-            try:
-                result = run_command(command, timeout=10, log_command=False)
-            except SubprocessRunError as exc:
-                logger.debug("Could not read the AVD name via %s: %s", command[-1], exc)
-                continue
-            name = (result.stdout or "").strip().splitlines()
-            if result.returncode == 0 and name and name[0].strip():
-                return name[0].strip()
+        answers = (
+            AdbControl.ask(serial, "getprop", "ro.boot.qemu.avd_name", timeout=10),
+            AdbControl.ask_adb(serial, "emu", "avd", "name", timeout=10),
+        )
+        for answer in answers:
+            first = (answer or "").splitlines()
+            if first and first[0].strip():
+                return first[0].strip()
         return None
 
     @staticmethod
     def installed_packages(serial: str) -> set[str]:
         """Package names currently installed on a device, empty when adb cannot answer."""
-        try:
-            result = run_command(
-                ["adb", "-s", serial, "shell", "pm", "list", "packages"],
-                timeout=20,
-                log_command=False,
-            )
-        except SubprocessRunError as exc:
-            logger.debug("Could not list packages on %s: %s", serial, exc)
-            return set()
+        listed = AdbControl.ask(serial, "pm", "list", "packages")
         return {
             line.strip().removeprefix("package:")
-            for line in (result.stdout or "").splitlines()
+            for line in (listed or "").splitlines()
             if line.strip()
         }
 
     @staticmethod
     def resolve_emulator_serial(device_name: str) -> str | None:
         """Resolves an AVD profile name or serial to an active emulator serial number."""
-        try:
-            result = run_command(["adb", "devices"], capture_output=True, text=True)
-            if result.returncode != 0:
-                return None
-
-            devices = re.findall(r"^([^\s]+)\s+device", result.stdout, re.MULTILINE)
-            for serial in devices:
-                if serial == device_name:
-                    return serial
-
-                # If it's an emulator serial, query its AVD profile name
-                if serial.startswith("emulator-") and AdbControl.avd_name(serial) == device_name:
-                    return serial
-        except SubprocessRunError as e:
-            logger.warning("Failed to resolve emulator serial for %s: %s", device_name, e)
+        listed = AdbControl._capture(["adb", "devices"])
+        for serial in re.findall(r"^([^\s]+)\s+device", listed or "", re.MULTILINE):
+            if serial == device_name:
+                return serial
+            # An emulator serial says nothing about which AVD it is running.
+            if serial.startswith("emulator-") and AdbControl.avd_name(serial) == device_name:
+                return serial
         return None
 
     @staticmethod
@@ -357,121 +362,179 @@ class AdbControl:
         target_serial = serial or AdbControl.resolve_emulator_serial(device_name)
         if target_serial:
             logger.info("Found matching emulator serial '%s' for '%s'. Terminating.", target_serial, device_name)
-            AdbControl.run_adb_command(["adb", "-s", target_serial, "emu", "kill"], doing="kill emulator")
+            AdbControl.adb(target_serial, "emu", "kill", doing="kill emulator")
         else:
             logger.warning("No active emulator serial found matching '%s'. Skipping termination.", device_name)
 
     @staticmethod
     def mock_location(serial: str, lat: float, lng: float):
         """Mocks GPS location coordinates on the emulator."""
-        cmd = ["adb", "-s", serial, "emu", "geo", "fix", str(lng), str(lat)]
-        AdbControl.run_adb_command(cmd, doing="mock location")
+        AdbControl.adb(
+            serial, "emu", "geo", "fix", str(lng), str(lat), doing="mock location"
+        )
 
     @staticmethod
     def set_airplane_mode(serial: str, enabled: bool):
         """Enables or disables airplane mode via connectivity service."""
         action = "enable" if enabled else "disable"
-        cmd = ["adb", "-s", serial, "shell", "cmd", "connectivity", "airplane-mode", action]
-        AdbControl.run_adb_command(cmd, doing="set airplane mode")
+        AdbControl.shell(
+            serial, "cmd", "connectivity", "airplane-mode", action,
+            doing="set airplane mode",
+        )
 
     @staticmethod
     def set_battery_status(serial: str, level: int, charging: bool):
         """Overrides battery level and AC power charging status."""
         ac_val = "1" if charging else "0"
-        AdbControl.run_adb_command(["adb", "-s", serial, "shell", "dumpsys", "battery", "set", "level", str(level)], doing="set battery status")
-        AdbControl.run_adb_command(["adb", "-s", serial, "shell", "dumpsys", "battery", "set", "ac", ac_val], doing="set battery status")
+        AdbControl.shell(
+            serial, "dumpsys", "battery", "set", "level", str(level),
+            doing="set battery status",
+        )
+        AdbControl.shell(
+            serial, "dumpsys", "battery", "set", "ac", ac_val,
+            doing="set battery status",
+        )
+
+    @staticmethod
+    def reset_battery(serial: str):
+        """Hands the battery back to the real one after an override.
+
+        There is no 'set it to what it was': the framework either reports the
+        hardware or reports the override, so reset is the only honest undo.
+        """
+        AdbControl.shell(serial, "dumpsys", "battery", "reset", doing="reset battery")
 
     @staticmethod
     def set_timezone(serial: str, timezone: str):
         """Sets the system timezone via settings global service."""
-        cmd = ["adb", "-s", serial, "shell", "settings", "put", "global", "timezone", timezone]
-        AdbControl.run_adb_command(cmd, doing="set timezone")
+        AdbControl.shell(
+            serial, "settings", "put", "global", "timezone", timezone,
+            doing="set timezone",
+        )
 
     @staticmethod
     def set_app_locale(serial: str, package_id: str, locale_str: str):
         """Configures language locale settings for the target application package."""
-        cmd = ["adb", "-s", serial, "shell", "cmd", "locale", "set-app-locales", package_id, "--locales", locale_str]
-        AdbControl.run_adb_command(cmd, doing="set app locale")
+        AdbControl.shell(
+            serial, "cmd", "locale", "set-app-locales", package_id,
+            "--locales", locale_str, doing="set app locale",
+        )
 
     @staticmethod
     def set_app_permission(serial: str, package_id: str, permission: str, grant: bool):
         """Grants or revokes a specific system permission for the target package."""
         action_cmd = "grant" if grant else "revoke"
-        cmd = ["adb", "-s", serial, "shell", "pm", action_cmd, package_id, permission]
-        AdbControl.run_adb_command(cmd, doing="set app permission")
+        AdbControl.shell(
+            serial, "pm", action_cmd, package_id, permission,
+            doing="set app permission",
+        )
 
     @staticmethod
     def get_app_pid(serial: str, package_id: str) -> str:
         """Gets the active process ID (PID) of the target package."""
-        try:
-            res = run_command(["adb", "-s", serial, "shell", "pidof", package_id], capture_output=True, text=True)
-            return res.stdout.strip()
-        except SubprocessRunError as e:
-            logger.warning("Failed to get PID for %s: %s", package_id, e)
-            return ""
+        return AdbControl.ask(serial, "pidof", package_id) or ""
 
     @staticmethod
     def simulate_low_memory(serial: str, pid: str):
         """Triggers a low memory simulation (RUNNING_CRITICAL) on the target PID."""
-        cmd = ["adb", "-s", serial, "shell", "am", "send-trim-memory", pid, "RUNNING_CRITICAL"]
-        AdbControl.run_adb_command(cmd, doing="simulate low memory")
+        AdbControl.shell(
+            serial, "am", "send-trim-memory", pid, "RUNNING_CRITICAL",
+            doing="simulate low memory",
+        )
 
     @staticmethod
     def simulate_incoming_call(serial: str, phone: str):
         """Simulates an incoming GSM call on the emulator."""
-        cmd = ["adb", "-s", serial, "emu", "gsm", "call", str(phone)]
-        AdbControl.run_adb_command(cmd, doing="simulate incoming call")
+        AdbControl.adb(
+            serial, "emu", "gsm", "call", str(phone), doing="simulate incoming call"
+        )
 
     @staticmethod
     def open_deeplink(serial: str, url: str, package_id: str = None):
         """Opens a deep link URL intent via Activity Manager."""
-        cmd = ["adb", "-s", serial, "shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", url]
+        args = ["am", "start", "-a", "android.intent.action.VIEW", "-d", url]
         if package_id:
-            cmd.append(package_id)
-        AdbControl.run_adb_command(cmd, doing="open deep link")
+            args.append(package_id)
+        AdbControl.shell(serial, *args, doing="open deep link")
 
     @staticmethod
     def force_stop_app(serial: str, package_id: str):
         """Force stops the target application package."""
-        cmd = ["adb", "-s", serial, "shell", "am", "force-stop", package_id]
-        AdbControl.run_adb_command(cmd, doing="force stop app")
+        AdbControl.shell(serial, "am", "force-stop", package_id, doing="force stop app")
 
     @staticmethod
     def clear_app_data(serial: str, package_id: str):
         """Clears all storage and user data for the target application package."""
-        cmd = ["adb", "-s", serial, "shell", "pm", "clear", package_id]
-        AdbControl.run_adb_command(cmd, doing="clear app data")
+        AdbControl.shell(serial, "pm", "clear", package_id, doing="clear app data")
 
     @staticmethod
     def push_file(serial: str, local_path: str, remote_path: str):
         """Pushes a local file to the emulator filesystem."""
-        cmd = ["adb", "-s", serial, "push", local_path, remote_path]
-        AdbControl.run_adb_command(cmd, doing="push file")
+        AdbControl.adb(serial, "push", local_path, remote_path, doing="push file")
 
     @staticmethod
     def scan_media_file(serial: str, remote_path: str):
         """Broadcasts a media scan request for the specified path."""
-        cmd = [
-            "adb", "-s", serial, "shell", "am", "broadcast",
+        AdbControl.shell(
+            serial, "am", "broadcast",
             "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
-            "-d", f"file://{remote_path}"
-        ]
-        AdbControl.run_adb_command(cmd, doing="scan media file")
+            "-d", f"file://{remote_path}", doing="scan media file",
+        )
 
     @staticmethod
     def start_app_via_monkey(serial: str, package_id: str):
         """Starts the target app using the monkey tool."""
-        cmd = ["adb", "-s", serial, "shell", "monkey", "-p", package_id, "1"]
-        AdbControl.run_adb_command(cmd, doing="start app via monkey")
+        AdbControl.shell(
+            serial, "monkey", "-p", package_id, "1", doing="start app via monkey"
+        )
 
     @staticmethod
     def set_accessibility_service(serial: str, service: str, enabled: bool):
-        """Enables or disables a system accessibility service globally on the device via settings."""
-        if enabled:
-            logger.info("Registering accessibility service: %s", service)
-            AdbControl.run_adb_command(["adb", "-s", serial, "shell", "settings", "put", "secure", "enabled_accessibility_services", service], doing="set accessibility service")
-            AdbControl.run_adb_command(["adb", "-s", serial, "shell", "settings", "put", "secure", "accessibility_enabled", "1"], doing="set accessibility service")
-        else:
-            logger.info("Deregistering accessibility services")
-            AdbControl.run_adb_command(["adb", "-s", serial, "shell", "settings", "put", "secure", "enabled_accessibility_services", '""'], doing="set accessibility service")
-            AdbControl.run_adb_command(["adb", "-s", serial, "shell", "settings", "put", "secure", "accessibility_enabled", "0"], doing="set accessibility service")
+        """Adds or removes one accessibility service, leaving the others alone.
+
+        The setting holds every enabled service as one colon-separated list.
+        Writing the one service replaces that list, and writing an empty list
+        to switch one off turns off every screen reader the owner had running.
+        So the list is read, the one service is added to it or taken out of it,
+        and the result is written back.
+        """
+        listed = AdbControl.enabled_accessibility_services(serial)
+        services = [name for name in (listed or "").split(":") if name]
+
+        if enabled and service not in services:
+            services.append(service)
+        elif not enabled and service in services:
+            services.remove(service)
+
+        logger.info(
+            "%s accessibility service %s",
+            "Registering" if enabled else "Deregistering",
+            service,
+        )
+        AdbControl.set_accessibility_services(serial, ":".join(services))
+
+    @staticmethod
+    def enabled_accessibility_services(serial: str) -> Optional[str]:
+        """Every enabled accessibility service, as the setting stores them."""
+        listed = AdbControl.ask(
+            serial, "settings", "get", "secure", "enabled_accessibility_services"
+        )
+        return "" if listed in (None, "null") else listed
+
+    @staticmethod
+    def set_accessibility_services(serial: str, services: str):
+        """Writes the whole list back, and the master switch to match it.
+
+        An empty list needs the quoted empty string, because `settings put`
+        takes no argument otherwise and leaves the old value in place.
+        """
+        AdbControl.shell(
+            serial, "settings", "put", "secure",
+            "enabled_accessibility_services", services or '""',
+            doing="set the accessibility services",
+        )
+        AdbControl.shell(
+            serial, "settings", "put", "secure",
+            "accessibility_enabled", "1" if services else "0",
+            doing="set the accessibility master switch",
+        )
