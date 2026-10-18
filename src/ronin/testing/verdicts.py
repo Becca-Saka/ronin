@@ -6,12 +6,12 @@ stop and missing evidence lives in one place.
 """
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from ronin.agent.run.outcomes import DeviceRunResult
 from ronin.errors import Cause
 from ronin.testing import rules
-from ronin.testing.models import QAIssue, RuleVerification
+from ronin.testing.models import ExpectedOutcome, QAIssue, RuleVerification
 from ronin.testing.qa_planner import QAStepResponse
 
 logger = logging.getLogger(__name__)
@@ -152,8 +152,8 @@ def _violated_security_rule(verifications: List[RuleVerification]):
 
 def _missing_required_ids(
     verifications: List[RuleVerification],
-    required_outcomes: List[str],
-    security_rules: List[str],
+    required_outcomes: Sequence[ExpectedOutcome | str],
+    security_rules: Sequence[str],
 ) -> list[str]:
     """Lists the required assertions a scenario ended without evidencing.
 
@@ -166,11 +166,11 @@ def _missing_required_ids(
     be seen. A later "failed" about a different screen does not: the outcome
     was never a claim about that screen.
 
-    A security rule describes what must never happen. The planner reports on
-    every rule on every screen, so a mention alone proves nothing. A rule
-    counts as required only once some screen could have broken it. One pass
-    anywhere evidences it, and it stays evidenced whatever later screens show,
-    because a failure anywhere has already failed the scenario.
+    A security rule describes what must never happen. The auditor answers every
+    rule on every screen, so a mention alone proves nothing. A rule counts as
+    required only once some screen could have broken it. One pass anywhere
+    evidences it. It stays evidenced whatever later screens show, because a
+    failure anywhere already failed the scenario.
     """
     expected_ids = rules.ids(required_outcomes, rules.EXPECTED)
     security_ids = rules.ids(security_rules, rules.SECURITY)

@@ -430,7 +430,7 @@ class AbortReportingTests(unittest.TestCase):
                 scenario_name=f"S{n}",
                 classification="happy_path",
                 steps_instructions=["x"],
-                expected_outcomes=[],
+                expected_outcomes=["ok"],
             )
             for n in (1, 2)
         ]

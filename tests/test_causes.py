@@ -25,13 +25,13 @@ class ClassifyTests(unittest.TestCase):
         self.assertIs(cause_of(ObservationUnavailable("no screen")), Cause.DEVICE)
 
     def test_a_driver_that_lost_its_session(self):
-        """The one that ended a run today, after Appium reaped an idle session."""
+        """Appium ends a session that sends no command while a step thinks."""
         from selenium.common.exceptions import WebDriverException
 
         self.assertIs(cause_of(WebDriverException("terminated")), Cause.DEVICE)
 
     def test_a_model_service_that_refused(self):
-        """The one that ended a run today, at $5.00 of $5.00 used."""
+        """A key out of credit, a rate limit, a timeout: the service, not the app."""
         import litellm
 
         failure = litellm.exceptions.APIError(403, "Key limit exceeded", "openrouter", "m")
@@ -162,3 +162,55 @@ class VerdictCauseTests(unittest.TestCase):
 
         self.assertEqual(status, "FAILED")
         self.assertIsNone(cause)
+
+
+class RecordedCauseTests(unittest.TestCase):
+    """The run records its cause, and the gate reports it unchanged."""
+
+    def test_the_run_records_a_cause_and_not_a_string(self):
+        """Typed on DeviceRunResult, so no reader converts or guesses."""
+        from ronin.agent.run.outcomes import DeviceRunResult
+
+        field = DeviceRunResult.__dataclass_fields__["cause"]
+
+        self.assertIn("Cause", str(field.type))
+
+    def test_the_gate_reports_the_cause_the_run_recorded(self):
+        from types import SimpleNamespace
+
+        from ronin.testing.verdicts import _terminal_outcome
+
+        status, _reason, cause = _terminal_outcome(
+            run_result=SimpleNamespace(
+                status="exception", failure_reason="boom", cause=Cause.DEVICE
+            ),
+            stop_reason=None,
+            verifications=[],
+            issues=[],
+            outputs=[],
+        )
+
+        self.assertEqual(status, "ERROR")
+        self.assertIs(cause, Cause.DEVICE)
+
+    def test_a_run_that_recorded_nothing_reports_unknown(self):
+        from types import SimpleNamespace
+
+        from ronin.testing.verdicts import _terminal_outcome
+
+        _status, _reason, cause = _terminal_outcome(
+            run_result=SimpleNamespace(
+                status="exception", failure_reason="boom", cause=None
+            ),
+            stop_reason=None,
+            verifications=[],
+            issues=[],
+            outputs=[],
+        )
+
+        self.assertIs(cause, Cause.UNKNOWN)
+
+    def test_an_unrecognised_name_is_still_a_mistake(self):
+        """Nothing stores a cause as text, so leniency would only hide typos."""
+        with self.assertRaises(ValueError):
+            Cause("some_future_cause")

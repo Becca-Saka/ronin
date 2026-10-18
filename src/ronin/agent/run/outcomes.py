@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Literal, Optional
 
+from ronin.errors import Cause
 from ronin.agent.memory.history import AgentHistory
 from ronin.agent.plan.schema import DeviceStepResponse, DoneAction
 from ronin.agent.step.observation import PerceptionSnapshot
@@ -44,11 +45,12 @@ class DeviceRunResult:
     steps_executed: int
     failure_reason: Optional[str]
     history: AgentHistory
-    cause: Optional[str] = None
+    cause: Optional[Cause] = None
     """What kind of failure ended the run, read from the exception's type.
 
     Set only where an exception was caught, because that is the only place its
-    type exists. A string, so nothing below has to import the enum.
+    type exists. Typed, so no reader has to turn a string back into a cause
+    and no reader has to decide what an unrecognised string means.
     """
 
 

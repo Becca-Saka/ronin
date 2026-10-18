@@ -197,7 +197,7 @@ class DeviceAgent:
                 steps_executed=ctx.steps_executed,
                 failure_reason=f"Execution exception: {safe_error}",
                 history=ctx.history,
-                cause=cause_of(exc).value,
+                cause=cause_of(exc),
             )
 
     @staticmethod
