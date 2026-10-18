@@ -1,8 +1,7 @@
-"""The id scheme three files agree on, and the drift it exists to prevent."""
+"""The id scheme the auditor and the gate agree on, and the drift it prevents."""
 
 import unittest
 
-from ronin.agent.device.launch import SetupMode
 
 
 class RuleIdTests(unittest.TestCase):
@@ -44,39 +43,19 @@ class RuleListingTests(unittest.TestCase):
         self.assertEqual(rules.listing([], rules.SECURITY), rules.NONE_SPECIFIED)
 
 
-class PromptAgreementTests(unittest.TestCase):
-    """The planner and the auditor must name a rule the same way.
+class AuditorNamingTests(unittest.TestCase):
+    """The auditor echoes an id back and the gate matches on it.
 
-    They are told the rules separately and both echo an id back, which the gate
-    matches on. Drift between the two files would not fail anywhere — every
-    verdict would simply stop matching, and every scenario would report missing
-    evidence while its assertions visibly passed.
+    So the auditor has to name every rule exactly as `rules` spells it. Drift
+    between the two would fail nowhere: every verdict would stop matching, and
+    every scenario would report missing evidence while its assertions passed.
     """
 
     OUTCOMES = ["Order is confirmed"]
     SECURITY = ["The card number is masked"]
 
-    def _planner_prompt(self):
-        from types import SimpleNamespace
-
-        from ronin.agent.plan.planner import GROUNDING_COORDINATES
-        from ronin.testing.qa_planner import QAPlanner
-
-        planner = QAPlanner.__new__(QAPlanner)
-        planner.grounding = GROUNDING_COORDINATES
-        planner._test_case = SimpleNamespace(expected_outcomes=self.OUTCOMES, setup=SetupMode.CLEAR_DATA)
-        planner._security_rules = self.SECURITY
-        return planner._build_qa_prompt(
-            goal_lines=["Sign in"],
-            gui_elements=None,
-            history="",
-            trail=None,
-            drift_warning=None,
-            loop_nudge=None,
-        )
-
     def _auditor_prompt(self):
-        """What the auditor actually sends, not what it ought to send."""
+        """What the auditor sends, not what it ought to send."""
         from types import SimpleNamespace
         from unittest.mock import Mock
 
@@ -92,13 +71,12 @@ class PromptAgreementTests(unittest.TestCase):
             part.get("text", "") for part in messages[0].to_dict()["content"]
         )
 
-    def test_both_prompts_name_every_rule_identically(self):
+    def test_the_auditor_names_every_rule_as_the_scheme_spells_it(self):
         from ronin.testing import rules
 
-        planner, auditor = self._planner_prompt(), self._auditor_prompt()
+        auditor = self._auditor_prompt()
 
         for line in rules.labelled(self.OUTCOMES, rules.EXPECTED) + rules.labelled(
             self.SECURITY, rules.SECURITY
         ):
-            self.assertIn(line, planner, "the planner names this rule differently")
             self.assertIn(line, auditor, "the auditor names this rule differently")

@@ -89,7 +89,10 @@ For each scenario, define:
 - A clear name description
 - The classification category
 - Step-by-step instructions for the executing agent, starting from app launch
-- Expected outcomes (logical assertions) the agent must verify
+- Expected outcomes: what must be true for the scenario to pass. Every
+  scenario needs at least one. A scenario that declares none cannot be judged,
+  and it reports as unverified. The executing agent never sees these. A
+  separate component judges them against the screens the run reached.
 """
         message = TextMessage(content=prompt)
 

@@ -82,7 +82,18 @@ class GeneratedTestCase(BaseModel):
         "performance_bottleneck"
     ]
     steps_instructions: List[str]
-    expected_outcomes: List[ExpectedOutcome] = Field(default_factory=list)
+    # Required, and min_length reaches the model as minItems, so the schema
+    # the model is given says that one is needed. A scenario that declares no
+    # outcome can only report as unverified.
+    expected_outcomes: List[ExpectedOutcome] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "What must be true for this scenario to pass. Give at least one. "
+            "A separate component judges these, so a scenario that declares "
+            "none cannot be judged at all."
+        ),
+    )
     setup: SetupMode = Field(
         default=SetupMode.CLEAR_DATA,
         description=(

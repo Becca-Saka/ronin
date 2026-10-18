@@ -7,7 +7,7 @@ Returns ScenarioReport with all verifications, detected issues, and status.
 import logging
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from ronin.agent.run.agent import DeviceAgent, DeviceRunResult
 from ronin.agent.plan.planner import DeviceStepResponse
@@ -26,6 +26,7 @@ REPLAY_EXEMPT_CLASSIFICATIONS = {
 from ronin.defaults import STEP_BUDGET_FLOOR, STEP_BUDGET_PER_INSTRUCTION
 from ronin.llm.llm_client import LLMClient
 from ronin.testing.models import (
+    ExpectedOutcome,
     GeneratedTestCase,
     QAIssue,
     RuleVerification,
@@ -91,16 +92,15 @@ def _defer_first_look(step_response, assessment, first_look: bool) -> bool:
 
 
 class QAAgent:
+    """Runs one QA scenario, and keeps the clients a journey shares.
+
+    One QAAgent serves every scenario in a journey, so the model clients are
+    built once. Each scenario gets its own QAPlanner and its own QAAuditor,
+    because each carries state that must not reach the next scenario.
+    """
+
     # Class-level so an agent built without __init__ still answers sensibly.
     _grounding = GROUNDING_COORDINATES
-
-    """
-    Orchestrates a single QA test scenario using DeviceAgent + QAPlanner.
-
-    One QAAgent instance is reused across all scenarios in a journey — LLM
-    clients are created once. A fresh QAPlanner is created per scenario to
-    carry scenario-specific context (instructions, expected outcomes, rules).
-    """
 
     def __init__(
         self,
@@ -229,8 +229,7 @@ class QAAgent:
 
         qa_planner = QAPlanner(
             llm_client=self._fast_llm,
-            test_case=test_case,
-            security_rules=security_rules,
+            setup=test_case.setup,
             scrubber=self._device_agent.scrubber,
             grounding=self._grounding,
         )
@@ -379,8 +378,8 @@ class QAAgent:
         all_issues: List[QAIssue],
         qa_outputs: List[QAStepResponse],
         assessments: List[Assessment],
-        required_outcomes: List[str],
-        security_rules: List[str],
+        required_outcomes: Sequence[ExpectedOutcome | str],
+        security_rules: Sequence[str],
         all_findings: Optional[List[SensitiveFinding]] = None,
     ):
         # Feasibility stays the planner's call: it is a statement about whether

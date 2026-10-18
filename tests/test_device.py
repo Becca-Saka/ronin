@@ -231,7 +231,7 @@ class CapabilityTests(unittest.TestCase):
             scenario_name="Security",
             classification="security_compliance",
             steps_instructions=[text],
-            expected_outcomes=[],
+            expected_outcomes=["the Login button is visible"],
         )
 
     def test_network_inspection_is_rejected_before_execution(self):
@@ -298,7 +298,7 @@ class ScenarioIsolationTests(unittest.TestCase):
             scenario_name="Visible button",
             classification="happy_path",
             steps_instructions=["Verify the Login button is visible"],
-            expected_outcomes=[],
+            expected_outcomes=["the Login button is visible"],
         )
 
         report = agent.execute_scenario(

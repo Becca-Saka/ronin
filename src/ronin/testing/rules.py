@@ -1,10 +1,10 @@
 """The identifiers a verdict comes back under.
 
-Three places depend on this format, and on all three using the same format. The
-planner reads the rules. The auditor reads the rules. The gate matches a verdict
-to its rule by id. A separate copy in each file would let one drift. Drift fails silently: the
+Two places depend on this format, and on both using the same format. The
+auditor reads the rules. The gate matches a verdict to its rule by id. A
+separate copy in each file would let one drift. Drift fails silently. The
 verdicts stop matching, and every scenario reports missing evidence while its
-assertions visibly pass. So the scheme lives here, and nowhere else.
+assertions pass. So the scheme lives here, and nowhere else.
 """
 
 import re
@@ -60,8 +60,12 @@ def as_id(text, kind: str) -> Optional[str]:
     return rule_id(kind, int(bare)) if bare.isdigit() else None
 
 
-def is_kind(identifier: str, kind: str) -> bool:
-    """Whether an id belongs to this kind of rule."""
+def is_kind(identifier: Optional[str], kind: str) -> bool:
+    """Whether an id belongs to this kind of rule.
+
+    Takes an optional id because a verdict may carry none: the auditor raises
+    assertions of its own, and those name no rule.
+    """
     return (identifier or "").startswith(f"{kind}:")
 
 

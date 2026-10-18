@@ -22,6 +22,7 @@ class SetupModeTests(unittest.TestCase):
             scenario_name="s",
             classification="happy_path",
             steps_instructions=["open the app"],
+            expected_outcomes=["the app opens"],
         )
 
         self.assertIs(case.setup, SetupMode.CLEAR_DATA)

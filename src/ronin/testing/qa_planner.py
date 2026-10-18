@@ -1,11 +1,12 @@
-"""QAPlanner — DevicePlanner, told what the scenario is trying to do.
+"""Plans the actions for one QA scenario.
 
-It decides the next action and nothing else. QAAuditor judges the screen, and
-reads neither the plan nor this prompt.
+The planner receives the setup state, the scenario instructions, the current
+screen and the action history. It does not receive the expected outcomes or
+the security rules. A planner that reads an assertion can satisfy the
+assertion instead of the scenario, and its own verdicts reach no report.
 
-The scenario's own context stays here: instructions, expected outcomes and
-security rules. Deciding what to do next needs all three. Judging does not, and
-that is why the auditor does not receive them.
+QAAuditor holds the rules and never reads the plan. Neither side can arrange
+its own evidence.
 """
 
 import logging
@@ -13,20 +14,80 @@ from typing import List, Optional
 
 from pydantic import Field
 
+from ronin.agent.device.launch import SetupMode
 from ronin.agent.plan.planner import (
+    DRIFT_SECTION,
+    DescribeDeviceAction,
+    DeviceAction,
+    DevicePlanner,
+    DeviceStepResponse,
     GROUNDING_COORDINATES,
     GROUNDING_DESCRIBE,
     GROUNDING_MARKS,
-    DescribeDeviceAction,
-    DevicePlanner,
-    DeviceStepResponse,
+    KEYBOARD_HIDDEN,
+    KEYBOARD_VISIBLE,
+    LOOP_SECTION,
     MarksDeviceAction,
+    TRAIL_SECTION,
 )
 from ronin.llm.llm_client import LLMClient
 from ronin.llm.messages import MultiPartMessage
-from ronin.testing import rules
 
 logger = logging.getLogger(__name__)
+
+
+PROMPT = """You control a mobile app for one test scenario.
+Execute the scenario instructions in order. You do not judge the result.
+{setup}
+Read the screen in front of you to find where you are. Do not assume a screen.
+
+### Scenario Instructions
+{instructions}
+
+### Current UI Elements Detected {heading}
+{targets}
+{keyboard}
+### Action History (with system-observed outcomes)
+{history}
+"""
+
+FEASIBILITY = """
+### Feasibility
+A target that is absent from this screen does not make the scenario impossible.
+Navigate to the screen that holds it.
+
+Set `is_scenario_feasible` false only for a scenario this app cannot run. An
+instruction contradicts the app, or a target does not exist in the app.
+
+Do not set it false because the app did something unexpected. An app that does
+the wrong thing is the finding. If that blocks the remaining instructions, keep
+`is_scenario_feasible` true. Select `done`.
+
+Leave the screen as the app left it. Do not navigate after the last
+instruction. Do not undo what an instruction did. The final screen is the
+evidence.
+
+Do not grade the app. Another component judges every outcome and every rule.
+That component does not read your decisions.
+"""
+
+RESPONSE_INSTRUCTIONS = """
+### Response Instructions
+1. Set `current_screen` from the screenshot in front of you.
+2. Set `observation` to the visible state only. Do not plan here.
+3. Set `evaluation_previous_goal` to what the last action did. Leave it empty
+   on the first step.
+4. Set `reasoning` to the next instruction that is not complete.
+5. Set `action` to one action that advances that instruction. An instruction
+   may need several actions.
+6. Keep `goal_satisfied` false while any instruction is not complete.
+7. Set `goal_satisfied` true after the history shows the last instruction ran.
+   Select `done`. Do not read completion from the session trail. Do not read it
+   from an earlier scenario.
+8. Set `goal_evidence` to the visible state the app ended on.
+9. Set `external_navigation` true only when the action leaves the app.
+10. Set `infeasibility_reason` only when you set `is_scenario_feasible` false.
+"""
 
 
 class QAStepResponse(DeviceStepResponse):
@@ -34,14 +95,40 @@ class QAStepResponse(DeviceStepResponse):
 
     The verdicts belong to ronin.testing.qa_auditor, which judges the screen
     without reading the plan.
+
+    Four inherited descriptions are overridden here. A field description is
+    sent to the model inside the JSON schema, so one that asks the planner to
+    judge an outcome undoes a prompt that tells it not to. `ronin run` drives
+    a goal and does judge its own, which is why the base keeps that wording.
     """
 
+    goal_satisfied: bool = Field(
+        default=False,
+        description=(
+            "True only after every scenario instruction ran. Do not judge whether "
+            "the app behaved correctly. Something else judges that."
+        ),
+    )
+    goal_evidence: str = Field(
+        default="",
+        description=(
+            "The visible state the app ended on. Empty while `goal_satisfied` is false."
+        ),
+    )
+    action: DeviceAction = Field(
+        ...,
+        description=(
+            "The one action to execute next. Select `done` after the last instruction "
+            "ran, or when the app blocks the instructions that remain."
+        ),
+    )
     is_scenario_feasible: bool = Field(
         default=True,
         description=(
-            "Set False only when the scenario can never be carried out — it contradicts the app, "
-            "or the screen it needs cannot be reached from here. Not yet being on the right screen "
-            "is not infeasible: navigate there instead."
+            "False only for a scenario this app cannot run. An instruction contradicts "
+            "the app, or a target does not exist in the app. A screen you did not reach "
+            "yet is not a reason. An app that did something unexpected is not a reason "
+            "either. Keep this true and select `done`."
         ),
     )
     infeasibility_reason: Optional[str] = Field(
@@ -69,25 +156,25 @@ class DescribeQAStepResponse(QAStepResponse):
 
 class QAPlanner(DevicePlanner):
     """
-    Planning + QA audit in one LLM call.
+    Plans the actions for one QA scenario. It does not read the assertions.
     Instantiated per-scenario by QAAgent, carrying scenario-specific context.
     """
 
     def __init__(
         self,
         llm_client: LLMClient,
-        test_case,
-        security_rules: List[str] = None,
+        setup: SetupMode,
         scrubber=None,
         grounding: str = GROUNDING_COORDINATES,
     ):
         super().__init__(llm_client, grounding)
-        self._test_case = test_case
+        # The setup state, and not the scenario. A GeneratedTestCase carries
+        # the assertions, so holding one would put them a prompt edit away.
+        self._setup = setup
         from ronin.utils.secrets import SecretScrubber
 
         # Shared with the device agent so a value declared once is masked everywhere.
         self._scrubber = scrubber or SecretScrubber()
-        self._security_rules = security_rules or []
 
     def step_response_model(self):
         """The QA schema the model answers in, matched to the grounding mode.
@@ -138,7 +225,7 @@ class QAPlanner(DevicePlanner):
         message.add_image(current_image_bytes)
         message.add_text(prompt)
 
-        logger.info("Querying QAPlanner for next step with QA auditing...")
+        logger.info("Querying QAPlanner for the next action...")
         response: QAStepResponse = self.llm.generate_response(
             [message], self.step_response_model()
         )
@@ -165,69 +252,25 @@ class QAPlanner(DevicePlanner):
         marks: Optional[list] = None,
         screen_height: int = 0,
     ) -> str:
-        expected_outcomes = self._test_case.expected_outcomes or []
-        security_rules = self._security_rules
-
-        prompt = f"""You are a closed-loop mobile E2E testing agent performing QA validation on a mobile app.
-Your task is to execute the following test scenario and verify all expected outcomes and security rules.
-{self._test_case.setup.describe()}
-Read the screen in front of you to find where you are. Do not assume a screen.
-
-### Test Scenario Instructions
-{chr(10).join(f"- {step}" for step in goal_lines)}
-
-### Expected Outcomes / Assertions
-{rules.listing(expected_outcomes, rules.EXPECTED)}
-
-### Custom Security Rules to Enforce
-{rules.listing(security_rules, rules.SECURITY)}
-
-### Current UI Elements Detected {self._target_heading()}
-{self.format_targets(gui_elements, marks, screen_height)}
-{"" if keyboard_open is None else chr(10) + "### Keyboard State" + chr(10) + ("VISIBLE — the soft keyboard is currently displayed. Elements in the lower ~40% of the screen may be keyboard keys, not app UI." if keyboard_open else "HIDDEN — the soft keyboard is not visible. All detected elements are app UI.")}
-
-### Action History (with system-observed outcomes)
-{history or "No actions executed yet."}
-"""
+        prompt = PROMPT.format(
+            setup=self._setup.describe(),
+            instructions="\n".join(f"- {step}" for step in goal_lines),
+            heading=self._target_heading(),
+            targets=self.format_targets(gui_elements, marks, screen_height),
+            keyboard=(
+                ""
+                if keyboard_open is None
+                else (KEYBOARD_VISIBLE if keyboard_open else KEYBOARD_HIDDEN)
+            ),
+            history=history or "No actions executed yet.",
+        )
         if drift_warning:
-            prompt += f"""
-### CONTEXT DRIFT WARNING
-{drift_warning}
-"""
+            prompt += DRIFT_SECTION.format(drift=drift_warning)
         if trail:
-            prompt += f"""
-### Session Trail — App Knowledge From This Session
-{trail}
-"""
+            prompt += TRAIL_SECTION.format(trail=trail)
         if loop_nudge:
-            prompt += f"""
-### LOOP DETECTION ADVISORY
-{loop_nudge}
-"""
-        prompt += """
-### Scenario Feasibility
-A scenario starts from a freshly launched app, so the screen it targets usually
-needs navigating to first. If its elements are not here yet, work towards them —
-sign in, open the relevant section — and keep going. Mark `is_scenario_feasible`
-false only when the scenario is genuinely impossible: it contradicts how the app
-works, or its target cannot be reached from here at all.
-
-Do not grade the app. Whether the expected outcomes hold, whether a security
-rule is met, and whether anything on screen looks wrong are judged separately,
-by something that is not told what you decided to do.
-"""
+            prompt += LOOP_SECTION.format(nudge=loop_nudge)
+        prompt += FEASIBILITY
         prompt += self._action_vocabulary() + self._action_constraints()
-        prompt += """
-### Response Instructions
-1. Set `current_screen` to the descriptive name of the current screen.
-2. Set `evaluation_previous_goal`: honestly assess the previous action outcome. Empty on first step.
-3. Set `observation`: describe only what is currently visible on the screen (UI state, visible fields, keyboard, overlays). No action plans here.
-4. Set `reasoning`: explain why you chose the next action based on the observation.
-5. Audit QA issues and populate `detected_issues` (each must include `severity`: low, medium, high, or critical).
-6. Evaluate all expected outcomes, security rules, and dynamic assertions; populate `rule_verifications`.
-7. If the scenario's target screen has not been reached yet, navigate towards it. Set `is_scenario_feasible = False` with an `infeasibility_reason` and action `done` only when it is genuinely unreachable or contradicts the app.
-8. If all objectives are observably met, set `goal_satisfied = true`, describe the visible proof in `goal_evidence`, and set action to `done`. Never infer completion from the session trail or prior scenarios.
-9. Otherwise, set `action` to the single next action to execute.
-10. Set `external_navigation = True` if the action will temporarily leave the app.
-"""
+        prompt += RESPONSE_INSTRUCTIONS
         return prompt
