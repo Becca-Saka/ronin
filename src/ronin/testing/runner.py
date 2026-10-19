@@ -31,17 +31,6 @@ from .reports import save_junit_report, save_markdown_report
 logger = logging.getLogger(__name__)
 
 
-CLASSIFICATION_ORDER = {
-    "happy_path": 0,
-    "security_compliance": 1,
-    "accessibility_audit": 2,
-    "edge_case": 3,
-    "boundary_test": 4,
-    "performance_bottleneck": 5,
-    "destructive_monkey": 6,
-}
-
-
 def is_session_responsive(device_control) -> bool:
     """Lightweight check to verify if the webdriver connection and instrumentation server are alive."""
     if not device_control or not device_control.driver:
@@ -177,8 +166,23 @@ class RoninTestRunner:
             device_control = session.start(is_headless=self.headless)
             perception = for_grounding(self.grounding, session)
 
-            scenarios = ScenarioGenerator(device_agent.llm).generate_scenarios(journey)
-            scenarios.sort(key=lambda s: CLASSIFICATION_ORDER.get(s.classification, 99))
+            # Already in priority order: the generator walks the cells that
+            # way, so a run that dies part way has done the P0 cells.
+            suite = ScenarioGenerator(device_agent.llm).generate_suite(journey)
+            scenarios = suite.scenarios
+            # A cell nothing covered is recorded before the first scenario
+            # runs, so a reader sees the gap even if the run dies next.
+            for gap in suite.uncovered:
+                scenario_reports.append(
+                    ScenarioReport(
+                        test_id=gap.cell.test_id,
+                        scenario_name=f"Uncovered cell {gap.cell.key}",
+                        cell=gap.cell.key,
+                        status=gap.status,
+                        cause=gap.cause.value,
+                        failure_reason=gap.reason,
+                    )
+                )
 
             logger.info(
                 "Successfully decomposed journey '%s' into %d scenarios:",
@@ -187,9 +191,10 @@ class RoninTestRunner:
             )
             for idx, s in enumerate(scenarios):
                 logger.info(
-                    "  %d. [%s] %s (%s)",
+                    "  %d. [%s %s] %s (%s)",
                     idx + 1,
-                    s.classification.upper(),
+                    s.priority.value,
+                    s.cell,
                     s.scenario_name,
                     s.test_id,
                 )
@@ -211,12 +216,12 @@ class RoninTestRunner:
 
                 current_component = f"scenario:{scenario.test_id}"
                 logger.info(
-                    "Executing Scenario %d/%d: %s (%s) - Category: %s",
+                    "Executing Scenario %d/%d: %s (%s) - Cell: %s",
                     idx + 1,
                     total_scenarios,
                     scenario.scenario_name,
                     scenario.test_id,
-                    scenario.classification.upper(),
+                    scenario.cell,
                 )
                 logger.info("========================================")
 
@@ -308,7 +313,7 @@ class RoninTestRunner:
                     ScenarioReport(
                         test_id="usage_report",
                         scenario_name="LLM usage report",
-                        classification="infrastructure",
+                        cell="infrastructure",
                         status="ERROR",
                         failure_reason=f"Failed to serialize LLM usage: {usage_err}",
                     )
@@ -363,7 +368,7 @@ class RoninTestRunner:
             ScenarioReport(
                 test_id=artifact_name,
                 scenario_name=artifact_name.replace("_", " ").title(),
-                classification="infrastructure",
+                cell="infrastructure",
                 status="ERROR",
                 failure_reason=f"Failed to write {artifact_name}: {error}",
             )
@@ -388,7 +393,7 @@ class RoninTestRunner:
                 ScenarioReport(
                     test_id="scenario_generation",
                     scenario_name="Scenario generation",
-                    classification="happy_path",
+                    cell="infrastructure",
                     status="ERROR",
                     failure_reason=reason,
                 )
@@ -403,7 +408,7 @@ class RoninTestRunner:
                 ScenarioReport(
                     test_id=scenario.test_id,
                     scenario_name=scenario.scenario_name,
-                    classification=scenario.classification,
+                    cell=scenario.cell,
                     status="ABORTED",
                     cause=cause_of(error).value,
                     failure_reason=reason,

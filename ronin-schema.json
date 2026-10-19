@@ -2,6 +2,77 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://raw.githubusercontent.com/Becca-Saka/ronin/master/ronin-schema.json",
   "$defs": {
+    "Category": {
+      "description": "What a scenario looks for.",
+      "enum": [
+        "functional",
+        "input",
+        "security",
+        "accessibility",
+        "performance",
+        "network",
+        "lifecycle",
+        "permission"
+      ],
+      "title": "Category",
+      "type": "string"
+    },
+    "CoverageSpec": {
+      "additionalProperties": false,
+      "description": "One category, and which shapes of test to write for it.\n\nEight categories and nine types give up to seventy-two pairs. One model\ncall per pair is only affordable where a file says which pairs matter. A\npair nothing declares is never generated, and the report names it as\nuncovered.",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/Category",
+          "description": "What these scenarios look for."
+        },
+        "types": {
+          "description": "Which shapes of test to write for this category.",
+          "items": {
+            "$ref": "#/$defs/ScenarioType"
+          },
+          "minItems": 1,
+          "title": "Types",
+          "type": "array"
+        },
+        "priority": {
+          "$ref": "#/$defs/Priority",
+          "default": "P1",
+          "description": "Which cells a run has to finish first, if it cannot finish all."
+        }
+      },
+      "required": [
+        "category",
+        "types"
+      ],
+      "title": "CoverageSpec",
+      "type": "object"
+    },
+    "DeclaredValue": {
+      "additionalProperties": false,
+      "description": "A declared value, whether it is sensitive, and what the app owes it.\n\nA value marked secret is replaced by its name in everything Ronin writes\ndown. Nothing else is masked, so a credential written straight into the\njourney text is not hidden.",
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "secret": {
+          "default": false,
+          "title": "Secret",
+          "type": "boolean"
+        },
+        "refused": {
+          "default": false,
+          "description": "True where this app refuses the value, which is a fact about the app that no reading of the value could find. A scenario about a refusal names one of these, and the declaration answers for it.",
+          "title": "Refused",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "DeclaredValue",
+      "type": "object"
+    },
     "DeviceSpec": {
       "additionalProperties": false,
       "description": "The target a run drives.",
@@ -119,7 +190,7 @@
           "additionalProperties": {
             "anyOf": [
               {
-                "$ref": "#/$defs/SecretValue"
+                "$ref": "#/$defs/DeclaredValue"
               },
               {
                 "type": "string"
@@ -143,25 +214,31 @@
       "title": "JourneySpec",
       "type": "object"
     },
-    "SecretValue": {
-      "additionalProperties": false,
-      "description": "A declared value, and whether it is sensitive.\n\nA value marked secret is replaced by its name in everything Ronin writes\ndown. Nothing else is masked, so a credential written straight into the\njourney text is not hidden.",
-      "properties": {
-        "value": {
-          "title": "Value",
-          "type": "string"
-        },
-        "secret": {
-          "default": false,
-          "title": "Secret",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "value"
+    "Priority": {
+      "description": "Which cells a run has to finish first.\n\nA run can die part way: a device drops, a provider refuses, a person\nstops it. The order decides what it got through, so a product says which\ncells matter rather than a table in Ronin.",
+      "enum": [
+        "P0",
+        "P1",
+        "P2"
       ],
-      "title": "SecretValue",
-      "type": "object"
+      "title": "Priority",
+      "type": "string"
+    },
+    "ScenarioType": {
+      "description": "What shape a scenario takes.",
+      "enum": [
+        "happy_path",
+        "negative",
+        "boundary",
+        "empty",
+        "concurrency",
+        "interruption",
+        "recovery",
+        "role",
+        "exploratory"
+      ],
+      "title": "ScenarioType",
+      "type": "string"
     },
     "WorkflowSpec": {
       "additionalProperties": false,
@@ -361,7 +438,7 @@
           "additionalProperties": {
             "anyOf": [
               {
-                "$ref": "#/$defs/SecretValue"
+                "$ref": "#/$defs/DeclaredValue"
               },
               {
                 "type": "string"
@@ -464,6 +541,56 @@
           },
           "title": "Security Rules",
           "type": "array"
+        },
+        "coverage": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/CoverageSpec"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Coverage"
+        },
+        "actors": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/DeclaredValue"
+                    },
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Other accounts a role scenario signs in as, by name. Each holds whatever this app signs in with, under names you choose.",
+          "title": "Actors"
         }
       },
       "title": "WorkflowSpec",
@@ -667,7 +794,7 @@
       "additionalProperties": {
         "anyOf": [
           {
-            "$ref": "#/$defs/SecretValue"
+            "$ref": "#/$defs/DeclaredValue"
           },
           {
             "type": "string"
@@ -785,6 +912,56 @@
       },
       "title": "Security Rules",
       "type": "array"
+    },
+    "coverage": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/CoverageSpec"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Coverage"
+    },
+    "actors": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DeclaredValue"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Other accounts a role scenario signs in as, by name. Each holds whatever this app signs in with, under names you choose.",
+      "title": "Actors"
     }
   },
   "title": "Ronin configuration",

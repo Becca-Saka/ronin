@@ -59,3 +59,38 @@ def snapshot(marks=(), gui_elements=(), png=None, phash="p") -> PerceptionSnapsh
         current_phash=phash,
         timestamp=STAMP,
     )
+
+
+def qa_prompt(goal_lines=("Sign in",), setup=None):
+    """The prompt a real QAPlanner builds, through its real constructor.
+
+    Through the constructor, so a field it stopped taking cannot be assigned
+    back in and go on looking present.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from ronin.agent.device.launch import SetupMode
+    from ronin.testing.qa_planner import QAPlanner
+
+    llm = SimpleNamespace(generate_response=Mock())
+    planner = QAPlanner(llm_client=llm, setup=setup or SetupMode.CLEAR_DATA)
+    return planner._build_qa_prompt(
+        goal_lines=list(goal_lines),
+        gui_elements=None,
+        history="",
+        trail=None,
+        drift_warning=None,
+        loop_nudge=None,
+    )
+
+
+def walk(*instructions: str):
+    """Prose actions as the typed steps a scenario carries.
+
+    Built through the real step models, so an instruction a step would refuse
+    is refused here too rather than reaching a test as a bare string.
+    """
+    from ronin.testing.steps import ActionStep
+
+    return [ActionStep(instruction=text) for text in instructions]

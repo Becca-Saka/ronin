@@ -15,8 +15,9 @@ from pydantic import ValidationError
 
 from ronin.config import SETTING_ALIASES, STRUCTURE_KEYS, ConfigError, expand_device
 from ronin.testing.journey_env import resolve, substitute
-from ronin.testing.models import UserJourney
-from ronin.schema import RoninFile, explain
+from ronin.testing.models import Actor, UserJourney
+from ronin.testing.taxonomy import DEFAULT_COVERAGE, CoverageCell, indexed
+from ronin.schema import CoverageSpec, RoninFile, explain
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +59,103 @@ def _anchor(settings: dict[str, Any], base: Path) -> dict[str, Any]:
     return anchored
 
 
-def _journey(data: dict[str, Any], shared_env: dict[str, Any], index: int) -> UserJourney:
-    """One test, with the workflow's environment behind its own."""
+def _cells(declared: Any, where: str) -> list[CoverageCell]:
+    """The cells one `coverage:` block asks for, one per category and type.
+
+    Returns the default set where nothing is declared, so a file gets a
+    useful suite without having to describe one.
+
+    Raises:
+        ConfigError: If the block is not a list, is empty, or is not valid.
+    """
+    if declared is None:
+        return list(DEFAULT_COVERAGE)
+    if not isinstance(declared, list):
+        raise ConfigError(f"'coverage' in {where} must be a list of categories.")
+    # An empty list is refused rather than read as "cover nothing". A run with
+    # no cells writes a report of zero scenarios, and zero failures reads to
+    # CI as a pass.
+    if not declared:
+        raise ConfigError(
+            f"'coverage' in {where} is empty. Remove the key to use the "
+            f"default cells, or name the categories to cover."
+        )
+    pairs = []
+    for item in declared:
+        try:
+            spec = CoverageSpec.model_validate(item)
+        except ValidationError as exc:
+            problems = "; ".join(explain(exc))
+            raise ConfigError(f"'coverage' in {where} is not valid: {problems}") from None
+        pairs.extend(
+            (spec.category, wanted, spec.priority) for wanted in spec.types
+        )
+    # Indexed here rather than defaulted on the cell: a file may name the
+    # same pair twice, and two cells sharing a key would share a test id.
+    return indexed(pairs)
+
+
+def _actors(declared: Any, where: str) -> tuple[dict[str, Actor], dict[str, str]]:
+    """Each declared account, and any secret among their values.
+
+    An account holds whatever this app signs in with, under the app's own
+    names. A secret is masked under the path the file wrote it at, such as
+    `actors.editor.password`. A name Ronin invented would appear in a report
+    that nobody could trace back to the file.
+
+    Raises:
+        ConfigError: If the block, or an account inside it, is not valid.
+    """
+    if declared is None:
+        return {}, {}
+    if not isinstance(declared, dict):
+        raise ConfigError(f"'actors' in {where} must be a mapping of name to account.")
+    actors: dict[str, Actor] = {}
+    secrets: dict[str, str] = {}
+    for name, block in declared.items():
+        if not isinstance(block, dict) or not block:
+            raise ConfigError(
+                f"'actors.{name}' in {where} must be a mapping of name to value."
+            )
+        try:
+            values, found, _ = resolve({"env": block})
+        except ValueError as problem:
+            raise ConfigError(
+                f"'actors.{name}' in {where} is not valid: {problem}"
+            ) from None
+        actors[str(name)] = Actor(values=values)
+        secrets.update({f"actors.{name}.{key}": value for key, value in found.items()})
+    return actors, secrets
+
+
+def _every_name(values: dict[str, str], actors: dict[str, Actor]) -> dict[str, str]:
+    """One namespace of every value a scenario may name.
+
+    An account's values join it under a dotted name, so a step can reach
+    `actors.editor.email` without anything having to know where it came from.
+    """
+    named = dict(values)
+    for actor, account in actors.items():
+        named.update(
+            {f"actors.{actor}.{key}": value for key, value in account.values.items()}
+        )
+    return named
+
+
+def _journey(
+    data: dict[str, Any],
+    shared_env: dict[str, Any],
+    index: int,
+    coverage: Any = None,
+    actors: Any = None,
+    where: str = "the file",
+) -> UserJourney:
+    """One test, with the workflow's environment, coverage and accounts behind its own."""
     merged = dict(data)
     merged["env"] = {**shared_env, **(data.get("env") or {})}
-    values, secrets = resolve(merged)
+    declared, secrets, refused = resolve(merged)
+    declared_actors, actor_secrets = _actors(actors, where)
+    values = _every_name(declared, declared_actors)
     description = data.get("journey", data.get("description", ""))
     return UserJourney(
         id=str(data.get("id", f"journey_{index:02d}")),
@@ -71,11 +164,21 @@ def _journey(data: dict[str, Any], shared_env: dict[str, Any], index: int) -> Us
         security_rules=[
             substitute(rule, values) for rule in data.get("security_rules", [])
         ],
-        secrets=secrets,
+        secrets={**secrets, **actor_secrets},
+        values=values,
+        refused=refused,
+        actors=declared_actors,
+        coverage=_cells(coverage, where),
     )
 
 
-def _journeys_of(block: dict[str, Any], shared_env: dict[str, Any], where: str) -> list[UserJourney]:
+def _journeys_of(
+    block: dict[str, Any],
+    shared_env: dict[str, Any],
+    where: str,
+    coverage: Any = None,
+    actors: Any = None,
+) -> list[UserJourney]:
     listed = block.get("journeys")
     if listed is None and "journey" in block:
         listed = [block]
@@ -83,7 +186,10 @@ def _journeys_of(block: dict[str, Any], shared_env: dict[str, Any], where: str) 
         raise ConfigError(f"{where} has no journeys.")
     if not isinstance(listed, list):
         raise ConfigError(f"'journeys' in {where} must be a list.")
-    return [_journey(item, shared_env, index + 1) for index, item in enumerate(listed)]
+    return [
+        _journey(item, shared_env, index + 1, coverage, actors, where)
+        for index, item in enumerate(listed)
+    ]
 
 
 def _shared_env(block: dict[str, Any]) -> dict[str, Any]:
@@ -129,10 +235,18 @@ def load_workflows(path: Path, raw: Any = None) -> list[Workflow]:
 
     top = _normalise(raw, str(path))
     shared = _shared_env(raw)
+    top_coverage = raw.get("coverage")
+    top_actors = raw.get("actors")
 
     declared = raw.get("workflows")
     if declared is None:
-        return [Workflow("", _anchor(top, base), _journeys_of(raw, shared, str(path)))]
+        return [
+            Workflow(
+                "",
+                _anchor(top, base),
+                _journeys_of(raw, shared, str(path), top_coverage, top_actors),
+            )
+        ]
     if not isinstance(declared, dict):
         raise ConfigError(f"'workflows' in {path} must be a mapping of name to workflow.")
 
@@ -143,8 +257,16 @@ def load_workflows(path: Path, raw: Any = None) -> list[Workflow]:
             raise ConfigError(f"{where} in {path} must be a mapping.")
         settings = {**top, **_normalise(block, where)}
         env = {**shared, **_shared_env(block)}
+        # A workflow owns one app, so its coverage replaces the file's rather
+        # than adding to it. Half a declared set would be worse than either.
+        coverage = block.get("coverage", top_coverage)
+        actors = {**(top_actors or {}), **(block.get("actors") or {})} or None
         workflows.append(
-            Workflow(str(name), _anchor(settings, base), _journeys_of(block, env, where))
+            Workflow(
+                str(name),
+                _anchor(settings, base),
+                _journeys_of(block, env, where, coverage, actors),
+            )
         )
     return workflows
 

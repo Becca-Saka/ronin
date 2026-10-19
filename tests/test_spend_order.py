@@ -43,7 +43,7 @@ class SpendOrderTests(unittest.TestCase):
             def __init__(self, *_, **__):
                 pass
 
-            def generate_scenarios(self, _journey):
+            def generate_suite(self, _journey):
                 order.append("generator")
                 raise RuntimeError("stop here")
 

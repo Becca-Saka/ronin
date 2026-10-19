@@ -1,6 +1,8 @@
 """What counts as evidence that a scenario passed."""
 
 import unittest
+
+from fakes import walk
 from types import SimpleNamespace
 
 
@@ -356,7 +358,7 @@ class SecurityCoverageTests(unittest.TestCase):
         return ScenarioReport(
             test_id="TS_1",
             scenario_name="Scenario",
-            classification="happy_path",
+            cell="functional.happy_path.0",
             status="PASSED",
             rule_verifications=[
                 RuleVerification(
@@ -428,15 +430,21 @@ class AbortReportingTests(unittest.TestCase):
             GeneratedTestCase(
                 test_id=f"TS_{n}",
                 scenario_name=f"S{n}",
-                classification="happy_path",
-                steps_instructions=["x"],
+                cell="functional.happy_path.0",
+                category="functional",
+                scenario_type="happy_path",
+                priority="P0",
+                steps=walk("Launch the app."),
                 expected_outcomes=["ok"],
             )
             for n in (1, 2)
         ]
         reports = [
             ScenarioReport(
-                test_id="TS_1", scenario_name="S1", classification="happy_path", status="PASSED"
+                test_id="TS_1",
+                scenario_name="S1",
+                cell="functional.happy_path.0",
+                status="PASSED",
             )
         ]
 

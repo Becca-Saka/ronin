@@ -15,6 +15,8 @@ from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ronin.testing.taxonomy import Category, Priority, ScenarioType
+
 PLATFORMS = ("android", "ios")
 GROUNDINGS = ("coordinates", "marks", "describe")
 
@@ -36,8 +38,8 @@ class DeviceSpec(Strict):
     headless: Optional[bool] = Field(default=None, description="Run the emulator without a window.")
 
 
-class SecretValue(Strict):
-    """A declared value, and whether it is sensitive.
+class DeclaredValue(Strict):
+    """A declared value, whether it is sensitive, and what the app owes it.
 
     A value marked secret is replaced by its name in everything Ronin writes
     down. Nothing else is masked, so a credential written straight into the
@@ -46,9 +48,17 @@ class SecretValue(Strict):
 
     value: str
     secret: bool = False
+    refused: bool = Field(
+        default=False,
+        description=(
+            "True where this app refuses the value, which is a fact about the "
+            "app that no reading of the value could find. A scenario about a "
+            "refusal names one of these, and the declaration answers for it."
+        ),
+    )
 
 
-EnvValue = Union[SecretValue, str, int, float, bool]
+EnvValue = Union[DeclaredValue, str, int, float, bool]
 
 
 class Settings(Strict):
@@ -75,6 +85,25 @@ class Settings(Strict):
     record: Optional[bool] = Field(default=None, description="Record the screen during the run.")
     record_session: Optional[bool] = Field(
         default=None, description="Another spelling of 'record'."
+    )
+
+
+class CoverageSpec(Strict):
+    """One category, and which shapes of test to write for it.
+
+    Eight categories and nine types give up to seventy-two pairs. One model
+    call per pair is only affordable where a file says which pairs matter. A
+    pair nothing declares is never generated, and the report names it as
+    uncovered.
+    """
+
+    category: Category = Field(description="What these scenarios look for.")
+    types: list[ScenarioType] = Field(
+        min_length=1, description="Which shapes of test to write for this category."
+    )
+    priority: Priority = Field(
+        default=Priority.P1,
+        description="Which cells a run has to finish first, if it cannot finish all.",
     )
 
 
@@ -106,6 +135,14 @@ class WorkflowSpec(Settings):
     name: Optional[str] = None
     description: Optional[str] = None
     security_rules: list[str] = Field(default_factory=list)
+    coverage: Optional[list[CoverageSpec]] = None
+    actors: Optional[dict[str, dict[str, EnvValue]]] = Field(
+        default=None,
+        description=(
+            "Other accounts a role scenario signs in as, by name. Each holds "
+            "whatever this app signs in with, under names you choose."
+        ),
+    )
 
 
 class RoninFile(Settings):
@@ -125,6 +162,14 @@ class RoninFile(Settings):
     name: Optional[str] = None
     description: Optional[str] = None
     security_rules: list[str] = Field(default_factory=list)
+    coverage: Optional[list[CoverageSpec]] = None
+    actors: Optional[dict[str, dict[str, EnvValue]]] = Field(
+        default=None,
+        description=(
+            "Other accounts a role scenario signs in as, by name. Each holds "
+            "whatever this app signs in with, under names you choose."
+        ),
+    )
 
 
 def _where(location: tuple[Any, ...]) -> str:

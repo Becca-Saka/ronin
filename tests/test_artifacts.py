@@ -3,6 +3,8 @@
 import json
 import tempfile
 import unittest
+
+from fakes import walk
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,8 +19,11 @@ class ArtifactSafetyTests(unittest.TestCase):
         return GeneratedTestCase(
             test_id="TS_1",
             scenario_name="Checkout",
-            classification="happy_path",
-            steps_instructions=["Enter 'password123' in Password"],
+            cell="functional.happy_path.0",
+            category="functional",
+            scenario_type="happy_path",
+            priority="P0",
+            steps=walk("Enter 'password123' in Password"),
             expected_outcomes=["Do not display '4111222233334444'"],
         )
 
@@ -77,14 +82,14 @@ class ArtifactSafetyTests(unittest.TestCase):
                 ScenarioReport(
                     test_id="one",
                     scenario_name="Harness",
-                    classification="happy_path",
+                    cell="functional.happy_path.0",
                     status="ERROR",
                     failure_reason="connection refused",
                 ),
                 ScenarioReport(
                     test_id="two",
                     scenario_name="Evidence",
-                    classification="happy_path",
+                    cell="functional.happy_path.0",
                     status="UNVERIFIED",
                     failure_reason="missing evidence",
                 ),
@@ -276,8 +281,11 @@ class ScenarioProgressTests(unittest.TestCase):
             GeneratedTestCase(
                 test_id=f"TS_00{n}",
                 scenario_name=f"Scenario {n}",
-                classification="happy_path",
-                steps_instructions=["open app"],
+                cell="functional.happy_path.0",
+                category="functional",
+                scenario_type="happy_path",
+                priority="P0",
+                steps=walk("Open the app."),
                 expected_outcomes=["ok"],
             )
             for n in (1, 2)
@@ -308,7 +316,7 @@ class ScenarioProgressTests(unittest.TestCase):
                 ScenarioReport(
                     test_id="TS_001",
                     scenario_name="Scenario 1",
-                    classification="happy_path",
+                    cell="functional.happy_path.0",
                     status="FAILED",
                     duration=12.34,
                     steps_executed=9,
@@ -336,8 +344,11 @@ class ProgressAbortTests(unittest.TestCase):
             GeneratedTestCase(
                 test_id=f"TS_00{n}",
                 scenario_name=f"S{n}",
-                classification="happy_path",
-                steps_instructions=["x"],
+                cell="functional.happy_path.0",
+                category="functional",
+                scenario_type="happy_path",
+                priority="P0",
+                steps=walk("Launch the app."),
                 expected_outcomes=["ok"],
             )
             for n in (1, 2)

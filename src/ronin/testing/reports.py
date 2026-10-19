@@ -129,7 +129,7 @@ def _append_scenario(
         [
             f"## Scenario {index}: {_scrub(scrubber, scenario.scenario_name)} "
             f"({scenario.test_id})",
-            f"* **Classification**: `{scenario.classification}`",
+            f"* **Cell**: `{scenario.cell}`",
             f"* **Status**: {icon} {scenario.status}"
             + (f" ({scenario.cause})" if scenario.cause else ""),
             f"* **Steps Executed**: {scenario.steps_executed}",

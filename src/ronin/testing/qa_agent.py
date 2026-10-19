@@ -15,14 +15,6 @@ from ronin.agent.memory.trail import SessionTrail
 from ronin.agent.device.platform import Platform
 from ronin.agent.memory.replay import ReplayLedger
 
-# Replay skips perception and auditing on the screens it passes through, so
-# any scenario whose assertions can apply mid-navigation must not use it.
-REPLAY_EXEMPT_CLASSIFICATIONS = {
-    "accessibility_audit",
-    "destructive_monkey",
-    "security_compliance",
-    "performance_bottleneck",
-}
 from ronin.defaults import STEP_BUDGET_FLOOR, STEP_BUDGET_PER_INSTRUCTION
 from ronin.llm.llm_client import LLMClient
 from ronin.testing.models import (
@@ -48,7 +40,7 @@ from ronin.testing.verdicts import (
 from ronin.testing.qa_auditor import Assessment, QAAuditor, ScreenWatch
 from ronin.testing.qa_planner import QAPlanner, QAStepResponse
 from ronin.errors import Cause
-from ronin.testing import transitions
+from ronin.testing import taxonomy, transitions
 
 from ronin.agent.actuation.actions import WaitAction
 
@@ -224,7 +216,7 @@ class QAAgent:
             return ScenarioReport(
                 test_id=test_case.test_id,
                 scenario_name=test_case.scenario_name,
-                classification=test_case.classification,
+                cell=test_case.cell,
                 status="UNSUPPORTED",
                 cause=Cause.SCENARIO.value,
                 duration=round(time.time() - start_time, 2),
@@ -243,7 +235,11 @@ class QAAgent:
         )
 
         replay = self._device_agent.replay_ledger
-        audits_every_screen = test_case.classification in REPLAY_EXEMPT_CLASSIFICATIONS
+        # Replay skips perception and auditing on the screens it walks, so a
+        # cell whose claims apply mid-navigation must not use it.
+        audits_every_screen = taxonomy.audits_every_screen(
+            test_case.category, test_case.scenario_type
+        )
         if audits_every_screen:
             # Replayed screens are never perceived or audited, which is the
             # whole point of these scenarios.
@@ -349,7 +345,7 @@ class QAAgent:
         return ScenarioReport(
             test_id=test_case.test_id,
             scenario_name=test_case.scenario_name,
-            classification=test_case.classification,
+            cell=test_case.cell,
             status=status,
             cause=cause.value if cause else None,
             duration=round(duration, 2),

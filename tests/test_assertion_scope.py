@@ -2,6 +2,8 @@
 
 import unittest
 
+from fakes import walk
+
 
 def _outcome(statement, scope=None):
     from ronin.testing.models import AssertionScope, ExpectedOutcome
@@ -19,8 +21,11 @@ class ScopeDefaultTests(unittest.TestCase):
         case = GeneratedTestCase(
             test_id="t",
             scenario_name="s",
-            classification="happy_path",
-            steps_instructions=["open the app"],
+            cell="functional.happy_path.0",
+            category="functional",
+            scenario_type="happy_path",
+            priority="P0",
+            steps=walk("Open the app."),
             expected_outcomes=["The order status screen shows CONFIRMING"],
         )
 

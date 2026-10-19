@@ -1,120 +1,370 @@
+"""Writing one scenario for one declared cell.
+
+One call used to produce the whole suite, and the model chose the topics, the
+count, the test data and the identity of every scenario. None of those are a
+model's to choose. A category with no type beside it leaves the shape of a
+test unsaid. A value invented for an app the model cannot inspect is a guess.
+
+So Ronin enumerates the cells and asks for one scenario each. The model is
+told which cell, handed the values it may use, and answers with the walk and
+the outcomes. Ronin stamps the identity, because Ronin knows which cell it
+asked about.
+
+A journey's security rules reach a security cell only. The auditor reads
+every rule on every screen of every scenario already, so a cell about
+something else gains nothing from seeing them. A security cell needs them,
+because reaching the screen where a rule can break is navigation that only
+an instruction can ask for.
+"""
+
 import logging
-from pydantic import BaseModel, Field
-from typing import List
+from dataclasses import dataclass, field
+from typing import Literal
+
+from pydantic import ValidationError
+
+from ronin.agent.actuation.actions import CapabilityKind
+from ronin.errors import Cause, cause_of
 from ronin.llm.llm_client import LLMClient
 from ronin.llm.messages import TextMessage
-from .models import UserJourney, GeneratedTestCase
+from ronin.testing import steps
+from ronin.testing.journey_env import substitute
+from ronin.testing.models import (
+    ExpectedOutcome,
+    GeneratedTestCase,
+    ScenarioDraft,
+    UserJourney,
+)
+from ronin.testing.step_language import ACTION_VERBS
+from ronin.testing.taxonomy import (
+    SUPPORTED_CATEGORIES,
+    Category,
+    CoverageCell,
+    ScenarioType,
+    describe,
+    ordered,
+)
+from ronin.utils.secrets import SecretScrubber
 
 logger = logging.getLogger(__name__)
 
 GENERATION_ATTEMPTS = 3
-MAX_GENERATED_SCENARIOS = 10
 
-class GeneratedTestCasesList(BaseModel):
-    # min_length reaches the model as minItems, so an empty suite is rejected
-    # by the schema it was given rather than only after it has been paid for.
-    scenarios: List[GeneratedTestCase] = Field(
-        ..., min_length=1, max_length=MAX_GENERATED_SCENARIOS
+TYPES_NEEDING_ANOTHER_ACTOR = frozenset({ScenarioType.ROLE})
+"""Scenario types that cannot be written with one account.
+
+One actor cannot show that a second actor is kept out of its data. A cell of
+this type with no declared actor is reported rather than answered with a
+scenario that proves nothing.
+"""
+
+
+PROMPT = """Write one test scenario for the coverage cell below.
+
+### The app, as a user walks it
+
+"{description}"
+
+### The cell
+
+Category: {category} — {category_meaning}
+Scenario type: {scenario_type} — {type_meaning}
+
+Write a scenario of that shape, about that concern, and nothing else. Ronin
+covers every other cell in its own call.
+
+### The values you may enter
+
+An `enter` step names one of these. Never write a value of your own, because
+only the file knows what this app does with a value.
+
+{lines}
+{rules}
+### The steps
+
+Give the steps in order. Each one is:
+
+- `enter` — a declared value, and the field it goes in.
+- `capability` — a device state, such as the network going offline.
+- `action` — one action on one control, in prose. Open it with one of:
+  {actions}.
+
+The first step opens the app. The steps after it include every action that
+reaches the screen this cell is about. Name a control by its visible text and
+never by its position.
+
+Put no claim in a step. A separate component judges the outcomes, and the
+agent walking the app never reads them. An agent told what must be true
+steers the app until it is. The finding then goes unreported.
+
+### The outcomes
+
+Say what has to be visible, and give the evidence that settles each one:
+
+- "current_screen" — true or false from one screenshot. Prefer this always.
+- "transition" — the run reached a screen, or moved between two.
+
+Never write "run_timing". Nothing Ronin records measures time, and one timing
+outcome reports the whole scenario as unproven.
+
+Ronin can read screenshots, on-screen text, and the result of an action. It
+cannot read network traffic, HTTP headers, the app's own logs, an
+accessibility tree, a screen reader, focus order or a contrast ratio. Write
+no outcome that needs one of those.
+
+Ronin writes its own outcome for every value the file says this app
+refuses. A step entering one needs no claim from you.
+"""
+
+RULES = """
+### Rules this app must not break
+
+{rules}
+
+Reach the screens where one of these could break. Do not write a claim about
+a rule in a step, because another component judges every rule on every screen
+it sees.
+"""
+
+CAPABILITY_BY_CATEGORY: dict[Category, CapabilityKind] = {
+    Category.NETWORK: CapabilityKind.NETWORK,
+    Category.PERMISSION: CapabilityKind.PERMISSION,
+}
+"""Which device state a cell about that subject has to ask for.
+
+A network scenario that never touched the network walked the happy path and
+reported as a network test. The requirement is structural: one step has to
+carry the capability, and that step carries the typed capability itself.
+"""
+
+
+def _requirements(cell: CoverageCell, journey: UserJourney) -> dict:
+    """What an answer for this cell is read against, beyond its own shape.
+
+    Reaching the validator through the client's context means a cell's own
+    requirement is refused on the same path as any other mismatch. So the
+    model is asked again with the reason, rather than the cell being lost.
+    """
+    context: dict = {"declared": frozenset(journey.values)}
+    if cell.scenario_type is ScenarioType.NEGATIVE and journey.refused:
+        context["refused"] = frozenset(journey.refused)
+    wanted = CAPABILITY_BY_CATEGORY.get(cell.category)
+    if wanted is not None:
+        context["capability"] = wanted
+    return context
+
+
+@dataclass(frozen=True)
+class Uncovered:
+    """A cell that produced no scenario, and whose problem that is.
+
+    A missing declaration is the scenario's limit. A provider that refused
+    is not, and neither is a response that never matched the schema. Reported
+    as scenario limits, those tell a reader to rewrite a cell that was fine.
+    """
+
+    cell: CoverageCell
+    status: Literal["UNSUPPORTED", "ERROR"]
+    cause: Cause
+    reason: str
+
+
+@dataclass
+class GeneratedSuite:
+    """The scenarios a journey produced, and the cells nothing could cover."""
+
+    scenarios: list[GeneratedTestCase] = field(default_factory=list)
+    uncovered: list[Uncovered] = field(default_factory=list)
+
+
+def _scrubbed_journey_description(journey: UserJourney) -> str:
+    """The journey as the generator reads it, with declared secrets masked.
+
+    The generator has to know that a Password field exists. It never has to
+    know the password. Every other reader of a secret needs the value, so the
+    masking happens here rather than where the journey is loaded.
+    """
+    scrubber = SecretScrubber()
+    scrubber.learn_secrets(journey.secrets)
+    return scrubber.scrub(journey.description)
+
+
+def _value_lines(journey: UserJourney) -> str:
+    """The names a scenario may use, without the values behind them."""
+    lines = []
+    for name in sorted(journey.values):
+        if name in journey.refused:
+            says = "this app refuses this value"
+        elif name.startswith("actors."):
+            says = f"belongs to the account '{name.split('.')[1]}'"
+        else:
+            says = "a value that is meant to work"
+        lines.append(f"- {name} — {says}")
+    return "\n".join(lines) or "- none declared"
+
+
+def _with_values_filled(
+    scenario: GeneratedTestCase, values: dict[str, str]
+) -> GeneratedTestCase:
+    """The scenario with every `{{name}}` replaced by the value it stands for.
+
+    Done after the identity is stamped, because the sentences a planner reads
+    are rendered from the steps and only exist by then.
+    """
+    return scenario.model_copy(
+        update={
+            "steps_instructions": [
+                substitute(line, values) for line in scenario.steps_instructions
+            ],
+            "expected_outcomes": [
+                outcome.model_copy(
+                    update={"statement": substitute(outcome.statement, values)}
+                )
+                for outcome in scenario.expected_outcomes
+            ],
+        }
     )
 
+
+def _with_derived_outcomes(
+    draft: ScenarioDraft, refused: frozenset[str]
+) -> ScenarioDraft:
+    """The draft, plus an outcome for every value confirmed the wrong shape.
+
+    The claim was already held to the value, so the words carrying it are
+    written here rather than left to free prose beside it. A model's own
+    outcomes stay: they cover what this one cannot say.
+    """
+    derived = [
+        ExpectedOutcome(statement=steps.refusal_outcome(entered.field))
+        for entered in steps.entered_values(draft.steps)
+        if entered.value in refused
+    ]
+    if not derived:
+        return draft
+    already = {outcome.statement for outcome in draft.expected_outcomes}
+    added = [outcome for outcome in derived if outcome.statement not in already]
+    return draft.model_copy(
+        update={"expected_outcomes": [*draft.expected_outcomes, *added]}
+    )
+
+
 class ScenarioGenerator:
-    """Uses LLM to decompose a UserJourney description into diverse testing scenarios."""
+    """Asks for one scenario per declared cell."""
 
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
-    def generate_scenarios(self, journey: UserJourney) -> List[GeneratedTestCase]:
-        """Generates scenarios covering happy paths, edge cases, boundaries, and destructive monkeys."""
-        logger.info("Decomposing journey into test scenarios...")
+    def generate_suite(self, journey: UserJourney) -> GeneratedSuite:
+        """One scenario for every cell this journey covers, in priority order.
 
-        prompt = f"""You are a senior QA Test Engineer. Your goal is to analyze the following natural-language User Journey and design a comprehensive suite of E2E test scenarios to thoroughly test the app and try to make it break.
+        A cell that produced nothing is recorded with the cause. The rest of
+        the suite still runs, because a device is already open and one
+        unanswered cell is not a reason to test nothing.
+        """
+        suite = GeneratedSuite()
+        for cell in ordered(list(journey.coverage)):
+            missing = self._missing_declaration(journey, cell)
+            if missing:
+                logger.warning("Cell %s not covered. %s", cell.key, missing.reason)
+                suite.uncovered.append(missing)
+                continue
+            try:
+                draft = self._draft(journey, cell)
+            except ValidationError as mismatch:
+                # Three answers that never matched the schema is the model
+                # failing to answer, not the cell asking for the impossible.
+                suite.uncovered.append(
+                    self._failed(cell, Cause.PROVIDER, f"schema never matched: {mismatch}")
+                )
+                continue
+            except Exception as failure:
+                suite.uncovered.append(
+                    self._failed(cell, cause_of(failure), str(failure))
+                )
+                continue
+            stamped = GeneratedTestCase.of(
+                cell, _with_derived_outcomes(draft, journey.refused)
+            )
+            suite.scenarios.append(_with_values_filled(stamped, journey.values))
+        logger.info(
+            "Covered %d of %d cell(s) for journey '%s'.",
+            len(suite.scenarios),
+            len(journey.coverage),
+            journey.id,
+        )
+        return suite
 
-### User Journey Description:
-"{journey.description}"
+    @staticmethod
+    def _missing_declaration(
+        journey: UserJourney, cell: CoverageCell
+    ) -> Uncovered | None:
+        """What this cell needs that the file did not declare, if anything."""
+        if cell.category not in SUPPORTED_CATEGORIES:
+            return Uncovered(
+                cell,
+                "UNSUPPORTED",
+                Cause.SCENARIO,
+                f"Nothing in a run can settle a {cell.category.value} cell yet. "
+                f"Remove it from 'coverage' until it can.",
+            )
+        if cell.scenario_type in TYPES_NEEDING_ANOTHER_ACTOR and not journey.actors:
+            return Uncovered(
+                cell,
+                "UNSUPPORTED",
+                Cause.SCENARIO,
+                "A role scenario needs a second account. Declare one under "
+                "'actors'.",
+            )
+        return None
 
-### Custom Security Rules:
-{chr(10).join(f"- {rule}" for rule in journey.security_rules) if journey.security_rules else "None specified."}
+    @staticmethod
+    def _failed(cell: CoverageCell, cause: Cause, detail: str) -> Uncovered:
+        """Records a cell the generator could not write, and whose fault that is."""
+        reason = f"The generator could not write this cell: {detail}"
+        logger.error("Cell %s not covered (%s). %s", cell.key, cause.value, reason)
+        return Uncovered(cell, "ERROR", cause, reason)
 
-### Scenarios Requirement:
-Generate a list of scenarios covering:
-1. **happy_path**: The standard successful user story flow.
-2. **edge_case**: Alternative execution flows, error handling, or empty states.
-3. **boundary_test**: Inputting extreme, invalid, or very long text values to test limits.
-4. **destructive_monkey**: Clicking elements out of order, double taps, or rapid actions.
-5. **security_compliance**: Visible masked inputs and custom rules that can be verified from screenshots and detected UI text.
-6. **accessibility_audit**: Visible clipping, touch-target clarity, and text alternatives present in detected UI text.
-7. **performance_bottleneck**: Visible hangs, long-lived spinners, or unresponsive screens.
+    def _draft(self, journey: UserJourney, cell: CoverageCell) -> ScenarioDraft:
+        """One model call for one cell.
 
-Ronin can observe screenshots, detected UI text, and action outcomes. It cannot
-inspect network traffic, HTTP headers, logs from the app, semantic
-accessibility trees, screen readers, focus order, or measured contrast ratios.
-Never generate an instruction or expected outcome that needs one of those
-unavailable evidence sources.
-
-Every expected outcome carries the scope of evidence that settles it:
-- "current_screen" — true or false from one screenshot. Prefer this always.
-- "transition" — the run reached a screen, or moved between two.
-- "run_timing" — how fast the app was, or whether it stayed responsive.
-
-Nothing Ronin records measures timing, so a "run_timing" outcome cannot be
-settled and the scenario reports it as unproven. Write one only when the
-scenario is genuinely about speed, and give that scenario a "current_screen"
-outcome as well, so something about it can be decided.
-
-Generate at most {MAX_GENERATED_SCENARIOS} scenarios. Prefer a small suite with
-distinct evidence over several near-duplicates that repeat the full journey.
-
-### How Scenarios Are Executed:
-Each scenario runs on its own. The app's data is cleared first, so it opens
-exactly as it would after a fresh install: no sign-in, no permissions, no saved
-data from any other scenario. The agent has no memory of other scenarios and
-cannot resume from where another left off.
-
-So every scenario's instructions MUST start at app launch and include the full
-navigation needed to reach the screen it cares about. A scenario about the
-checkout screen must first sign in, reach a product, add it, and open checkout.
-Never write instructions that assume the agent is already on a later screen.
-
-Identify targets by their visible text, not by position or index: say "the Menu
-button on the 'Sweet Treats' card", never "card 0" or "the first card".
-
-Write one instruction per interaction, and never prescribe a separate focusing
-tap before entering text — the agent focuses a field as part of typing into it.
-Write "Enter 'test@example.com' in the Email field", not "Tap the Email field,
-then type 'test@example.com'". Every wasted instruction costs the agent a step
-it could have spent reaching the end of the scenario.
-
-For each scenario, define:
-- A unique test ID (e.g., TS_001_happy_path)
-- A clear name description
-- The classification category
-- Step-by-step instructions for the executing agent, starting from app launch
-- Expected outcomes: what must be true for the scenario to pass. Every
-  scenario needs at least one. A scenario that declares none cannot be judged,
-  and it reports as unverified. The executing agent never sees these. A
-  separate component judges them against the screens the run reached.
-"""
-        message = TextMessage(content=prompt)
-
-        last_error = None
+        Raises:
+            Exception: Whatever the last attempt raised, once none are left.
+        """
+        message = TextMessage(content=self._prompt(journey, cell))
+        context = _requirements(cell, journey)
+        last_error: Exception | None = None
         for attempt in range(GENERATION_ATTEMPTS):
             try:
-                result: GeneratedTestCasesList = self.llm.generate_response(
+                return self.llm.generate_response(
                     messages=[message],
-                    response_model=GeneratedTestCasesList
+                    response_model=ScenarioDraft,
+                    context=context,
                 )
-                logger.info("Successfully generated %d test scenarios.", len(result.scenarios))
-                return result.scenarios
-            except Exception as e:
-                last_error = e
+            except Exception as exc:
+                last_error = exc
                 logger.warning(
-                    "Scenario generation attempt %d/%d failed: %s",
+                    "Cell %s attempt %d/%d failed: %s",
+                    cell.key,
                     attempt + 1,
                     GENERATION_ATTEMPTS,
-                    e,
+                    exc,
                 )
+        assert last_error is not None
+        raise last_error
 
-        logger.error(
-            "Scenario generation failed after %d attempts: %s", GENERATION_ATTEMPTS, last_error
+    def _prompt(self, journey: UserJourney, cell: CoverageCell) -> str:
+        """What the model is told about one cell."""
+        rules = journey.security_rules if cell.category is Category.SECURITY else []
+        return PROMPT.format(
+            description=_scrubbed_journey_description(journey),
+            category=cell.category.value,
+            category_meaning=describe(cell.category),
+            scenario_type=cell.scenario_type.value,
+            type_meaning=describe(cell.scenario_type),
+            lines=_value_lines(journey),
+            rules=RULES.format(rules="\n".join(f"- {rule}" for rule in rules))
+            if rules
+            else "",
+            actions=", ".join(sorted(ACTION_VERBS)),
         )
-        raise RuntimeError(f"Scenario generation failed — aborting session: {last_error}") from last_error

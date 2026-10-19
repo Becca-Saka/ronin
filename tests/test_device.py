@@ -3,6 +3,8 @@
 import io
 import time
 import unittest
+
+from fakes import walk
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, PropertyMock, patch
@@ -223,39 +225,62 @@ class LaunchPaintTests(unittest.TestCase):
 
 
 class CapabilityTests(unittest.TestCase):
-    def _case(self, text):
+    """An outcome Ronin has no way to evidence, refused before the device opens.
+
+    The check reads outcomes rather than steps. A step is typed now, so one
+    cannot ask for network capture: no action names it and no capability
+    applies it. An outcome is still prose, and one asking for evidence Ronin
+    never collects is the case left to catch.
+    """
+
+    def _case(self, outcome):
         from ronin.testing.models import GeneratedTestCase
 
         return GeneratedTestCase(
             test_id="TS_1",
             scenario_name="Security",
-            classification="security_compliance",
-            steps_instructions=[text],
-            expected_outcomes=["the Login button is visible"],
+            cell="security.negative.0",
+            category="security",
+            scenario_type="negative",
+            priority="P0",
+            steps=walk("Launch the app."),
+            expected_outcomes=[outcome],
         )
 
-    def test_network_inspection_is_rejected_before_execution(self):
+    def test_an_outcome_needing_network_capture_is_rejected_before_execution(self):
         from ronin.testing.capabilities import unsupported_reason
 
         self.assertIn(
             "network traffic capture",
-            unsupported_reason(self._case("Perform network inspection")),
+            unsupported_reason(self._case("Network inspection shows no plaintext.")),
         )
 
-    def test_visual_scenario_remains_supported(self):
+    def test_a_visible_outcome_remains_supported(self):
         from ronin.testing.capabilities import unsupported_reason
 
-        self.assertIsNone(unsupported_reason(self._case("Verify the button is visible")))
+        self.assertIsNone(unsupported_reason(self._case("The Login button is visible.")))
 
 
 class CapabilityMatchingTests(unittest.TestCase):
     """Seeing a contrasting element is observable. Measuring a ratio is not."""
 
-    def _reason(self, *instructions):
+    def _reason(self, *outcomes):
         from ronin.testing.capabilities import unsupported_reason
 
-        return unsupported_reason(
-            SimpleNamespace(steps_instructions=list(instructions), expected_outcomes=[])
+        return unsupported_reason(self._case(*outcomes))
+
+    def _case(self, *outcomes):
+        from ronin.testing.models import GeneratedTestCase
+
+        return GeneratedTestCase(
+            test_id="TS_1",
+            scenario_name="Contrast",
+            cell="accessibility.happy_path.0",
+            category="accessibility",
+            scenario_type="happy_path",
+            priority="P2",
+            steps=walk("Launch the app."),
+            expected_outcomes=list(outcomes),
         )
 
     def test_a_visible_high_contrast_element_is_supported(self):
@@ -296,8 +321,11 @@ class ScenarioIsolationTests(unittest.TestCase):
         case = GeneratedTestCase(
             test_id="TS_1",
             scenario_name="Visible button",
-            classification="happy_path",
-            steps_instructions=["Verify the Login button is visible"],
+            cell="functional.happy_path.0",
+            category="functional",
+            scenario_type="happy_path",
+            priority="P0",
+            steps=walk("Tap the Login button."),
             expected_outcomes=["the Login button is visible"],
         )
 

@@ -46,7 +46,7 @@ class JourneyEnvTests(unittest.TestCase):
 
         os.environ["RONIN_ENV_TEST"] = "from-the-shell"
         try:
-            _, secrets = resolve(
+            _, secrets, _ = resolve(
                 {"env": {"password": "${RONIN_ENV_TEST}"}, "secrets": ["password"]}
             )
         finally:
@@ -83,7 +83,7 @@ class InlineSecretTests(unittest.TestCase):
         return resolve(data)
 
     def test_a_value_can_mark_itself_secret(self):
-        values, secrets = self._resolve(
+        values, secrets, _ = self._resolve(
             {
                 "env": {
                     "email": "qa@example.com",
@@ -96,12 +96,12 @@ class InlineSecretTests(unittest.TestCase):
         self.assertEqual(secrets, {"password": "hunter2"})
 
     def test_an_inline_value_defaults_to_ordinary(self):
-        _, secrets = self._resolve({"env": {"note": {"value": "visible"}}})
+        _, secrets, _ = self._resolve({"env": {"note": {"value": "visible"}}})
 
         self.assertEqual(secrets, {})
 
     def test_inline_and_listed_secrets_combine(self):
-        _, secrets = self._resolve(
+        _, secrets, _ = self._resolve(
             {
                 "env": {
                     "password": {"value": "hunter2", "secret": True},

@@ -1,12 +1,39 @@
 from enum import Enum
 
-from pydantic import BaseModel, Field, model_validator
-from typing import Dict, List, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
+
+from ronin.testing import steps
+from ronin.testing.steps import Step
+from ronin.testing.taxonomy import (
+    DEFAULT_COVERAGE,
+    Category,
+    CoverageCell,
+    Priority,
+    ScenarioType,
+)
+from typing import Dict, FrozenSet, List, Literal, Optional
 
 # Trail models live in agent/trail.py — re-exported here for backward compatibility.
 from ronin.agent.actuation.actions import CapabilityKind
 from ronin.agent.device.launch import SetupMode  # noqa: F401
 from ronin.agent.memory.trail import SessionTrail, TrailElement, ScreenEntry  # noqa: F401
+
+
+class Actor(BaseModel):
+    """Another account a scenario signs in as.
+
+    A role scenario shows that one actor cannot reach another's data, and one
+    account cannot show that.
+
+    The names inside are the app's, not Ronin's. An app may sign in with an
+    email, a phone number, a tenant, a PIN or a token. A fixed pair of
+    `username` and `password` assumed one kind of app.
+    """
+
+    values: Dict[str, str] = Field(
+        description="Whatever this app signs this account in with, by name."
+    )
 
 
 class UserJourney(BaseModel):
@@ -22,6 +49,31 @@ class UserJourney(BaseModel):
             "in written artifacts, never withheld from the planner."
         ),
     )
+    values: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Every name the journey's 'env' declared, resolved. These are the "
+            "values that are meant to work. A scenario asks for one by name, "
+            "rather than copying a string out of the description."
+        ),
+    )
+    refused: FrozenSet[str] = Field(
+        default_factory=frozenset,
+        description=(
+            "The names in 'values' the file said this app refuses. A fact "
+            "about the app that no reading of the value could find."
+        ),
+    )
+    actors: Dict[str, "Actor"] = Field(
+        default_factory=dict,
+        description="Other accounts a role scenario may sign in as, by name.",
+    )
+    coverage: List[CoverageCell] = Field(
+        default_factory=lambda: list(DEFAULT_COVERAGE),
+        description="The cells a run covers for this journey, in declared order.",
+    )
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class AssertionScope(str, Enum):
@@ -69,40 +121,31 @@ class ExpectedOutcome(BaseModel):
         return value
 
 
-class GeneratedTestCase(BaseModel):
-    """Represents a generated test scenario targeting a specific classification."""
-    test_id: str
+class ScenarioDraft(BaseModel):
+    """What a model writes for one cell: the walk, and what must hold after it.
+
+    The identity is absent on purpose. Ronin knows which cell it asked
+    about. A model asked to name the category, the type and the id again
+    could only disagree with the question. `GeneratedTestCase` adds it.
+    """
+
     scenario_name: str
-    classification: Literal[
-        "happy_path",
-        "edge_case",
-        "boundary_test",
-        "destructive_monkey",
-        "security_compliance",
-        "accessibility_audit",
-        "performance_bottleneck"
-    ]
-    steps_instructions: List[str]
-    # Required, and min_length reaches the model as minItems, so the schema
-    # the model is given says that one is needed. A scenario that declares no
-    # outcome can only report as unverified.
+    steps: List[Step] = Field(
+        min_length=1,
+        description=(
+            "What the scenario does, in order. 'enter' names a declared value "
+            "and the field it goes in. 'capability' carries a device state. "
+            "'action' is one action on one control, in prose."
+        ),
+    )
     expected_outcomes: List[ExpectedOutcome] = Field(
         ...,
         min_length=1,
         description=(
             "What must be true for this scenario to pass. Give at least one. "
             "A separate component judges these, so a scenario that declares "
-            "none cannot be judged at all."
-        ),
-    )
-    required_capabilities: List[CapabilityKind] = Field(
-        default_factory=list,
-        description=(
-            "Device states this scenario cannot run without, named by kind. "
-            "Declare one only where the scenario is about that state, such as "
-            "'network' for a scenario about losing connectivity. A target that "
-            "cannot apply one skips the scenario instead of testing something "
-            "else."
+            "none cannot be judged at all. Ronin adds an outcome of its own "
+            "for every value the file says this app refuses."
         ),
     )
     setup: SetupMode = Field(
@@ -114,6 +157,121 @@ class GeneratedTestCase(BaseModel):
             "'preserve' leaves the app where the previous scenario left it."
         ),
     )
+
+    @model_validator(mode="after")
+    def _every_value_entered_was_declared(self, info: ValidationInfo) -> "ScenarioDraft":
+        """Holds an entered value to a name the file declared.
+
+        The names reach this through the validation context. An unknown one
+        is then refused on the same path as any other mismatch, and the model
+        is asked again. Read without the context, this passes: a caller that
+        knows no names cannot judge one.
+
+        Raises:
+            ValueError: If a step enters a name the file did not declare.
+        """
+        known = (info.context or {}).get("declared")
+        if known is None:
+            return self
+        unknown = steps.undeclared(self.steps, known)
+        if unknown:
+            raise ValueError(
+                f"No value named {unknown!r} is declared. Use one of: "
+                f"{', '.join(sorted(known)) or '(none declared)'}."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _a_refusal_cell_enters_a_refused_value(
+        self, info: ValidationInfo
+    ) -> "ScenarioDraft":
+        """Holds a cell about a refusal to entering one the file marked refused.
+
+        Raises:
+            ValueError: If this cell needs a refused value and no step enters one.
+        """
+        refused = (info.context or {}).get("refused")
+        if not refused:
+            return self
+        if not any(
+            step.value in refused for step in steps.entered_values(self.steps)
+        ):
+            raise ValueError(
+                f"This cell enters a value this app refuses. One 'enter' step "
+                f"has to name one of: {', '.join(sorted(refused))}."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _a_capability_cell_asks_for_its_capability(
+        self, info: ValidationInfo
+    ) -> "ScenarioDraft":
+        """Holds a cell about a device state to having asked for one.
+
+        Raises:
+            ValueError: If this cell needs a capability and no step carries it.
+        """
+        wanted = (info.context or {}).get("capability")
+        if wanted is None:
+            return self
+        if wanted not in steps.capabilities_in(self.steps):
+            raise ValueError(
+                f"This cell is about the device being {wanted.value}. One "
+                f"'capability' step has to carry a {wanted.value} capability."
+            )
+        return self
+
+
+class GeneratedTestCase(ScenarioDraft):
+    """One scenario, as a run holds it: a draft plus the cell it answers."""
+
+    test_id: str
+    cell: str
+    """The key this scenario keeps across runs, such as `security.negative.0`."""
+
+    category: Category
+    scenario_type: ScenarioType
+    priority: Priority
+    steps_instructions: List[str] = Field(
+        default_factory=list,
+        description=(
+            "The steps as the sentences the planner reads, rendered by Ronin. "
+            "Written from the steps so neither can drift from the other."
+        ),
+    )
+    required_capabilities: List[CapabilityKind] = Field(
+        default_factory=list,
+        description=(
+            "The device states this scenario asks for, read off its own steps. "
+            "A scenario that declared these beside its steps had two answers."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _read_what_the_steps_say(self) -> "GeneratedTestCase":
+        """Fills the rendered sentences and the capabilities from the steps.
+
+        Derived rather than passed in. A scenario built any other way then
+        cannot end up with an empty walk. Nor with a capability list that
+        disagrees with its own steps.
+        """
+        if not self.steps_instructions:
+            self.steps_instructions = steps.rendered(self.steps)
+        if not self.required_capabilities:
+            self.required_capabilities = steps.capabilities_in(self.steps)
+        return self
+
+    @classmethod
+    def of(cls, cell: CoverageCell, draft: ScenarioDraft) -> "GeneratedTestCase":
+        """Stamps a draft with the identity of the cell that asked for it."""
+        return cls(
+            test_id=cell.test_id,
+            cell=cell.key,
+            category=cell.category,
+            scenario_type=cell.scenario_type,
+            priority=cell.priority,
+            **draft.model_dump(),
+        )
 
 
 # The model writes this one to point at what it reports. The detector's
@@ -295,7 +453,13 @@ class ScenarioReport(BaseModel):
     """Represents the results of running an individual test scenario."""
     test_id: str
     scenario_name: str
-    classification: str
+    cell: str = Field(
+        description=(
+            "The cell this scenario answered, such as 'security.negative.0'. "
+            "A report Ronin writes about itself rather than a scenario carries "
+            "'infrastructure'."
+        )
+    )
     status: Literal[
         "PASSED",
         "FAILED",
@@ -344,8 +508,8 @@ class JourneyReport(BaseModel):
     unevidenced_security_rules: List[str] = Field(
         default_factory=list,
         description=(
-            "Security rules no scenario was able to evidence. A rule nothing "
-            "checked is not a rule that held."
+            "Security rules no scenario was able to evidence. A rule no "
+            "scenario reached is not a rule that held."
         ),
     )
     passed_count: int = 0

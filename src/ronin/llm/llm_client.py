@@ -44,18 +44,20 @@ class LLMClient:
 
     @overload
     def generate_response(
-        self, messages: list[Message], response_model: None
+        self, messages: list[Message], response_model: None, context: dict | None = ...
     ) -> str: ...
 
     @overload
     def generate_response(
-        self, messages: list[Message], response_model: type[Answer]
+        self, messages: list[Message], response_model: type[Answer],
+        context: dict | None = ...,
     ) -> Answer: ...
 
     def generate_response(
         self,
         messages: list[Message],
         response_model: type[BaseModel] | None = None,
+        context: dict | None = None,
     ) -> str | BaseModel:
         """Sends a message sequence to the LLM and returns the completion.
 
@@ -65,6 +67,10 @@ class LLMClient:
         Args:
             messages: A list of Message objects (text, image, multipart) to send.
             response_model: Optional Pydantic BaseModel class for structured output.
+            context: What the answer has to be read against, for a rule that
+                depends on more than the answer itself. A rule that reaches the
+                validator is refused on the same path as any other mismatch.
+                So the model is asked again, with the reason.
 
         Returns:
             The raw text response from the LLM, or a validated instance of response_model
@@ -78,7 +84,7 @@ class LLMClient:
         # than losing the scenario the call belongs to.
         for attempt in range(STRUCTURED_ATTEMPTS if response_model else 1):
             try:
-                return self._complete(attempts, response_model, attempt + 1)
+                return self._complete(attempts, response_model, attempt + 1, context)
             except ValidationError as exc:
                 last_error = exc
                 logger.warning(
@@ -106,6 +112,7 @@ class LLMClient:
         messages: list[Message],
         response_model: type[BaseModel] | None = None,
         attempt: int = 1,
+        context: dict | None = None,
     ) -> str | BaseModel:
         kwargs: dict = {
             "model": self._model,
@@ -134,13 +141,18 @@ class LLMClient:
 
         if not response_model:
             return content
-        return self._parse(content, response_model)
+        return self._parse(content, response_model, context)
 
-    def _parse(self, content: str, response_model: type[BaseModel]) -> BaseModel:
+    def _parse(
+        self,
+        content: str,
+        response_model: type[BaseModel],
+        context: dict | None = None,
+    ) -> BaseModel:
         stripped = (content or "").strip()
         if stripped.startswith("```"):
             lines = stripped.splitlines()
             stripped = "\n".join(
                 lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
             )
-        return response_model.model_validate_json(stripped)
+        return response_model.model_validate_json(stripped, context=context)

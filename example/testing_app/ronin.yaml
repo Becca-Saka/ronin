@@ -35,6 +35,11 @@ workflows:
       password:
         value: secret-password123
         secret: true
+      # No reading of a password says whether this app refuses it. Its sign-in
+      # needs six characters, so the value below the floor is declared.
+      rejected_password:
+        value: abc
+        handling: reject
       card_number:
         value: '4111222233334444'
         secret: true

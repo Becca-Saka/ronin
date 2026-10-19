@@ -6,6 +6,8 @@ target lacks is skipped before it spends a step finding out.
 """
 
 import unittest
+
+from fakes import walk
 from types import SimpleNamespace
 from unittest import mock
 
@@ -18,15 +20,18 @@ SERIAL = "emulator-5554"
 class PreflightTests(unittest.TestCase):
     """What a scenario declares, read against the target in front of it."""
 
-    def _case(self, *required, steps=("open the app",)):
+    def _case(self, *required, outcomes=("a banner appears",)):
         from ronin.testing.models import GeneratedTestCase
 
         return GeneratedTestCase(
             test_id="TS_1",
             scenario_name="S",
-            classification="edge_case",
-            steps_instructions=list(steps),
-            expected_outcomes=["a banner appears"],
+            cell="input.negative.0",
+            category="input",
+            scenario_type="negative",
+            priority="P1",
+            steps=walk("Open the app."),
+            expected_outcomes=list(outcomes),
             required_capabilities=list(required),
         )
 
@@ -96,8 +101,10 @@ class PreflightTests(unittest.TestCase):
         )
 
     def test_declaring_nothing_leaves_the_prose_check_alone(self):
+        """A step is typed now, so the prose left to read is the outcome."""
         reason = self._reason(
-            self._case(steps=("Perform network inspection",)), self._target()
+            self._case(outcomes=("Network inspection shows no plaintext.",)),
+            self._target(),
         )
 
         self.assertIn("network traffic capture", reason)
