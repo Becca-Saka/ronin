@@ -46,15 +46,73 @@ def _find_linter() -> Path | None:
     return DEFAULT_LINTER if DEFAULT_LINTER.is_file() else None
 
 
-def prose_of(path: Path) -> str:
-    """Every docstring and comment in one file, and nothing else.
+SENTENCE_LENGTH = 40
+"""How long an assigned string has to be before it counts as prose.
 
-    Field docstrings count: a bare string under an assignment documents the
-    field above it, and Ronin uses them for the reasoning behind a default.
+A name, a path and a log key are strings too. The rule has to separate those
+from a prompt and a field description without holding a list of which names
+carry prose, because a new prompt would not be on the list.
+"""
+
+
+def _assigned_prose(node: ast.AST) -> str | None:
+    """A string assigned to a name, where it is long enough to be a sentence.
+
+    A prompt lives in a module constant and a model-facing description lives
+    in `Field(description=...)`. Both are read by a model, so both are prose
+    this gate has to hold, and neither is a docstring or a comment.
+    """
+    if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+        return None
+    if not isinstance(node.value, ast.Constant):
+        return None
+    value = node.value.value
+    if isinstance(value, str) and " " in value and len(value) >= SENTENCE_LENGTH:
+        return value
+    return None
+
+
+def _described(node: ast.AST) -> list[str]:
+    """Every `description=` a call passes as a plain string."""
+    if not isinstance(node, ast.Call):
+        return []
+    return [
+        keyword.value.value
+        for keyword in node.keywords
+        if keyword.arg == "description"
+        and isinstance(keyword.value, ast.Constant)
+        and isinstance(keyword.value.value, str)
+    ]
+
+
+def prose_of(path: Path) -> str:
+    """Every word in one file that a person or a model reads as English.
+
+    Docstrings and comments, the long strings assigned to a name, and every
+    `description=` a call carries. A prompt and a field description both
+    reach a model, so a gate that read only docstrings passed the text that
+    matters most.
     """
     source = path.read_text()
     found: list[str] = []
     tree = ast.parse(source)
+
+    # `ast.get_docstring` dedents what it returns, and the same string read off
+    # the node does not. Both reach the linter, the two copies differ by their
+    # indentation, and every docstring is then counted twice. Collect the
+    # nodes that hold a docstring and read each one once.
+    carries_docstring = set()
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                             ast.AsyncFunctionDef)) and body:
+            first = body[0]
+            if (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+            ):
+                carries_docstring.add(id(first))
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
@@ -63,8 +121,14 @@ def prose_of(path: Path) -> str:
             if doc:
                 found.append(doc)
         elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
-            if isinstance(node.value.value, str):
+            if isinstance(node.value.value, str) and id(node) not in carries_docstring:
                 found.append(node.value.value)
+
+    for node in ast.walk(tree):
+        assigned = _assigned_prose(node)
+        if assigned:
+            found.append(assigned)
+        found.extend(_described(node))
 
     for line in source.splitlines():
         match = COMMENT.match(line)
@@ -107,6 +171,21 @@ def hard_violations(linter: Path, prose: str) -> tuple[int, list[str]]:
     return count, reported
 
 
+def _named(path: Path) -> str:
+    """The name a baseline entry uses: relative to the repository where it can be.
+
+    A path outside the repository keeps its own spelling. `relative_to`
+    raises on one, and a gate that crashes on the file it was handed reports
+    nothing about the files it could have read.
+    """
+    if not path.is_absolute():
+        return str(path)
+    try:
+        return str(path.relative_to(REPOSITORY_ROOT))
+    except ValueError:
+        return str(path)
+
+
 def _load_baseline() -> dict[str, int]:
     if not BASELINE_PATH.is_file():
         return {}
@@ -147,7 +226,7 @@ def main() -> int:
             continue
         checked += 1
         count, reported = hard_violations(linter, prose)
-        relative = str(path.relative_to(REPOSITORY_ROOT)) if path.is_absolute() else str(path)
+        relative = _named(path)
         allowed = baseline.get(relative, 0)
         if count > allowed:
             failures.append(f"{relative}: {count} hard violation(s), allowed {allowed}")

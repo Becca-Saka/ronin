@@ -6,46 +6,52 @@
 # record debt you are deliberately deferring, never to make a check pass, and
 # delete it when the prose is rewritten. A file absent from this list must have
 # no hard violations at all.
+#
+# Some entries cover prompt text and model-facing field descriptions, which
+# the gate began reading after it was first written. That prose reaches a
+# model, so it is the prose that matters most, and these counts are the work
+# still owed on it.
 [allowed_hard_violations]
-"src/ronin/agent/actuation/actions.py" = 7
+"src/ronin/agent/actuation/actions.py" = 5
 "src/ronin/agent/artifacts/redaction.py" = 1
-"src/ronin/agent/artifacts/steps.py" = 4
-"src/ronin/agent/device/adb_control.py" = 5
-"src/ronin/agent/device/control.py" = 3
+"src/ronin/agent/artifacts/steps.py" = 2
+"src/ronin/agent/device/adb_control.py" = 3
+"src/ronin/agent/device/control.py" = 2
 "src/ronin/agent/device/files.py" = 1
-"src/ronin/agent/device/focus.py" = 2
-"src/ronin/agent/device/launch.py" = 3
-"src/ronin/agent/device/manifest.py" = 7
-"src/ronin/agent/device/platform.py" = 2
+"src/ronin/agent/device/focus.py" = 1
+"src/ronin/agent/device/launch.py" = 2
+"src/ronin/agent/device/manifest.py" = 4
+"src/ronin/agent/device/platform.py" = 1
 "src/ronin/agent/device/readiness.py" = 1
-"src/ronin/agent/device/recording.py" = 14
-"src/ronin/agent/device/session.py" = 4
-"src/ronin/agent/device/state.py" = 5
-"src/ronin/agent/grounding/marks.py" = 6
-"src/ronin/agent/memory/replay.py" = 9
-"src/ronin/agent/memory/stall.py" = 4
+"src/ronin/agent/device/recording.py" = 9
+"src/ronin/agent/device/session.py" = 2
+"src/ronin/agent/device/state.py" = 3
+"src/ronin/agent/grounding/marks.py" = 3
+"src/ronin/agent/memory/replay.py" = 5
+"src/ronin/agent/memory/stall.py" = 2
 "src/ronin/agent/perception/elements.py" = 1
-"src/ronin/agent/run/context.py" = 3
-"src/ronin/cli/console.py" = 4
-"src/ronin/cli/run.py" = 3
+"src/ronin/agent/plan/planner.py" = 6
+"src/ronin/agent/run/context.py" = 2
+"src/ronin/cli/console.py" = 2
+"src/ronin/cli/run.py" = 2
 "src/ronin/config.py" = 2
 "src/ronin/defaults.py" = 2
-"src/ronin/doctor/checks.py" = 4
-"src/ronin/schema.py" = 2
-"src/ronin/setup/environment.py" = 2
+"src/ronin/doctor/checks.py" = 3
+"src/ronin/schema.py" = 1
+"src/ronin/setup/environment.py" = 1
 "src/ronin/setup/steps.py" = 1
-"src/ronin/testing/journey_env.py" = 2
-"src/ronin/testing/models.py" = 3
-"src/ronin/testing/progress.py" = 2
+"src/ronin/testing/journey_env.py" = 1
+"src/ronin/testing/models.py" = 2
+"src/ronin/testing/progress.py" = 1
 "src/ronin/testing/qa_agent.py" = 1
-"src/ronin/testing/qa_auditor.py" = 5
-"src/ronin/testing/qa_planner.py" = 2
-"src/ronin/testing/rules.py" = 6
+"src/ronin/testing/qa_auditor.py" = 4
+"src/ronin/testing/qa_planner.py" = 1
+"src/ronin/testing/rules.py" = 3
 "src/ronin/testing/runner.py" = 1
 "src/ronin/testing/transitions.py" = 2
-"src/ronin/testing/usage_tracker.py" = 2
-"src/ronin/testing/verdicts.py" = 4
-"src/ronin/utils/jev_deps.py" = 2
-"src/ronin/utils/redactor.py" = 6
-"src/ronin/utils/secrets.py" = 6
-"src/ronin/utils/vision_deps.py" = 2
+"src/ronin/testing/usage_tracker.py" = 1
+"src/ronin/testing/verdicts.py" = 2
+"src/ronin/utils/jev_deps.py" = 1
+"src/ronin/utils/redactor.py" = 3
+"src/ronin/utils/secrets.py" = 3
+"src/ronin/utils/vision_deps.py" = 1
