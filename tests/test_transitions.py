@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from ronin.testing import transitions
+from ronin.testing.judge import transitions
 from ronin.testing.models import AssertionScope, ExpectedOutcome, RuleVerification
 
 SIGN_IN = "Sign-in screen"
@@ -42,7 +42,7 @@ class ScopeSelectionTests(unittest.TestCase):
     """The two selectors must divide the outcomes, not overlap or drop any."""
 
     def test_a_transition_is_claimed_only_by_the_transition_selector(self):
-        from ronin.testing import rules
+        from ronin.testing.judge import rules
 
         outcomes = [outcome("Tapping Login reaches Location Access")]
 
@@ -51,7 +51,7 @@ class ScopeSelectionTests(unittest.TestCase):
 
     def test_a_bare_statement_belongs_to_the_screen_selector(self):
         """It carries no scope, and a claim about one screen is the common case."""
-        from ronin.testing import rules
+        from ronin.testing.judge import rules
 
         outcomes = ["The cart shows a subtotal"]
 
@@ -60,7 +60,7 @@ class ScopeSelectionTests(unittest.TestCase):
 
     def test_every_outcome_is_claimed_by_exactly_one_selector(self):
         """Claimed twice is counted twice. Claimed by neither can never settle."""
-        from ronin.testing import rules
+        from ronin.testing.judge import rules
 
         outcomes = [
             "The cart shows a subtotal",
@@ -79,7 +79,7 @@ class ScopeSelectionTests(unittest.TestCase):
 
     def test_an_index_survives_the_blanking_around_it(self):
         """The id a verdict carries is the outcome's position, so it cannot shift."""
-        from ronin.testing import rules
+        from ronin.testing.judge import rules
 
         outcomes = [
             "A screen claim",
@@ -292,19 +292,19 @@ class BareIndexTests(unittest.TestCase):
     """
 
     def test_a_bare_index_names_the_rule_of_the_kind_that_was_listed(self):
-        from ronin.testing import rules
+        from ronin.testing.judge import rules
 
         self.assertEqual(rules.as_id("0", rules.EXPECTED), "expected:0")
         self.assertEqual(rules.as_id("9", rules.EXPECTED), "expected:9")
 
     def test_a_full_id_is_read_as_itself(self):
-        from ronin.testing import rules
+        from ronin.testing.judge import rules
 
         self.assertEqual(rules.as_id("expected:4", rules.EXPECTED), "expected:4")
         self.assertEqual(rules.as_id("[expected:4] prose", rules.EXPECTED), "expected:4")
 
     def test_an_answer_naming_no_rule_names_nothing(self):
-        from ronin.testing import rules
+        from ronin.testing.judge import rules
 
         self.assertIsNone(rules.as_id("the screens looked right", rules.EXPECTED))
         self.assertIsNone(rules.as_id(None, rules.EXPECTED))

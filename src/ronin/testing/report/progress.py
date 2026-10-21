@@ -10,12 +10,46 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+
+from pydantic import BaseModel
 
 from ronin.testing.models import GeneratedTestCase, ScenarioReport, UserJourney
 from ronin.utils.secrets import SecretScrubber
 
 logger = logging.getLogger(__name__)
+
+
+def _now() -> str:
+    """One spelling of the timestamp every row and the file itself carry."""
+    return datetime.now().isoformat(timespec="seconds")
+
+
+class ScenarioEntry(BaseModel):
+    """One scenario's row in the plan, from listed to finished.
+
+    A field a scenario only has once it has run stays None until then, and the
+    writer leaves it out. So a row grows as the run learns. The fields a row
+    can hold are fixed here, rather than accruing wherever a status is set.
+    """
+
+    position: int
+    test_id: str
+    name: str
+    cell: str
+    category: str
+    scenario_type: str
+    priority: str
+    steps_planned: int
+    steps_instructions: List[str]
+    expected_outcomes: List[str]
+    status: str = "pending"
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    steps_executed: Optional[int] = None
+    duration_seconds: Optional[float] = None
+    failure_reason: Optional[str] = None
+    issues_found: Optional[int] = None
 
 
 class ScenarioProgress:
@@ -35,31 +69,32 @@ class ScenarioProgress:
         self.journey = journey
         self._scrubber = scrubber
         self.started_at = datetime.now()
-        self.entries = {
-            scenario.test_id: {
-                "position": index + 1,
-                "test_id": scenario.test_id,
-                "name": self._scrub(scenario.scenario_name),
-                "cell": scenario.cell,
-                "category": scenario.category.value,
-                "scenario_type": scenario.scenario_type.value,
-                "priority": scenario.priority.value,
-                "status": "pending",
-                "steps_planned": len(scenario.steps_instructions),
-                "steps_instructions": [self._scrub(value) for value in scenario.steps_instructions],
-                "expected_outcomes": [
+        self.entries: dict[str, ScenarioEntry] = {
+            scenario.test_id: ScenarioEntry(
+                position=index + 1,
+                test_id=scenario.test_id,
+                name=self._scrub(scenario.scenario_name),
+                cell=scenario.cell,
+                category=scenario.category.value,
+                scenario_type=scenario.scenario_type.value,
+                priority=scenario.priority.value,
+                steps_planned=len(scenario.steps_instructions),
+                steps_instructions=[
+                    self._scrub(value) for value in scenario.steps_instructions
+                ],
+                expected_outcomes=[
                     self._scrub(outcome.statement)
                     for outcome in scenario.expected_outcomes
                 ],
-            }
+            )
             for index, scenario in enumerate(scenarios)
         }
 
     def start(self, test_id: str) -> None:
         entry = self.entries.get(test_id)
         if entry is not None:
-            entry["status"] = "running"
-            entry["started_at"] = datetime.now().isoformat(timespec="seconds")
+            entry.status = "running"
+            entry.started_at = _now()
         self.write()
 
     def _scrub(self, value: str | None) -> str:
@@ -68,28 +103,28 @@ class ScenarioProgress:
     def record(self, test_id: str, report: ScenarioReport) -> None:
         entry = self.entries.get(test_id)
         if entry is not None:
-            entry["status"] = report.status
-            entry["steps_executed"] = report.steps_executed
-            entry["duration_seconds"] = round(report.duration, 1)
-            entry["failure_reason"] = self._scrub(report.failure_reason)
-            entry["issues_found"] = len(report.detected_issues or [])
-            entry["finished_at"] = datetime.now().isoformat(timespec="seconds")
+            entry.status = report.status
+            entry.steps_executed = report.steps_executed
+            entry.duration_seconds = round(report.duration, 1)
+            entry.failure_reason = self._scrub(report.failure_reason)
+            entry.issues_found = len(report.detected_issues or [])
+            entry.finished_at = _now()
         self.write()
 
     def abort(self, reason: str) -> None:
         """Marks everything unfinished as aborted, so a crash leaves no 'running' row."""
         for entry in self.entries.values():
-            if entry["status"] in ("pending", "running"):
-                entry["status"] = "ABORTED"
-                entry["failure_reason"] = self._scrub(reason)
-                entry["finished_at"] = datetime.now().isoformat(timespec="seconds")
+            if entry.status in ("pending", "running"):
+                entry.status = "ABORTED"
+                entry.failure_reason = self._scrub(reason)
+                entry.finished_at = _now()
         self.write()
 
     def write(self) -> None:
         entries = list(self.entries.values())
         counts: dict[str, int] = {}
         for entry in entries:
-            counts[entry["status"]] = counts.get(entry["status"], 0) + 1
+            counts[entry.status] = counts.get(entry.status, 0) + 1
 
         payload = {
             "journey": {
@@ -97,10 +132,10 @@ class ScenarioProgress:
                 "name": self._scrub(self.journey.name),
             },
             "started_at": self.started_at.isoformat(timespec="seconds"),
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "updated_at": _now(),
             "total": len(entries),
             "counts": counts,
-            "scenarios": entries,
+            "scenarios": [entry.model_dump(exclude_none=True) for entry in entries],
         }
         try:
             temporary = self.path.with_suffix(self.path.suffix + ".tmp")

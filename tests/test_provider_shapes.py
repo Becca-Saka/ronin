@@ -19,7 +19,7 @@ class ProviderShapeTests(unittest.TestCase):
     """
 
     def _parse(self, **body):
-        from ronin.testing.qa_auditor import Assessment
+        from ronin.testing.judge.qa_auditor import Assessment
 
         return Assessment.model_validate(body)
 

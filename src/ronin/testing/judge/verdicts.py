@@ -10,7 +10,7 @@ from typing import List, Optional, Sequence
 
 from ronin.agent.run.outcomes import DeviceRunResult
 from ronin.errors import Cause
-from ronin.testing import rules
+from ronin.testing.judge import rules
 from ronin.testing.models import ExpectedOutcome, QAIssue, RuleVerification
 from ronin.testing.qa_planner import QAStepResponse
 

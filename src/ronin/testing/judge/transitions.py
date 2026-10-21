@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from ronin.llm.llm_client import LLMClient
 from ronin.llm.messages import TextMessage
-from ronin.testing import rules
+from ronin.testing.judge import rules
 from ronin.testing.models import RuleVerification
 
 logger = logging.getLogger(__name__)

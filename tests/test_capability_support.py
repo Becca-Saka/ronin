@@ -36,12 +36,12 @@ class PreflightTests(unittest.TestCase):
         )
 
     def _target(self, platform=Platform.ANDROID, **kwargs):
-        from ronin.testing.capabilities import Target
+        from ronin.testing.judge.capabilities import Target
 
         return Target(platform=platform, **{"emulator": True, **kwargs})
 
     def _reason(self, case, target):
-        from ronin.testing.capabilities import unsupported_reason
+        from ronin.testing.judge.capabilities import unsupported_reason
 
         return unsupported_reason(case, target)
 
@@ -111,13 +111,13 @@ class PreflightTests(unittest.TestCase):
 
     def test_a_caller_with_no_target_checks_only_the_prose(self):
         """The default cannot refuse a scenario it knows nothing about."""
-        from ronin.testing.capabilities import unsupported_reason
+        from ronin.testing.judge.capabilities import unsupported_reason
 
         self.assertIsNone(unsupported_reason(self._case(CapabilityKind.NETWORK)))
 
     def test_every_capability_is_declared_in_the_support_table(self):
         """A capability with no entry would be refused on every target."""
-        from ronin.testing.capabilities import CAPABILITY_SUPPORT
+        from ronin.testing.judge.capabilities import CAPABILITY_SUPPORT
 
         self.assertEqual(set(CAPABILITY_SUPPORT), set(CapabilityKind))
 
@@ -137,7 +137,7 @@ class TargetReadingTests(unittest.TestCase):
         sdk = mock.patch(
             "ronin.agent.device.adb_control.AdbControl.ask", return_value=api
         )
-        from ronin.testing.capabilities import target_of
+        from ronin.testing.judge.capabilities import target_of
 
         with adb, installed, sdk:
             return target_of(device)
@@ -155,7 +155,7 @@ class TargetReadingTests(unittest.TestCase):
         self.assertIsNone(self._read(avd="Pixel_8", api="null").api_level)
 
     def test_a_target_with_no_serial_reads_nothing_off_it(self):
-        from ronin.testing.capabilities import target_of
+        from ronin.testing.judge.capabilities import target_of
 
         target = target_of(SimpleNamespace(platform=Platform.ANDROID, serial=""))
 
@@ -176,7 +176,7 @@ class PhysicalDeviceTests(unittest.TestCase):
     SIMULATED = "8B59D40E-33B7-40EC-AB5D-50FFA0AB306E"
 
     def _target(self, listed):
-        from ronin.testing.capabilities import target_of
+        from ronin.testing.judge.capabilities import target_of
 
         with mock.patch(
             "ronin.agent.device.simctl_control.SimctlControl.ask",
@@ -187,7 +187,7 @@ class PhysicalDeviceTests(unittest.TestCase):
             )
 
     def _allowed(self, target):
-        from ronin.testing.capabilities import unsupported_capability
+        from ronin.testing.judge.capabilities import unsupported_capability
 
         return {
             kind.value
@@ -246,7 +246,7 @@ class DeclaredCapabilityTests(unittest.TestCase):
         )
 
     def _missing(self, required, receipts):
-        from ronin.testing.capabilities import unconfirmed_capabilities
+        from ronin.testing.judge.capabilities import unconfirmed_capabilities
 
         return unconfirmed_capabilities(required, receipts)
 

@@ -178,7 +178,7 @@ class RecordedCauseTests(unittest.TestCase):
     def test_the_gate_reports_the_cause_the_run_recorded(self):
         from types import SimpleNamespace
 
-        from ronin.testing.verdicts import _terminal_outcome
+        from ronin.testing.judge.verdicts import _terminal_outcome
 
         status, _reason, cause = _terminal_outcome(
             run_result=SimpleNamespace(
@@ -196,7 +196,7 @@ class RecordedCauseTests(unittest.TestCase):
     def test_a_run_that_recorded_nothing_reports_unknown(self):
         from types import SimpleNamespace
 
-        from ronin.testing.verdicts import _terminal_outcome
+        from ronin.testing.judge.verdicts import _terminal_outcome
 
         _status, _reason, cause = _terminal_outcome(
             run_result=SimpleNamespace(

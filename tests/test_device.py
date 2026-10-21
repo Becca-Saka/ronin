@@ -111,7 +111,7 @@ class DeviceFailureTests(unittest.TestCase):
     def test_a_report_that_cannot_be_written_says_so(self):
         from ronin.errors import ArtifactWriteFailed
         from ronin.testing.models import JourneyReport
-        from ronin.testing.reports import save_markdown_report
+        from ronin.testing.report.reports import save_markdown_report
 
         report = JourneyReport(
             journey_id="j", journey_name="Journey", description="d", status="PASSED"
@@ -248,7 +248,7 @@ class CapabilityTests(unittest.TestCase):
         )
 
     def test_an_outcome_needing_network_capture_is_rejected_before_execution(self):
-        from ronin.testing.capabilities import unsupported_reason
+        from ronin.testing.judge.capabilities import unsupported_reason
 
         self.assertIn(
             "network traffic capture",
@@ -256,7 +256,7 @@ class CapabilityTests(unittest.TestCase):
         )
 
     def test_a_visible_outcome_remains_supported(self):
-        from ronin.testing.capabilities import unsupported_reason
+        from ronin.testing.judge.capabilities import unsupported_reason
 
         self.assertIsNone(unsupported_reason(self._case("The Login button is visible.")))
 
@@ -265,7 +265,7 @@ class CapabilityMatchingTests(unittest.TestCase):
     """Seeing a contrasting element is observable. Measuring a ratio is not."""
 
     def _reason(self, *outcomes):
-        from ronin.testing.capabilities import unsupported_reason
+        from ronin.testing.judge.capabilities import unsupported_reason
 
         return unsupported_reason(self._case(*outcomes))
 
@@ -297,11 +297,13 @@ class ScenarioIsolationTests(unittest.TestCase):
     def test_supported_scenario_resets_perception_before_running(self):
         from ronin.agent.run.agent import DeviceRunResult
         from ronin.agent.memory.history import AgentHistory
+        from ronin.agent.plan.planner import GROUNDING_COORDINATES
         from ronin.testing.models import GeneratedTestCase
         from ronin.testing.qa_agent import QAAgent
 
         agent = QAAgent.__new__(QAAgent)
         agent._fast_llm = object()
+        agent._grounding = GROUNDING_COORDINATES
         agent._device_agent = SimpleNamespace(
             max_steps=40,
             replay_ledger=None,

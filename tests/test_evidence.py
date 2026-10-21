@@ -17,7 +17,7 @@ class AuditorOwnershipTests(unittest.TestCase):
         self.assertNotIn("detected_issues", fields)
 
     def test_the_auditor_is_asked_for_them(self):
-        from ronin.testing.qa_auditor import Assessment
+        from ronin.testing.judge.qa_auditor import Assessment
 
         fields = Assessment.model_fields
 
@@ -26,7 +26,7 @@ class AuditorOwnershipTests(unittest.TestCase):
 
     def test_completion_stays_with_the_planner(self):
         """Only the planner is told the goal, so only it can say the goal is met."""
-        from ronin.testing.qa_auditor import Assessment
+        from ronin.testing.judge.qa_auditor import Assessment
         from ronin.testing.qa_planner import QAStepResponse
 
         self.assertIn("goal_satisfied", QAStepResponse.model_fields)
@@ -35,7 +35,7 @@ class AuditorOwnershipTests(unittest.TestCase):
 
     def test_feasibility_stays_with_the_planner(self):
         """Whether the agent can proceed is not a statement about the app."""
-        from ronin.testing.qa_auditor import Assessment
+        from ronin.testing.judge.qa_auditor import Assessment
         from ronin.testing.qa_planner import QAStepResponse
 
         self.assertIn("is_scenario_feasible", QAStepResponse.model_fields)
@@ -172,7 +172,7 @@ class ExposureEvidenceTests(unittest.TestCase):
         return finding
 
     def _verdict_for(self, issues, findings):
-        from ronin.testing.verdicts import _terminal_outcome
+        from ronin.testing.judge.verdicts import _terminal_outcome
 
         return _terminal_outcome(
             run_result=SimpleNamespace(status="goal_reached", failure_reason=None),

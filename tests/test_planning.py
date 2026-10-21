@@ -36,7 +36,7 @@ class ProviderNormalizationTests(unittest.TestCase):
         self.assertEqual(response.action.coordinates.x, 10)
 
     def test_the_auditor_accepts_a_compact_rule_mapping(self):
-        from ronin.testing.qa_auditor import Assessment
+        from ronin.testing.judge.qa_auditor import Assessment
 
         assessment = Assessment.model_validate(
             {

@@ -28,7 +28,7 @@ class UsageRecordTests(unittest.TestCase):
         return CallRecord(**values)
 
     def _recorded(self, *calls):
-        from ronin.testing.usage_tracker import LLMUsageTracker
+        from ronin.testing.report.usage_tracker import LLMUsageTracker
 
         with tempfile.TemporaryDirectory() as directory:
             tracker = LLMUsageTracker(Path(directory))
@@ -70,7 +70,7 @@ class UsageRecordTests(unittest.TestCase):
         )
 
     def test_declared_secrets_are_masked_inside_the_dumped_response(self):
-        from ronin.testing.usage_tracker import LLMUsageTracker
+        from ronin.testing.report.usage_tracker import LLMUsageTracker
         from ronin.utils.secrets import SecretScrubber
 
         scrubber = SecretScrubber()
@@ -105,7 +105,7 @@ class UsageTotalsTests(unittest.TestCase):
         return CallRecord(**values)
 
     def test_totals_accumulate_across_calls(self):
-        from ronin.testing.usage_tracker import Totals
+        from ronin.testing.report.usage_tracker import Totals
 
         totals = Totals()
         totals.add(self._call(prompt_tokens=10, cost=0.002))
@@ -116,7 +116,7 @@ class UsageTotalsTests(unittest.TestCase):
         self.assertAlmostEqual(totals.total_estimated_cost_usd, 0.005)
 
     def test_a_missing_cost_is_counted_not_treated_as_free(self):
-        from ronin.testing.usage_tracker import Totals
+        from ronin.testing.report.usage_tracker import Totals
 
         totals = Totals()
         totals.add(self._call(cost=None))
@@ -125,7 +125,7 @@ class UsageTotalsTests(unittest.TestCase):
         self.assertEqual(totals.total_estimated_cost_usd, 0.0)
 
     def test_the_report_keeps_the_field_names_already_on_disk(self):
-        from ronin.testing.usage_tracker import Totals
+        from ronin.testing.report.usage_tracker import Totals
         from dataclasses import asdict
 
         written = asdict(Totals())

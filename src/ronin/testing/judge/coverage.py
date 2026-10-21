@@ -8,7 +8,7 @@ rule has to be evidenced by at least one scenario, or be named as unevidenced.
 
 from typing import Iterable, List
 
-from ronin.testing import rules
+from ronin.testing.judge import rules
 from ronin.testing.models import ScenarioReport
 
 

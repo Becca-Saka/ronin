@@ -65,7 +65,7 @@ class DecisionRecordTests(unittest.TestCase):
 
     def test_the_tracker_totals_both_routes_together(self):
         from ronin.llm import usage
-        from ronin.testing.usage_tracker import Totals
+        from ronin.testing.report.usage_tracker import Totals
 
         totals = Totals()
         totals.add(usage.record_decision(self._response(), "typesafe/jev-1.14.0", 1.0, 0.0001))

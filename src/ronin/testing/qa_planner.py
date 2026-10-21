@@ -93,7 +93,7 @@ RESPONSE_INSTRUCTIONS = """
 class QAStepResponse(DeviceStepResponse):
     """What the planner answers with: an action, and whether it can proceed.
 
-    The verdicts belong to ronin.testing.qa_auditor, which judges the screen
+    The verdicts belong to ronin.testing.judge.qa_auditor, which judges the screen
     without reading the plan.
 
     Four inherited descriptions are overridden here. A field description is

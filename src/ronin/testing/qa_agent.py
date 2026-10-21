@@ -26,21 +26,22 @@ from ronin.testing.models import (
     SensitiveFinding,
 )
 from ronin.agent.device import restoration
-from ronin.testing.capabilities import (
+from ronin.testing.judge.capabilities import (
     target_of,
     unconfirmed_capabilities,
     unsupported_reason,
 )
 from ronin.agent.plan.planner import GROUNDING_COORDINATES
-from ronin.testing import rules
-from ronin.testing.verdicts import (
+from ronin.testing.judge import rules
+from ronin.testing.judge.verdicts import (
     _missing_required_ids,
     _terminal_outcome,
 )
-from ronin.testing.qa_auditor import Assessment, QAAuditor, ScreenWatch
+from ronin.testing.judge.qa_auditor import Assessment, QAAuditor, ScreenWatch
 from ronin.testing.qa_planner import QAPlanner, QAStepResponse
 from ronin.errors import Cause
-from ronin.testing import taxonomy, transitions
+from ronin.testing import taxonomy
+from ronin.testing.judge import transitions
 
 from ronin.agent.actuation.actions import WaitAction
 
@@ -95,9 +96,6 @@ class QAAgent:
     built once. Each scenario gets its own QAPlanner and its own QAAuditor,
     because each carries state that must not reach the next scenario.
     """
-
-    # Class-level so an agent built without __init__ still answers sensibly.
-    _grounding = GROUNDING_COORDINATES
 
     def __init__(
         self,

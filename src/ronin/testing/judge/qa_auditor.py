@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field, model_validator
 from ronin.agent.perception import elements
 from ronin.llm.llm_client import LLMClient
 from ronin.llm.messages import MultiPartMessage
-from ronin.testing import rules
+from ronin.testing.judge import rules
 from ronin.testing.models import QAIssue, RuleVerification, SensitiveFinding
 from functools import partial
 
@@ -50,8 +50,8 @@ class Assessment(BaseModel):
     sensitive_findings: List[SensitiveFinding] = Field(
         default_factory=list,
         description=(
-            "One entry for each place a password, card number, CVV or similar "
-            "value could appear on this screen, saying what is actually there."
+            "One entry for each place a value the listed rules treat as "
+            "sensitive could appear, saying what is actually there."
         ),
     )
 
@@ -111,7 +111,7 @@ only what this screen shows.
    - "untested" means this screen does not show you either way. A rule about a
      screen you are not looking at is "untested", never "failed".
    - `applicable` is false when this screen holds nothing the rule could apply
-     to — a card-masking rule where there is no card field. Pair it with
+     to, such as a rule about a field this screen does not have. Pair it with
      "untested". Never mark a rule passed because its subject is absent, and
      never from what you expect a field to do once it is filled. Judge the
      pixels in front of you.
@@ -119,13 +119,13 @@ only what this screen shows.
 3. `detected_issues`: visual defects on this screen — clipped or overlapping
    text, layout overflow stripes, or a blank or crashed screen. Each needs a
    `severity`.
-4. `sensitive_findings`: one entry for every place a password, card number,
-   CVV or similar value could be on this screen. Say what is there, not what
+4. `sensitive_findings`: one entry for every place a value the rules above
+   treat as sensitive could be on this screen. Say what is there, not what
    could be there:
    - "value" only when you can read the real characters. Copy them into
      `quoted`.
    - "masked" when dots, bullets or asterisks stand in for them.
-   - "label_only" when there is a caption such as "CVV:" and nothing beside it.
+   - "label_only" when there is a caption and nothing beside it.
    - "absent" when the screen holds no such field at all.
    A caption is not a value. An empty field is not a value.
 """

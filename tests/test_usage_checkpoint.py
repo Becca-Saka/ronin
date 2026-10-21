@@ -27,7 +27,7 @@ class UsageCheckpointTests(unittest.TestCase):
     """A crash after scenario three must not lose scenarios one and two."""
 
     def test_a_checkpoint_holds_what_has_been_spent_so_far(self):
-        from ronin.testing.usage_tracker import LLMUsageTracker
+        from ronin.testing.report.usage_tracker import LLMUsageTracker
 
         with tempfile.TemporaryDirectory() as directory:
             tracker = LLMUsageTracker(output_dir=Path(directory))
@@ -39,7 +39,7 @@ class UsageCheckpointTests(unittest.TestCase):
             self.assertEqual(saved["total_calls"], 1)
 
     def test_a_later_checkpoint_replaces_the_earlier_one(self):
-        from ronin.testing.usage_tracker import LLMUsageTracker
+        from ronin.testing.report.usage_tracker import LLMUsageTracker
 
         with tempfile.TemporaryDirectory() as directory:
             tracker = LLMUsageTracker(output_dir=Path(directory))
@@ -54,7 +54,7 @@ class UsageCheckpointTests(unittest.TestCase):
             )
 
     def test_the_final_report_keeps_its_own_name(self):
-        from ronin.testing.usage_tracker import LLMUsageTracker
+        from ronin.testing.report.usage_tracker import LLMUsageTracker
 
         with tempfile.TemporaryDirectory() as directory:
             tracker = LLMUsageTracker(output_dir=Path(directory))
@@ -66,7 +66,7 @@ class UsageCheckpointTests(unittest.TestCase):
             self.assertTrue((Path(directory) / "llm_usage_partial.json").exists())
 
     def test_a_checkpoint_that_cannot_be_written_does_not_stop_the_run(self):
-        from ronin.testing.usage_tracker import LLMUsageTracker
+        from ronin.testing.report.usage_tracker import LLMUsageTracker
 
         tracker = LLMUsageTracker(output_dir=Path("/dev/null/nowhere"))
         tracker.add_call("scenario:one", _call())
@@ -78,7 +78,7 @@ class CallLogTests(unittest.TestCase):
     """A crash inside a scenario keeps every call it had already made."""
 
     def test_each_call_is_logged_as_it_happens(self):
-        from ronin.testing.usage_tracker import LLMUsageTracker
+        from ronin.testing.report.usage_tracker import LLMUsageTracker
 
         with tempfile.TemporaryDirectory() as directory:
             tracker = LLMUsageTracker(output_dir=Path(directory))
@@ -90,7 +90,7 @@ class CallLogTests(unittest.TestCase):
             self.assertEqual(json.loads(lines[0])["component"], "scenario:one")
 
     def test_the_log_names_the_scenario_each_call_belongs_to(self):
-        from ronin.testing.usage_tracker import LLMUsageTracker
+        from ronin.testing.report.usage_tracker import LLMUsageTracker
 
         with tempfile.TemporaryDirectory() as directory:
             tracker = LLMUsageTracker(output_dir=Path(directory))
@@ -105,7 +105,7 @@ class CallLogTests(unittest.TestCase):
 
     def test_the_log_survives_what_the_roll_up_would_lose(self):
         """The roll-up is written between scenarios; the log is written per call."""
-        from ronin.testing.usage_tracker import LLMUsageTracker
+        from ronin.testing.report.usage_tracker import LLMUsageTracker
 
         with tempfile.TemporaryDirectory() as directory:
             tracker = LLMUsageTracker(output_dir=Path(directory))
@@ -119,7 +119,7 @@ class CallLogTests(unittest.TestCase):
             self.assertEqual(len(tracker.log_path.read_text().splitlines()), 2)
 
     def test_a_declared_secret_never_reaches_the_log(self):
-        from ronin.testing.usage_tracker import LLMUsageTracker
+        from ronin.testing.report.usage_tracker import LLMUsageTracker
         from ronin.utils.secrets import SecretScrubber
 
         scrubber = SecretScrubber()
@@ -134,7 +134,7 @@ class CallLogTests(unittest.TestCase):
             self.assertNotIn("hunter2", written)
 
     def test_a_log_that_cannot_be_written_does_not_stop_the_run(self):
-        from ronin.testing.usage_tracker import LLMUsageTracker
+        from ronin.testing.report.usage_tracker import LLMUsageTracker
 
         tracker = LLMUsageTracker(output_dir=Path("/dev/null/nowhere"))
         tracker.add_call("scenario:one", _call())

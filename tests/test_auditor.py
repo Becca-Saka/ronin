@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 
 def _assessment(**overrides):
-    from ronin.testing.qa_auditor import Assessment
+    from ronin.testing.judge.qa_auditor import Assessment
 
     values = {"screen_name": "Login Screen"}
     values.update(overrides)
@@ -17,7 +17,7 @@ class AuditorInputTests(unittest.TestCase):
     """What the auditor is not told is the point of it."""
 
     def _auditor(self, llm):
-        from ronin.testing.qa_auditor import QAAuditor
+        from ronin.testing.judge.qa_auditor import QAAuditor
 
         return QAAuditor(llm, ["Order confirmed"], ["Card masked"])
 
@@ -60,7 +60,7 @@ class ScreenCachingTests(unittest.TestCase):
     """A screen that has not changed cannot have changed its mind."""
 
     def _auditor(self, llm):
-        from ronin.testing.qa_auditor import QAAuditor
+        from ronin.testing.judge.qa_auditor import QAAuditor
 
         return QAAuditor(llm, [], [])
 
@@ -98,7 +98,7 @@ class AuditorPromptTests(unittest.TestCase):
     def _prompt(self):
         from unittest.mock import Mock
 
-        from ronin.testing.qa_auditor import QAAuditor
+        from ronin.testing.judge.qa_auditor import QAAuditor
 
         llm = SimpleNamespace(generate_response=Mock(return_value=_assessment()))
         QAAuditor(llm, ["Order is confirmed"], ["Card is masked"]).audit(b"png", "s")
@@ -131,7 +131,7 @@ class AssessmentScrubbingTests(unittest.TestCase):
     """The auditor writes in its own words, which quote the journey's values."""
 
     def test_declared_secrets_are_masked_in_what_it_wrote(self):
-        from ronin.testing.qa_auditor import QAAuditor
+        from ronin.testing.judge.qa_auditor import QAAuditor
         from ronin.testing.models import QAIssue, RuleVerification
         from ronin.utils.secrets import SecretScrubber
 
@@ -170,7 +170,7 @@ class CacheAliasingTests(unittest.TestCase):
 
     def _auditor(self):
         from ronin.testing.models import QAIssue
-        from ronin.testing.qa_auditor import QAAuditor
+        from ronin.testing.judge.qa_auditor import QAAuditor
 
         crash = QAIssue(
             issue_type="crash_screen", severity="critical", description="Blank screen"
@@ -207,7 +207,7 @@ class ScreenWatchTests(unittest.TestCase):
     """
 
     def _watch(self):
-        from ronin.testing.qa_auditor import ScreenWatch
+        from ronin.testing.judge.qa_auditor import ScreenWatch
 
         looked = []
 
@@ -440,7 +440,7 @@ class ScanVocabularyTests(unittest.TestCase):
     def test_each_describe_mode_arrival_is_audited(self):
         """One audit per screen arrived at, which is what marks mode gets."""
         from ronin.agent.perception import elements
-        from ronin.testing.qa_auditor import ScreenWatch
+        from ronin.testing.judge.qa_auditor import ScreenWatch
 
         audited = []
         watch = ScreenWatch(
@@ -474,7 +474,7 @@ class AnsweredRulesOnlyTests(unittest.TestCase):
 
     def _audited(self, *verdicts, expected=None, security=None):
         from ronin.testing.models import RuleVerification
-        from ronin.testing.qa_auditor import QAAuditor
+        from ronin.testing.judge.qa_auditor import QAAuditor
 
         answer = _assessment(
             rule_verifications=[
@@ -532,7 +532,7 @@ class BareIndexIsAmbiguousTests(unittest.TestCase):
 
     def test_a_bare_index_is_not_read_as_an_expected_outcome(self):
         from ronin.testing.models import RuleVerification
-        from ronin.testing.qa_auditor import QAAuditor
+        from ronin.testing.judge.qa_auditor import QAAuditor
 
         answer = _assessment(
             rule_verifications=[

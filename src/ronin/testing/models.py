@@ -27,8 +27,8 @@ class Actor(BaseModel):
     account cannot show that.
 
     The names inside are the app's, not Ronin's. An app may sign in with an
-    email, a phone number, a tenant, a PIN or a token. A fixed pair of
-    `username` and `password` assumed one kind of app.
+    email, a phone number, a tenant, a PIN or a token. A fixed pair of names
+    would fit one kind of app only.
     """
 
     values: Dict[str, str] = Field(
@@ -290,9 +290,9 @@ class Rendering(str, Enum):
     """How a sensitive value appears on screen.
 
     An exposure claim is only as good as what was seen. Asked for a sentence,
-    a model can call a bare "CVV:" label a plain-text CVV and pass the rule
+    a model can call a bare caption a legible value and pass the rule
     forbidding one in the same answer. Asked which of these it saw, it has to
-    pick, and the three are not confusable.
+    pick, and the four are not confusable.
     """
 
     VALUE = "value"
@@ -302,7 +302,7 @@ class Rendering(str, Enum):
     """Dots, asterisks or bullets stand in for the characters."""
 
     LABEL_ONLY = "label_only"
-    """A caption such as "CVV:" with no value beside it."""
+    """A caption naming the field, with no value beside it."""
 
     ABSENT = "absent"
     """Nothing of the kind is on this screen."""
@@ -311,7 +311,9 @@ class Rendering(str, Enum):
 class SensitiveFinding(BaseModel):
     """What was seen where a sensitive value could be, and what it looked like."""
 
-    field: str = Field(..., description="What the value is, e.g. 'CVV' or 'card number'.")
+    field: str = Field(
+        ..., description="What the value is, named as this screen names it."
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -423,7 +425,7 @@ class RuleVerification(BaseModel):
         """
         if not isinstance(value, dict):
             return value
-        from ronin.testing import rules
+        from ronin.testing.judge import rules
 
         verdict = dict(value)
         found = rules.id_in(verdict.get("rule_id")) or rules.id_in(verdict.get("rule"))
@@ -441,8 +443,8 @@ class RuleVerification(BaseModel):
         default=True,
         description=(
             "False when this screen has nothing the rule could apply to, so a "
-            "'passed' here would mean nothing. A card-masking rule is not "
-            "applicable on a screen with no card field."
+            "'passed' here would mean nothing. A rule about a field is not "
+            "applicable on a screen without that field."
         ),
     )
     reasoning: str

@@ -29,7 +29,7 @@ class ArtifactSafetyTests(unittest.TestCase):
 
     def test_progress_sanitizes_the_filename(self):
         from ronin.testing.models import UserJourney
-        from ronin.testing.progress import ScenarioProgress
+        from ronin.testing.report.progress import ScenarioProgress
         from ronin.utils.secrets import SecretScrubber
 
         scenario = self._scenario()
@@ -50,7 +50,7 @@ class ArtifactSafetyTests(unittest.TestCase):
 
     def test_progress_redacts_known_values(self):
         from ronin.testing.models import UserJourney
-        from ronin.testing.progress import ScenarioProgress
+        from ronin.testing.report.progress import ScenarioProgress
         from ronin.utils.secrets import SecretScrubber
 
         scenario = self._scenario()
@@ -111,7 +111,7 @@ class ArtifactSafetyTests(unittest.TestCase):
     def test_the_report_records_what_produced_it(self):
         """A run that behaves differently must be attributable to what changed."""
         from ronin.testing.models import JourneyReport, RunEnvironment
-        from ronin.testing.reports import save_markdown_report
+        from ronin.testing.report.reports import save_markdown_report
 
         report = JourneyReport(
             journey_id="j",
@@ -140,7 +140,7 @@ class ArtifactSafetyTests(unittest.TestCase):
 
     def test_a_report_without_an_environment_still_writes(self):
         from ronin.testing.models import JourneyReport
-        from ronin.testing.reports import save_markdown_report
+        from ronin.testing.report.reports import save_markdown_report
 
         report = JourneyReport(
             journey_id="j", journey_name="Journey", description="d", status="PASSED"
@@ -274,7 +274,7 @@ class ScanDumpSafetyTests(unittest.TestCase):
 class ScenarioProgressTests(unittest.TestCase):
     def _progress(self, directory):
         from ronin.testing.models import GeneratedTestCase, UserJourney
-        from ronin.testing.progress import ScenarioProgress
+        from ronin.testing.report.progress import ScenarioProgress
 
         journey = UserJourney(id="j1", name="Journey", description="d", security_rules=[])
         scenarios = [
@@ -337,7 +337,7 @@ class ProgressAbortTests(unittest.TestCase):
         import tempfile
 
         from ronin.testing.models import GeneratedTestCase, UserJourney
-        from ronin.testing.progress import ScenarioProgress
+        from ronin.testing.report.progress import ScenarioProgress
 
         journey = UserJourney(id="j1", name="J", description="d", security_rules=[])
         scenarios = [

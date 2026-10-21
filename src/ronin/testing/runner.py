@@ -13,9 +13,9 @@ from ronin.agent.perception.blind import for_grounding
 from ronin.agent.plan.planner import GROUNDING_COORDINATES
 from ronin.agent.memory.replay import ReplayLedger
 from ronin.errors import ArtifactWriteFailed, cause_of
-from .coverage import unevidenced_security_rules
+from .judge.coverage import unevidenced_security_rules
 from .generator import ScenarioGenerator
-from .progress import ScenarioProgress
+from .report.progress import ScenarioProgress
 from .models import (
     GeneratedTestCase,
     JourneyReport,
@@ -24,9 +24,9 @@ from .models import (
     UserJourney,
 )
 from .qa_agent import QAAgent
-from .usage_tracker import LLMUsageTracker
+from .report.usage_tracker import LLMUsageTracker
 from ronin.utils.secrets import SecretScrubber
-from .reports import save_junit_report, save_markdown_report
+from .report.reports import save_junit_report, save_markdown_report
 
 logger = logging.getLogger(__name__)
 
@@ -154,10 +154,9 @@ class RoninTestRunner:
 
         try:
             # Both before the model call. Asking adb is cheap and names what is
-            # available when the device is wrong. Opening the session is what
-            # proves the device boots, the app installs and the driver answers,
-            # and all three used to be discovered after a generated suite had
-            # been paid for.
+            # available when the device is wrong. Opening the session proves
+            # the device boots, the app installs and the driver answers, and a
+            # generated suite is paid for before any of the three is known.
             ensure_device_ready(self.platform, self.device_name)
 
             logger.info(

@@ -37,7 +37,7 @@ class AuditorScopeTests(unittest.TestCase):
     """The auditor sees one screenshot, so it is asked only what that settles."""
 
     def test_only_screen_outcomes_reach_the_auditor(self):
-        from ronin.testing import rules
+        from ronin.testing.judge import rules
 
         listing = rules.every_rule(
             rules.on_screen_only(
@@ -54,7 +54,7 @@ class AuditorScopeTests(unittest.TestCase):
 
     def test_an_unasked_outcome_does_not_renumber_the_others(self):
         """A verdict's id is its position, so dropping one moves every later rule."""
-        from ronin.testing import rules
+        from ronin.testing.judge import rules
 
         listing = rules.every_rule(
             rules.on_screen_only(
@@ -73,7 +73,7 @@ class UnprovableOutcomeTests(unittest.TestCase):
     """An outcome nothing measures is named, not counted as a shortfall."""
 
     def test_a_timing_outcome_is_unprovable(self):
-        from ronin.testing import rules
+        from ronin.testing.judge import rules
 
         self.assertEqual(
             rules.unprovable([_outcome("No hang during login", "run_timing")]),
@@ -81,7 +81,7 @@ class UnprovableOutcomeTests(unittest.TestCase):
         )
 
     def test_a_screen_outcome_is_provable(self):
-        from ronin.testing import rules
+        from ronin.testing.judge import rules
 
         self.assertEqual(rules.unprovable([_outcome("CONFIRMING is visible")]), [])
 

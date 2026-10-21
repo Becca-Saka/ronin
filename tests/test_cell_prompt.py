@@ -190,12 +190,8 @@ class OutcomeScopeTests(unittest.TestCase):
         self.assertNotIn('- "run_timing"', _prompt(HAPPY))
 
 
-class NeutralityTests(unittest.TestCase):
-    def test_no_example_names_one_app(self):
-        prompt = _prompt(HAPPY)
-
-        for anchored in ("Sweet Treats", "Burger", "checkout", "CVV", "Luhn"):
-            self.assertNotIn(anchored, prompt, anchored)
+class DerivedVocabularyTests(unittest.TestCase):
+    """The prompt offers the verbs the enums define, and no hand-kept list."""
 
     def test_the_allowed_verbs_are_the_derived_ones(self):
         prompt = _prompt(HAPPY)

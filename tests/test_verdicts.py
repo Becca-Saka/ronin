@@ -373,7 +373,7 @@ class SecurityCoverageTests(unittest.TestCase):
         )
 
     def _unevidenced(self, rules, scenarios):
-        from ronin.testing.coverage import unevidenced_security_rules
+        from ronin.testing.judge.coverage import unevidenced_security_rules
 
         return unevidenced_security_rules(rules, scenarios)
 

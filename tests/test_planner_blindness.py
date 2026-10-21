@@ -134,38 +134,65 @@ class PlannerBoundaryTests(unittest.TestCase):
         self.assertNotIn("security_rules", recorded)
         self.assertNotIn("expected_outcomes", recorded)
 
-    def test_no_model_facing_field_asks_the_planner_to_judge(self):
+    def test_every_judging_field_rewrites_the_wording_it_inherits(self):
         """A field description travels to the model inside the JSON schema.
 
-        One that asks whether an outcome is observable undoes a prompt that
-        says not to judge, and the prompt is the half a reader notices.
+        An inherited one that asks whether the goal was reached undoes a
+        prompt saying not to judge, and the prompt is the half a reader
+        notices.
+
+        Compared against the base description rather than against remembered
+        words. A deleted override then fails here, and a reworded one does
+        not. The fields are named because which of them carry the risk is a
+        judgement, and the check on each is derived.
+        """
+        from ronin.agent.plan.planner import DeviceStepResponse
+        from ronin.testing.qa_planner import QAStepResponse
+
+        base = DeviceStepResponse.model_json_schema()["properties"]
+        qa = QAStepResponse.model_json_schema()["properties"]
+
+        for field in ("goal_satisfied", "goal_evidence", "action", "is_scenario_feasible"):
+            described = qa[field].get("description", "")
+            self.assertTrue(described, f"{field} reaches the model undescribed")
+            self.assertNotEqual(
+                described, base.get(field, {}).get("description"), field
+            )
+
+    def test_the_planner_is_asked_only_for_fields_it_can_answer(self):
+        """The prompt requests only fields the planner's response model has.
+
+        Asking for one the model lacks spends tokens on a verdict pydantic
+        drops. The premise is asserted first, so a field added to the model
+        fails here rather than leaving the rule below it enforcing nothing.
         """
         from ronin.testing.qa_planner import QAStepResponse
 
-        schema = QAStepResponse.model_json_schema()["properties"]
-
-        for field in ("goal_satisfied", "goal_evidence", "action", "is_scenario_feasible"):
-            described = schema[field].get("description", "")
-            self.assertNotIn("goal's stated outcome", described)
-            self.assertNotIn("Judge the goal", described)
-            self.assertNotIn("cannot be reached from here", described)
-
-    def test_the_planner_is_asked_only_for_fields_it_can_answer(self):
-        """The prompt requests only fields the planner's response model has."""
         prompt = qa_prompt()
 
         for field in ("detected_issues", "rule_verifications"):
-            self.assertNotIn(field, prompt)
+            self.assertNotIn(field, QAStepResponse.model_fields, field)
+            self.assertNotIn(field, prompt, field)
 
     def test_the_planner_is_told_the_state_the_scenario_starts_in(self):
-        self.assertIn("data was cleared", qa_prompt(setup=SetupMode.CLEAR_DATA))
+        self.assertIn(
+            SetupMode.CLEAR_DATA.describe(), qa_prompt(setup=SetupMode.CLEAR_DATA)
+        )
         self.assertIn("Sign in", qa_prompt())
 
-    def test_no_blanket_claim_about_how_the_app_started(self):
-        """`setup.describe()` says what is true. PRESERVE is not a fresh launch."""
-        prompt = qa_prompt(setup=SetupMode.PRESERVE)
+    def test_the_prompt_claims_only_what_this_setup_did(self):
+        """`describe()` says what is true, and PRESERVE is not a fresh launch.
 
-        self.assertNotIn("freshly launched", prompt)
+        Every mode's own words come off the enum, so a new mode or a reworded
+        one is covered without this test being told about it.
+        """
+        for mode in SetupMode:
+            prompt = qa_prompt(setup=mode)
+
+            self.assertIn(mode.describe(), prompt, mode.value)
+            for other in SetupMode:
+                if other is not mode:
+                    self.assertNotIn(other.describe(), prompt, other.value)
 
 
 if __name__ == "__main__":
