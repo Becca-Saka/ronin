@@ -83,3 +83,17 @@ def require_run(
     ) + packages_for(grounding)
     if missing:
         raise UsageError("This run cannot start:\n\n" + "\n\n".join(missing))
+
+
+def require_lock(model: Optional[str]) -> None:
+    """Refuses to generate a suite when the generator has no credentials.
+
+    Narrower than `require_run`: locking needs one model and no device, so a
+    missing grounding package or step model is not a reason to refuse.
+
+    Raises:
+        UsageError: If the generator's model has no credentials.
+    """
+    missing = missing_for_models(model)
+    if missing:
+        raise UsageError("Cannot generate a suite:\n\n" + "\n\n".join(missing))

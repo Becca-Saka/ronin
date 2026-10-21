@@ -12,13 +12,13 @@ from dotenv import find_dotenv, load_dotenv
 
 from ronin import __version__
 from ronin.cli import config as config_command
-from ronin.cli import devices, doctor, run, setup, test
+from ronin.cli import devices, doctor, lock, run, setup, test
 from ronin.cli.console import Console, configure_logging
 from ronin.config import load_config
 from ronin.defaults import LOG_LEVELS
 from ronin.errors import UsageError
 
-COMMANDS = (doctor, setup, devices, config_command, test, run)
+COMMANDS = (doctor, setup, devices, config_command, test, lock, run)
 
 
 

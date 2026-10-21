@@ -19,7 +19,7 @@ an instruction can ask for.
 
 import logging
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import ValidationError
 
@@ -175,7 +175,17 @@ class GeneratedSuite:
     """The scenarios a journey produced, and the cells nothing could cover."""
 
     scenarios: list[GeneratedTestCase] = field(default_factory=list)
+    """What runs: every declared value substituted into the walk."""
+
     uncovered: list[Uncovered] = field(default_factory=list)
+
+    locked: list[GeneratedTestCase] = field(default_factory=list)
+    """What a lock stores: the same scenarios, with the names still in them.
+
+    One scenario per entry in `scenarios`, in the same order. They differ by
+    value substitution only. A lock holding substituted values would hold a
+    password, and would change whenever an environment did.
+    """
 
 
 def _scrubbed_journey_description(journey: UserJourney) -> str:
@@ -204,7 +214,7 @@ def _value_lines(journey: UserJourney) -> str:
     return "\n".join(lines) or "- none declared"
 
 
-def _with_values_filled(
+def with_values_filled(
     scenario: GeneratedTestCase, values: dict[str, str]
 ) -> GeneratedTestCase:
     """The scenario with every `{{name}}` replaced by the value it stands for.
@@ -256,15 +266,23 @@ class ScenarioGenerator:
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
-    def generate_suite(self, journey: UserJourney) -> GeneratedSuite:
+    def generate_suite(
+        self, journey: UserJourney, cells: Optional[list[CoverageCell]] = None
+    ) -> GeneratedSuite:
         """One scenario for every cell this journey covers, in priority order.
 
         A cell that produced nothing is recorded with the cause. The rest of
         the suite still runs, because a device is already open and one
         unanswered cell is not a reason to test nothing.
+
+        Args:
+            journey: The journey every cell is asked about.
+            cells: Which of its cells to ask for. Every one of them by
+                default. A lock supplies the subset it does not already hold,
+                so a run pays for the cells it is missing and no others.
         """
         suite = GeneratedSuite()
-        for cell in ordered(list(journey.coverage)):
+        for cell in ordered(list(cells if cells is not None else journey.coverage)):
             missing = self._missing_declaration(journey, cell)
             if missing:
                 logger.warning("Cell %s not covered. %s", cell.key, missing.reason)
@@ -298,11 +316,12 @@ class ScenarioGenerator:
             stamped = GeneratedTestCase.of(
                 cell, _with_derived_outcomes(draft, journey.refused)
             )
-            suite.scenarios.append(_with_values_filled(stamped, journey.values))
+            suite.locked.append(stamped)
+            suite.scenarios.append(with_values_filled(stamped, journey.values))
         logger.info(
             "Covered %d of %d cell(s) for journey '%s'.",
             len(suite.scenarios),
-            len(journey.coverage),
+            len(cells if cells is not None else journey.coverage),
             journey.id,
         )
         return suite

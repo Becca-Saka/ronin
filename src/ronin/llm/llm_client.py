@@ -6,14 +6,15 @@ Supports standard messaging and structured output via Pydantic schemas.
 import json
 import logging
 import time
-from typing import Callable, TypeVar, overload
+from typing import Callable, Optional, TypeVar, overload
 
 import litellm
 from pydantic import BaseModel, ValidationError
 
 from ronin.errors import ProviderUnavailable
 
-from . import failures, usage
+from . import failures, prompts, usage
+from .prompts import PromptStore
 from .messages import Message, TextMessage
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ class LLMClient:
         model: str,
         usage_callback=None,
         wait: Callable[[float], None] = time.sleep,
+        prompt_store: Optional[PromptStore] = None,
     ):
         """Initializes the LLM client.
 
@@ -45,13 +47,21 @@ class LLMClient:
             usage_callback: Optional callable receiving a usage.CallRecord per call.
             wait: How to pause between provider attempts. Injected so a test
                 exercises the backoff without spending the time.
+            prompt_store: Where to record what each call asked. None records
+                nothing, which is what a client built outside a run gets.
         """
         self._model = model
         self.usage_callback = usage_callback
         self._wait = wait
+        self.prompt_store = prompt_store
 
     @overload
     def generate_response(self, messages: list[Message]) -> str: ...
+
+    @property
+    def model(self) -> str:
+        """The model this client asks, for a record of what produced a run."""
+        return self._model
 
     @overload
     def generate_response(
@@ -190,10 +200,23 @@ class LLMClient:
                 },
             }
 
+        # Recorded before the call, so a question that was never answered is
+        # still a question this run can be shown to have asked.
+        asked = self.prompt_store.keep(messages) if self.prompt_store else None
+
         response = litellm.completion(**kwargs)
 
         if self.usage_callback:
-            self.usage_callback(usage.record(response, self._model, attempt))
+            self.usage_callback(
+                usage.record(
+                    response,
+                    self._model,
+                    attempt,
+                    asked=asked,
+                    schema=prompts.schema_sha256(response_model),
+                    answering=response_model.__name__ if response_model else None,
+                )
+            )
 
         content = response.choices[0].message.content
 

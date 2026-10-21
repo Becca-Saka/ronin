@@ -3,6 +3,8 @@
 import unittest
 
 from fakes import walk
+
+from ronin.testing.report import infrastructure
 from types import SimpleNamespace
 
 
@@ -407,15 +409,11 @@ class SecurityCoverageTests(unittest.TestCase):
 class AbortReportingTests(unittest.TestCase):
     """A run that dies before any scenario exists must not look like a pass."""
 
-    def _runner(self):
-        from ronin.testing.runner import RoninTestRunner
-
-        return RoninTestRunner.__new__(RoninTestRunner)
 
     def test_generation_failure_is_reported_as_a_failed_test(self):
         reports = []
 
-        failed = self._runner()._record_aborted([], reports, RuntimeError("no scenarios"))
+        failed = infrastructure.record_aborted([], reports, RuntimeError("no scenarios"))
 
         self.assertEqual(failed, 1)
         self.assertEqual(len(reports), 1)
@@ -448,7 +446,7 @@ class AbortReportingTests(unittest.TestCase):
             )
         ]
 
-        failed = self._runner()._record_aborted(planned, reports, KeyboardInterrupt())
+        failed = infrastructure.record_aborted(planned, reports, KeyboardInterrupt())
 
         self.assertEqual(failed, 1)
         self.assertEqual([r.test_id for r in reports], ["TS_1", "TS_2"])

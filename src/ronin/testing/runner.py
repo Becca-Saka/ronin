@@ -1,9 +1,9 @@
 import logging
 import time
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
-from ronin import __version__
+from ronin import __version__, identity
 from ronin.agent.memory.trail import SessionTrail
 from ronin.agent.device.session import DeviceSession
 from ronin.agent.device.platform import Platform
@@ -12,13 +12,16 @@ from ronin.agent.perception.detector import YOLO_REPO_ID, YOLO_REVISION
 from ronin.agent.perception.blind import for_grounding
 from ronin.agent.plan.planner import GROUNDING_COORDINATES
 from ronin.agent.memory.replay import ReplayLedger
-from ronin.errors import ArtifactWriteFailed, Cause, ProviderUnavailable, cause_of
+from ronin.errors import ArtifactWriteFailed, ProviderUnavailable
 from ronin.llm.failures import reportable
 from .judge.coverage import unevidenced_security_rules
+from . import lock, locking
 from .generator import ScenarioGenerator
-from .report.progress import ScenarioProgress
+from .report.manifest import Inputs, RunManifest, Subject
+from .report import infrastructure
+from . import sensitivity
+from ronin.llm.prompts import PromptStore
 from .models import (
-    GeneratedTestCase,
     JourneyReport,
     RunEnvironment,
     ScenarioReport,
@@ -30,6 +33,17 @@ from ronin.utils.secrets import SecretScrubber
 from .report.reports import save_junit_report, save_markdown_report
 
 logger = logging.getLogger(__name__)
+
+GENERATION = "generator"
+"""The call that wrote the suite. It happens once, before any scenario."""
+
+PLANNER = "agent"
+"""Every call a scenario makes: the planner, the auditor and the judges.
+
+They share one client unless a fast model is configured, so this is as far as
+the call site can tell them apart. What a call asked is in its prompt, and
+which step it belongs to is in the record it nests under.
+"""
 
 
 def is_session_responsive(device_control) -> bool:
@@ -78,7 +92,17 @@ class RoninTestRunner:
         fast_model: str = None,
         record_session: bool = True,
         grounding: str = GROUNDING_COORDINATES,
+        journey_file: Optional[Path] = None,
+        workflow: str = "",
+        locked: bool = False,
+        persist_inputs: bool = True,
+        record_secrets: bool = False,
     ):
+        self.journey_file = journey_file
+        self.workflow = workflow
+        self.locked = locked
+        self.persist_inputs = persist_inputs
+        self.record_secrets = record_secrets
         self.grounding = grounding
         self.reuse_app = reuse_app
         self.keep_app = keep_app
@@ -93,9 +117,19 @@ class RoninTestRunner:
         self.headless = headless
         self.fast_model = fast_model
         self.record_session = record_session
+        self._app: Optional[identity.AppIdentity] = None
+        self._device = identity.DeviceIdentity()
 
     def _environment(self) -> RunEnvironment:
-        """What was in play for this run, so a reader can explain a difference."""
+        """What was in play for this run, so a reader can explain a difference.
+
+        The app is read once and kept: hashing a build costs seconds, and a
+        checkpoint is written after every scenario.
+        """
+        if self._app is None:
+            self._app = identity.app_identity(
+                self.app_path, installed=not self.reuse_app
+            )
         return RunEnvironment(
             ronin_version=__version__,
             model=self.model,
@@ -103,17 +137,60 @@ class RoninTestRunner:
             platform=self.platform.value,
             grounding=self.grounding,
             detector=f"{YOLO_REPO_ID}@{YOLO_REVISION}",
+            app=self._app,
+            device=self._device,
+            git=identity.git_identity(
+                self.journey_file.parent if self.journey_file else None
+            ),
+            ci=identity.ci_identity(),
         )
 
+    def _suite(self, journey: UserJourney, llm) -> locking.Resolution:
+        """The scenarios to run, from the lock where the lock still holds.
+
+        Already in priority order, so a run that dies part way has done the
+        P0 cells.
+        """
+        generator = ScenarioGenerator(llm)
+        return locking.suite_for(
+            journey,
+            lambda wanted, cells: generator.generate_suite(wanted, cells),
+            path=self._lock_path(),
+            workflow=self.workflow,
+            locked=self.locked,
+        )
+
+    def _lock_path(self) -> Optional[Path]:
+        """Where this run's lock is, or None for a journey file off disk."""
+        return lock.path_beside(self.journey_file) if self.journey_file else None
+
     def run_journey(self, journey: UserJourney) -> JourneyReport:
-        """Generates scenarios from the journey, executes them, and builds reports & LLM usage metrics."""
+        """Generates scenarios from the journey, executes them, and builds reports & LLM usage metrics.
+
+        Raises:
+            UsageError: If `--locked` was asked for and the lock does not
+                hold every declared cell. Raised before anything is opened or
+                written, because the answer is the same either way.
+        """
         start_time = time.time()
+
+        # First, because reading a lock costs nothing. A stale lock in CI has
+        # to fail in a second rather than after a device boots.
+        if self.locked:
+            locking.require_lock(journey, self._lock_path(), self.workflow)
+
+        # Nothing masks a video frame, so a journey that types a declared
+        # secret on screen is not recorded unless the caller asked for it.
+        refused = sensitivity.recording_refused(journey, self.record_secrets)
+        if refused:
+            logger.warning("%s", refused)
+        record_session = self.record_session and refused is None
 
         session = DeviceSession(
             device_name=self.device_name,
             app_path=self.app_path,
             platform=self.platform,
-            record_session=self.record_session,
+            record_session=record_session,
             session_dir=self.assets_dir,
             reuse_app=self.reuse_app,
             keep_app=self.keep_app,
@@ -137,8 +214,16 @@ class RoninTestRunner:
         usage_tracker = LLMUsageTracker(
             output_dir=session.telemetry_dir, scrubber=artifact_scrubber
         )
-        current_component = "scenario_generator"
+        prompt_store = PromptStore(
+            session.prompts_dir,
+            scrub=artifact_scrubber.scrub,
+            keep_bodies=self.persist_inputs,
+        )
+        current_component = GENERATION
         device_agent = agent._device_agent
+        # Named for the component, not the scenario. The scenario is already
+        # said by which entry the call is nested under, and two components
+        # share one client when no fast model is configured.
         device_agent.llm.usage_callback = lambda call: usage_tracker.add_call(
             current_component, call
         )
@@ -146,10 +231,14 @@ class RoninTestRunner:
             device_agent.fast_llm.usage_callback = lambda call: usage_tracker.add_call(
                 current_component, call
             )
+        # So each call lands under the step that paid for it. The loop knows
+        # which step it is on; the planner that makes the call does not.
+        device_agent.step_opened = usage_tracker.mark
+        device_agent.record_prompts(prompt_store)
 
         scenarios = []
         scenario_reports: List[ScenarioReport] = []
-        progress = None
+        manifest = None
         artifact_scrubber.learn_secrets(journey.secrets)
         device_agent.scrubber.learn_secrets(journey.secrets)
 
@@ -165,25 +254,13 @@ class RoninTestRunner:
             )
             device_control = session.start(is_headless=self.headless)
             perception = for_grounding(self.grounding, session)
+            # Recorded as soon as the driver answers, so a report written from
+            # the finally block still names the target it ran against.
+            self._device = identity.device_identity(device_control)
 
-            # Already in priority order: the generator walks the cells that
-            # way, so a run that dies part way has done the P0 cells.
-            suite = ScenarioGenerator(device_agent.llm).generate_suite(journey)
+            suite = self._suite(journey, device_agent.llm)
+            logger.info("Scenarios: %s", suite.note)
             scenarios = suite.scenarios
-            # A cell nothing covered is recorded before the first scenario
-            # runs, so a reader sees the gap even if the run dies next.
-            for gap in suite.uncovered:
-                scenario_reports.append(
-                    ScenarioReport(
-                        test_id=gap.cell.test_id,
-                        scenario_name=f"Uncovered cell {gap.cell.key}",
-                        cell=gap.cell.key,
-                        status=gap.status,
-                        cause=gap.cause.value,
-                        failure_reason=gap.reason,
-                    )
-                )
-
             logger.info(
                 "Successfully decomposed journey '%s' into %d scenarios:",
                 journey.id,
@@ -199,22 +276,52 @@ class RoninTestRunner:
                     s.test_id,
                 )
 
-            progress = ScenarioProgress(
-                session.telemetry_dir, journey, scenarios, scrubber=artifact_scrubber
+            manifest = RunManifest(
+                session.manifest_path,
+                Subject(
+                    kind="journey",
+                    id=journey.id,
+                    name=artifact_scrubber.scrub(journey.name),
+                ),
+                scenarios,
+                environment=self._environment(),
+                inputs=Inputs(
+                    subject=journey.id,
+                    subject_sha256=lock.journey_sha256(journey),
+                    coverage_declared=[cell.key for cell in journey.coverage],
+                    lock_sha256=suite.lock_sha256,
+                    scenarios_from_lock=suite.reused,
+                    scenarios_generated=suite.generated,
+                ),
+                scrubber=artifact_scrubber,
+                artifacts=sensitivity.declared_for(journey),
             )
-            progress.write()
-            logger.info("Scenario plan: %s", progress.path)
+            # Generation happened before this file existed, and it is the one
+            # call a run makes that no scenario owns.
+            manifest.spent(usage_tracker.calls_outside_steps(GENERATION))
 
-            current_component = "ronin_agent_planner"
+            # A cell nothing covered is recorded before the first scenario
+            # runs, so a reader sees the gap even if the run dies next. It
+            # goes in the record as well as the report: the record is the one
+            # a reader is told to trust.
+            for gap in suite.uncovered:
+                uncovered = infrastructure.uncovered_cell(gap)
+                scenario_reports.append(uncovered)
+                manifest.add(uncovered)
+
+            manifest.write()
+            logger.info("Run manifest: %s", manifest.path)
+
+            current_component = PLANNER
             total_scenarios = len(scenarios)
             for idx, scenario in enumerate(scenarios):
                 # Scenario evidence must not inherit screen names, actions, or
                 # navigation claims from a previous scenario.
                 trail = SessionTrail()
-                progress.start(scenario.test_id)
+                manifest.start(scenario.test_id)
                 logger.info("========================================")
 
-                current_component = f"scenario:{scenario.test_id}"
+                current_component = PLANNER
                 logger.info(
                     "Executing Scenario %d/%d: %s (%s) - Cell: %s",
                     idx + 1,
@@ -242,7 +349,7 @@ class RoninTestRunner:
                         device_name=self.device_name,
                         app_path=self.app_path,
                         platform=self.platform,
-                        record_session=self.record_session,
+                        record_session=record_session,
                         session_dir=self.assets_dir,
                         session_id=session.session_id,
                         reuse_app=self.reuse_app,
@@ -274,11 +381,15 @@ class RoninTestRunner:
                     # The scenario is over, and the next one is not: a rate
                     # limit that has passed by then costs nothing here, and
                     # the device state was restored on the way out.
-                    scen_report = self._provider_error(
+                    scen_report = infrastructure.provider_error(
                         scenario, exc, artifact_scrubber
                     )
 
-                progress.record(scenario.test_id, scen_report)
+                manifest.record(
+                    scenario.test_id,
+                    scen_report,
+                    calls=usage_tracker.calls_outside_steps(PLANNER),
+                )
 
                 scenario_reports.append(scen_report)
                 self._save_checkpoint(
@@ -302,9 +413,9 @@ class RoninTestRunner:
             logger.error(
                 "Fatal run interruption (%s): %s", type(e).__name__, safe_error
             )
-            if progress is not None:
-                progress.abort(f"Aborted due to run failure/interrupt: {safe_error}")
-            self._record_aborted(scenarios, scenario_reports, e)
+            if manifest is not None:
+                manifest.abort(f"Aborted due to run failure/interrupt: {safe_error}")
+            infrastructure.record_aborted(scenarios, scenario_reports, e)
             if isinstance(e, KeyboardInterrupt):
                 raise e
         finally:
@@ -318,15 +429,10 @@ class RoninTestRunner:
                 usage_tracker.save_report()
             except Exception as usage_err:
                 logger.error("Failed to serialize LLM usage: %s", usage_err)
-                scenario_reports.append(
-                    ScenarioReport(
-                        test_id="usage_report",
-                        scenario_name="LLM usage report",
-                        cell="infrastructure",
-                        status="ERROR",
-                        failure_reason=f"Failed to serialize LLM usage: {usage_err}",
-                    )
-                )
+                failed_usage = infrastructure.usage_failure(usage_err)
+                scenario_reports.append(failed_usage)
+                if manifest is not None:
+                    manifest.add(failed_usage)
 
             # persist reports even on Ctrl+C or mid-run crash
             duration = time.time() - start_time
@@ -350,103 +456,46 @@ class RoninTestRunner:
                 unevidenced_security_rules=unevidenced,
                 environment=self._environment(),
             )
-            try:
-                self._save_markdown_report(
-                    report, session=session, scrubber=artifact_scrubber
-                )
-            except ArtifactWriteFailed as report_err:
-                logger.error("Failed to save markdown report: %s", report_err)
-                self._mark_report_write_failure(report, "markdown_report", report_err)
-            try:
-                self._save_junit_report(
-                    report, session=session, scrubber=artifact_scrubber
-                )
-            except ArtifactWriteFailed as junit_err:
-                logger.error("Failed to save JUnit report: %s", junit_err)
-                self._mark_report_write_failure(report, "junit_report", junit_err)
+            self._persist(
+                report, session, artifact_scrubber, manifest, unevidenced,
+                usage_tracker.summary(),
+            )
 
         return report
 
-    @staticmethod
-    def _mark_report_write_failure(
-        report: JourneyReport, artifact_name: str, error: Exception
+    def _persist(
+        self,
+        report: JourneyReport,
+        session,
+        scrubber: SecretScrubber,
+        manifest,
+        unevidenced: List[str],
+        usage: dict,
     ) -> None:
-        report.status = "FAILED"
-        report.failed_count += 1
-        report.scenarios.append(
-            ScenarioReport(
-                test_id=artifact_name,
-                scenario_name=artifact_name.replace("_", " ").title(),
-                cell="infrastructure",
-                status="ERROR",
-                failure_reason=f"Failed to write {artifact_name}: {error}",
-            )
-        )
+        """Writes every report, then closes the record that names them.
 
-    @staticmethod
-    def _record_aborted(
-        scenarios: List[GeneratedTestCase],
-        scenario_reports: List[ScenarioReport],
-        error: BaseException,
-    ) -> int:
-        """Records a failure for everything that never produced a result.
-
-        A run can die before any scenario exists, if generation returns
-        nothing. It would otherwise report zero tests and zero failures, which
-        CI reads as a pass.
+        A report that could not be written fails the run. A suite that
+        produced verdicts and no record of them is not a passing suite.
+        Nothing downstream could tell it from one that never ran.
         """
-        reason = f"Aborted due to run failure/interrupt: {reportable(error)}"
-        if not scenarios:
-            scenario_reports.append(
-                ScenarioReport(
-                    test_id="scenario_generation",
-                    scenario_name="Scenario generation",
-                    cell="infrastructure",
-                    status="ERROR",
-                    # Generation is a model call, so its failure is usually
-                    # the provider's, and a reader should not look in the app.
-                    cause=cause_of(error).value,
-                    failure_reason=reason,
-                )
-            )
-            return 1
+        for name, write in (
+            ("markdown_report", self._save_markdown_report),
+            ("junit_report", self._save_junit_report),
+        ):
+            try:
+                write(report, session=session, scrubber=scrubber)
+            except ArtifactWriteFailed as failure:
+                logger.error("Failed to save %s: %s", name, failure)
+                infrastructure.write_failure(report, name, failure)
+                if manifest is not None:
+                    manifest.add(report.scenarios[-1])
 
-        recorded = 0
-        for scenario in scenarios:
-            if any(r.test_id == scenario.test_id for r in scenario_reports):
-                continue
-            scenario_reports.append(
-                ScenarioReport(
-                    test_id=scenario.test_id,
-                    scenario_name=scenario.scenario_name,
-                    cell=scenario.cell,
-                    status="ABORTED",
-                    cause=cause_of(error).value,
-                    failure_reason=reason,
-                )
-            )
-            recorded += 1
-        return recorded
-
-    def _provider_error(
-        self, scenario: GeneratedTestCase, error: BaseException, scrubber
-    ) -> ScenarioReport:
-        """The report for a scenario a model service would not answer for.
-
-        ERROR rather than FAILED, because nothing was learned about the app.
-        The cause says whose problem it is, so a reader of a red build does
-        not go looking in the app for it.
-        """
-        reason = scrubber.scrub(reportable(error))
-        logger.error("Scenario %s ended on the provider: %s", scenario.test_id, reason)
-        return ScenarioReport(
-            test_id=scenario.test_id,
-            scenario_name=scenario.scenario_name,
-            cell=scenario.cell,
-            status="ERROR",
-            cause=Cause.PROVIDER.value,
-            failure_reason=reason,
-        )
+        if manifest is None:
+            return
+        # Last, so the record carries whichever reports failed to write.
+        manifest.finish(report.status, unevidenced=unevidenced, usage=usage)
+        if manifest.unwritten is not None:
+            infrastructure.write_failure(report, "run_manifest", manifest.unwritten)
 
     def _save_checkpoint(
         self,

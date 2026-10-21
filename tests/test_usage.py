@@ -239,3 +239,65 @@ class ResponseReadingTests(unittest.TestCase):
         self.assertEqual(record.cached_tokens, 7)
         self.assertEqual(record.prompt_image_tokens, 4)
         self.assertEqual(record.reasoning_tokens, 11)
+
+
+class AnsweredShapeTests(unittest.TestCase):
+    """Which component made a call, where two of them share one client.
+
+    The planner and the auditor both answer through the same client whenever
+    no fast model is configured. The call site cannot name them apart. What
+    each asked for is different, and that is a fact of the call.
+    """
+
+    def _response(self):
+        from types import SimpleNamespace
+
+        block = {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
+        return SimpleNamespace(
+            usage=SimpleNamespace(model_dump=lambda: block),
+            model="provider/model-002",
+            id="gen-1",
+            choices=[SimpleNamespace(finish_reason="stop")],
+            _hidden_params={"_response_ms": 10.0},
+            model_dump=lambda: {"usage": block},
+        )
+
+    def test_the_shape_asked_for_is_recorded_by_name(self):
+        from ronin.llm.usage import record
+
+        kept = record(
+            self._response(), "provider/model", 1, answering="QAStepResponse"
+        )
+
+        self.assertEqual(kept.answering, "QAStepResponse")
+
+    def test_a_call_that_required_no_shape_names_none(self):
+        from ronin.llm.usage import record
+
+        self.assertIsNone(record(self._response(), "provider/model", 1).answering)
+
+    def test_the_client_names_the_model_it_asked_for(self):
+        """Read off the response model, so it cannot disagree with the schema hash."""
+        from unittest.mock import patch
+
+        from pydantic import BaseModel
+
+        from ronin.llm.llm_client import LLMClient
+        from ronin.llm.messages import TextMessage
+
+        class Verdict(BaseModel):
+            ok: bool
+
+        kept = []
+        client = LLMClient(model="provider/model", usage_callback=kept.append)
+        answer = self._response()
+        answer.choices = [
+            type("Choice", (), {"finish_reason": "stop",
+                                "message": type("M", (), {"content": '{"ok": true}'})()})()
+        ]
+
+        with patch("ronin.llm.llm_client.litellm.completion", return_value=answer):
+            client.generate_response([TextMessage(content="hi")], Verdict)
+
+        self.assertEqual(kept[0].answering, "Verdict")
+        self.assertIsNotNone(kept[0].schema_sha256)

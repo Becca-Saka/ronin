@@ -76,6 +76,25 @@ class RoninCLI:
             "that was already on the device is never removed",
         )
         parser.add_argument(
+            "--no-persist-inputs",
+            action="store_true",
+            help="Record the hash of every prompt and not its text. The run still "
+            "says that two runs asked the same thing, and keeps no model input",
+        )
+        parser.add_argument(
+            "--record-secrets",
+            action="store_true",
+            help="Record the screen even for a journey that declares secrets. "
+            "Nothing masks a video frame, so a declared value typed on screen is "
+            "in the recording",
+        )
+        parser.add_argument(
+            "--locked",
+            action="store_true",
+            help="Run exactly what ronin.lock holds, and fail when it is missing or "
+            "stale rather than generating a different suite. What CI uses",
+        )
+        parser.add_argument(
             "--replay",
             action="store_true",
             help="Re-execute navigation already worked out in an earlier scenario instead of "

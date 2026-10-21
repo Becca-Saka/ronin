@@ -118,6 +118,14 @@ class DeviceSession(DeviceRecording):
         return self.layout.telemetry
 
     @property
+    def manifest_path(self) -> Path:
+        return self.layout.manifest
+
+    @property
+    def prompts_dir(self) -> Path:
+        return self.layout.prompts
+
+    @property
     def root_log_file(self) -> Path:
         return self.layout.run_log
 

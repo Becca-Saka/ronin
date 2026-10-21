@@ -198,6 +198,8 @@ class SuiteSurvivalTests(unittest.TestCase):
                 self.installed_by_run = False
                 self.root_log_file = self.telemetry_dir / "run.log"
                 self.appium_log_path = self.telemetry_dir / "appium.log"
+                self.manifest_path = self.telemetry_dir / "run.json"
+                self.prompts_dir = self.telemetry_dir / "prompts"
 
             def start(self, **_):
                 return SimpleNamespace()
@@ -212,7 +214,7 @@ class SuiteSurvivalTests(unittest.TestCase):
             def __init__(self, *_, **__):
                 pass
 
-            def generate_suite(self, _journey):
+            def generate_suite(self, _journey, _cells=None):
                 from ronin.testing.generator import GeneratedSuite
 
                 return GeneratedSuite(scenarios=list(scenarios))
@@ -223,7 +225,10 @@ class SuiteSurvivalTests(unittest.TestCase):
 
                 llm = SimpleNamespace(usage_callback=None)
                 self._device_agent = SimpleNamespace(
-                    llm=llm, fast_llm=llm, scrubber=SecretScrubber()
+                    llm=llm,
+                    fast_llm=llm,
+                    scrubber=SecretScrubber(),
+                    record_prompts=lambda _store: None,
                 )
 
             def execute_scenario(self, test_case, **_):

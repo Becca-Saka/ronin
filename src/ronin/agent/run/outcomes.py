@@ -48,6 +48,13 @@ class DeviceRunResult:
     capability_receipts: list = field(default_factory=list)
     """What the device reported about each capability the run applied."""
 
+    steps: list = field(default_factory=list)
+    """One record per step, in order, however the run ended.
+
+    A run that stopped part way carries the steps it reached. That is what a
+    reader of a failed scenario needs, and the step count alone cannot say.
+    """
+
     cause: Optional[Cause] = None
     """What kind of failure ended the run, read from the exception's type.
 
@@ -78,6 +85,7 @@ def loop_detected(
         failure_reason=failure_reason,
         history=ctx.history,
         capability_receipts=ctx.capability_receipts,
+        steps=list(ctx.steps.records),
     )
 
 
@@ -94,6 +102,7 @@ def step_limit(
         failure_reason=f"Reached maximum step limit ({limit}) before goal was completed.",
         history=ctx.history,
         capability_receipts=ctx.capability_receipts,
+        steps=list(ctx.steps.records),
     )
 
 
@@ -149,6 +158,7 @@ def hook_stop(
         failure_reason="Execution stopped by step hook (crash, infeasibility, or critical issue).",
         history=ctx.history,
         capability_receipts=ctx.capability_receipts,
+        steps=list(ctx.steps.records),
     )
 
 
@@ -177,4 +187,5 @@ def goal_reached(
         failure_reason=None,
         history=ctx.history,
         capability_receipts=ctx.capability_receipts,
+        steps=list(ctx.steps.records),
     )

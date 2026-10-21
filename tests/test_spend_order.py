@@ -28,6 +28,8 @@ class SpendOrderTests(unittest.TestCase):
                 self.installed_by_run = False
                 self.root_log_file = self.telemetry_dir / "run.log"
                 self.appium_log_path = self.telemetry_dir / "appium.log"
+                self.manifest_path = self.telemetry_dir / "run.json"
+                self.prompts_dir = self.telemetry_dir / "prompts"
 
             def start(self, **_):
                 order.append("device")
@@ -43,7 +45,7 @@ class SpendOrderTests(unittest.TestCase):
             def __init__(self, *_, **__):
                 pass
 
-            def generate_suite(self, _journey):
+            def generate_suite(self, _journey, _cells=None):
                 order.append("generator")
                 raise RuntimeError("stop here")
 

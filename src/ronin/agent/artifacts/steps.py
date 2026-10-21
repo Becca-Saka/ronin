@@ -13,6 +13,7 @@ reading they came from together.
 
 import logging
 from pathlib import Path
+from typing import Optional
 
 from ronin.agent.artifacts.redaction import RedactedImages
 from ronin.agent.artifacts.scan import (
@@ -34,7 +35,12 @@ class StepArtifacts:
 
     def save_step(
         self, session_dir: Path, step: int, snapshot: PerceptionSnapshot
-    ) -> None:
+    ) -> dict[str, str]:
+        """Writes the screen, and names the files it wrote.
+
+        The names are returned rather than rebuilt by a reader. A manifest
+        that derived them would be a second place the convention lives.
+        """
         session_dir.mkdir(parents=True, exist_ok=True)
         base = f"step{step + 1:03d}_{snapshot.timestamp}"
         annotated_path = session_dir / f"{base}.png"
@@ -49,8 +55,9 @@ class StepArtifacts:
             raw_path,
         )
 
+        written = {"raw": raw_path.name, "annotated": annotated_path.name}
         if snapshot.scan_info is None:
-            return
+            return written
 
         record = build_screen_scan_record(
             step=step + 1,
@@ -67,10 +74,11 @@ class StepArtifacts:
         )
         write_screen_scan_dump(scan_path, record)
         logger.debug("Perception scan dump saved to %s", scan_path)
+        return {**written, "scan": scan_path.name}
 
     def save_planner_view(
         self, session_dir: Path, step: int, snapshot: PerceptionSnapshot
-    ) -> None:
+    ) -> Optional[str]:
         """The numbered screenshot, which is the image the planner is shown.
 
         Written only in marks mode, where `snapshot.marks` is what numbering
@@ -80,21 +88,22 @@ class StepArtifacts:
         """
         planner_view = snapshot.planner_img_bytes
         if not snapshot.marks or not planner_view:
-            return
+            return None
         session_dir.mkdir(parents=True, exist_ok=True)
+        marked = session_dir / f"step{step + 1:03d}_{snapshot.timestamp}_marks.png"
         self.images.save_redacted_bytes(
-            planner_view,
-            snapshot.gui_elements,
-            session_dir / f"step{step + 1:03d}_{snapshot.timestamp}_marks.png",
+            planner_view, snapshot.gui_elements, marked
         )
+        return marked.name
 
     def save_action(
         self, session_dir: Path, step: int, snapshot: PerceptionSnapshot, action
-    ) -> None:
+    ) -> str:
         click_path = session_dir / f"step{step + 1:03d}_{snapshot.timestamp}_action.png"
         self.images.save_redacted_action_annotation(
             snapshot.annotated_img, snapshot.gui_elements, action, click_path
         )
+        return click_path.name
 
 
 def save_unmatched_screen(images: RedactedImages, path: Path, snapshot) -> None:

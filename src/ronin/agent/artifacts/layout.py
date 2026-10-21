@@ -37,6 +37,19 @@ class RunLayout:
         return self.root / "telemetry"
 
     @property
+    def manifest(self) -> Path:
+        """The run's own record, at the root rather than inside telemetry.
+
+        Every other file under here is evidence this one points at.
+        """
+        return self.root / "run.json"
+
+    @property
+    def prompts(self) -> Path:
+        """What each model call was asked, where the run keeps them."""
+        return self.root / "prompts"
+
+    @property
     def appium_log(self) -> Path:
         return self.logs / f"appium_session_{self.session_id}.log"
 
@@ -46,7 +59,13 @@ class RunLayout:
 
     def create(self) -> None:
         """Makes every directory, so nothing downstream has to check."""
-        for directory in (self.logs, self.screenshots, self.recordings, self.telemetry):
+        for directory in (
+            self.logs,
+            self.screenshots,
+            self.recordings,
+            self.telemetry,
+            self.prompts,
+        ):
             directory.mkdir(parents=True, exist_ok=True)
 
 

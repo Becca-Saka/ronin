@@ -307,3 +307,112 @@ def refused():
     from litellm import exceptions
 
     return exceptions.AuthenticationError("bad key", "m", "openrouter")
+
+
+def suite_run(
+    scenarios, directory, journey=None, report_for=None, uncovered=None, **runner
+):
+    """One journey run end to end, with the device and the models faked.
+
+    Every real part of the runner takes part: the lock, the manifest, the
+    reports and the usage telemetry. What is replaced is the session, the
+    generator and the scenario agent, which are the three things that need a
+    device or a paid call.
+
+    Args:
+        scenarios: The suite the generator hands back.
+        directory: Where artifacts are written.
+        journey: What is run. A one-cell journey by default.
+        report_for: Called with each scenario, returning its report. A
+            passing report by default.
+        uncovered: Cells the generator could produce nothing for.
+        runner: Anything else to pass to `RoninTestRunner`.
+
+    Returns:
+        The journey report, and the manifest as it was written.
+    """
+    import json
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from ronin.testing.generator import GeneratedSuite
+    from ronin.testing.models import ScenarioReport, UserJourney
+    from ronin.testing.runner import RoninTestRunner
+
+    root = Path(directory)
+
+    def passing(scenario):
+        return ScenarioReport(
+            scenario_uuid=scenario.scenario_uuid,
+            test_id=scenario.test_id,
+            scenario_name=scenario.scenario_name,
+            cell=scenario.cell,
+            status="PASSED",
+        )
+
+    class Session:
+        def __init__(self, *_, **__):
+            self.telemetry_dir = root / "telemetry"
+            self.screenshots_dir = root / "screenshots"
+            self.telemetry_dir.mkdir(parents=True, exist_ok=True)
+            self.session_id = "s1"
+            self.installed_by_run = False
+            self.root_log_file = root / "run.log"
+            self.appium_log_path = root / "appium.log"
+            self.manifest_path = root / "run.json"
+            self.prompts_dir = root / "prompts"
+
+        def start(self, **_):
+            return SimpleNamespace(
+                platform=None, serial=None, os_version=None, model="Pixel 8"
+            )
+
+        def checkpoint_recording(self):
+            pass
+
+        def close(self, **_):
+            pass
+
+    class Generator:
+        def __init__(self, *_, **__):
+            pass
+
+        def generate_suite(self, _journey, cells=None):
+            return GeneratedSuite(
+                scenarios=list(scenarios),
+                locked=list(scenarios),
+                uncovered=list(uncovered or []),
+            )
+
+    class Agent:
+        def __init__(self, *_, **__):
+            from ronin.utils.secrets import SecretScrubber
+
+            llm = SimpleNamespace(usage_callback=None)
+            self._device_agent = SimpleNamespace(
+                llm=llm,
+                fast_llm=llm,
+                scrubber=SecretScrubber(),
+                record_prompts=lambda _store: None,
+            )
+
+        def execute_scenario(self, test_case, **_):
+            return (report_for or passing)(test_case)
+
+    with (
+        patch("ronin.testing.runner.DeviceSession", Session),
+        patch("ronin.testing.runner.ScenarioGenerator", Generator),
+        patch("ronin.testing.runner.QAAgent", Agent),
+        patch("ronin.testing.runner.ensure_device_ready"),
+        patch("ronin.testing.runner.for_grounding"),
+        patch("ronin.testing.runner.is_session_responsive", return_value=True),
+    ):
+        report = RoninTestRunner(
+            device_name="Pixel_8", app_path="app.apk", **runner
+        ).run_journey(
+            journey
+            or UserJourney(id="j", name="J", description="A user signs in.")
+        )
+
+    written = json.loads((root / "run.json").read_text())
+    return report, written

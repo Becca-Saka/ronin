@@ -58,6 +58,11 @@ def register(subcommands: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Skip the screen recording",
     )
+    parser.add_argument(
+        "--no-persist-inputs",
+        action="store_true",
+        help="Record the hash of every prompt and not its text",
+    )
     add_device_arguments(parser)
     parser.set_defaults(handler=run)
 
@@ -98,6 +103,7 @@ def run(args: argparse.Namespace, config: Config) -> int:
             record_session=not args.no_record,
             keep_device=args.keep_device,
             reuse_app=args.reuse_app,
+            persist_inputs=not args.no_persist_inputs,
         )
     except KeyboardInterrupt:
         logger.info("Agent execution interrupted by user")

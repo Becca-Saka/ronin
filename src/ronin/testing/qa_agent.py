@@ -214,6 +214,7 @@ class QAAgent:
         unsupported = unsupported_reason(test_case, target)
         if unsupported:
             return ScenarioReport(
+                scenario_uuid=test_case.scenario_uuid,
                 test_id=test_case.test_id,
                 scenario_name=test_case.scenario_name,
                 cell=test_case.cell,
@@ -348,6 +349,7 @@ class QAAgent:
         )
 
         return ScenarioReport(
+            scenario_uuid=test_case.scenario_uuid,
             test_id=test_case.test_id,
             scenario_name=test_case.scenario_name,
             cell=test_case.cell,
@@ -357,6 +359,7 @@ class QAAgent:
             steps_executed=run_result.steps_executed,
             rule_verifications=all_verifications,
             detected_issues=all_issues,
+            steps=list(run_result.steps),
             failure_reason=scrub(failure_reason or "") or None,
         )
 

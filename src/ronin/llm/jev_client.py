@@ -106,17 +106,28 @@ class JevClient:
     questions ride on it.
     """
 
-    def __init__(self, model: str = DEFAULT_DECISION_MODEL, usage_callback=None):
+    prompt_store = None
+    """Class-level, so a client built without __init__ records nothing."""
+
+    def __init__(
+        self,
+        model: str = DEFAULT_DECISION_MODEL,
+        usage_callback=None,
+        prompt_store=None,
+    ):
         """Initializes the client.
 
         Args:
             model: The decision model to use. Pinned by version, not aliased.
             usage_callback: Optional callable receiving a usage.CallRecord per call.
+            prompt_store: Where to record what each call asked. None records
+                nothing.
         """
         require_jev()
         self._model = model
         self._price = input_price(model)
         self.usage_callback = usage_callback
+        self.prompt_store = prompt_store
         self._client = None
 
     @property
@@ -159,6 +170,8 @@ class JevClient:
             state = f"`{ASSET}`"
             assets = {ASSET: Image(prepare(screenshot).png)}
 
+        asked = self._asked(state, questions, screenshot)
+
         started = time.perf_counter()
         response = failures.answered(
             lambda: self.client.system_one(
@@ -179,12 +192,48 @@ class JevClient:
                     self._model,
                     latency_ms,
                     None if tokens is None else tokens * self._price,
+                    asked=asked,
                 )
             )
         return response
+
+    def _asked(
+        self, state: str, questions: Mapping[str, Any], screenshot: Optional[bytes]
+    ) -> Optional[tuple]:
+        """What this call asked, recorded before it is made.
+
+        The screenshot is referenced by its own hash rather than written
+        again. The step that read the screen already keeps the image.
+        """
+        if self.prompt_store is None:
+            return None
+        import hashlib
+
+        return self.prompt_store.keep_payload(
+            {
+                "state": state,
+                "questions": {
+                    name: _readable(question) for name, question in questions.items()
+                },
+                "image_sha256": (
+                    hashlib.sha256(screenshot).hexdigest() if screenshot else None
+                ),
+            }
+        )
 
     def close(self) -> None:
         """Releases the vendor client's connections."""
         if self._client is not None:
             self._client.close()
             self._client = None
+
+
+def _readable(question) -> object:
+    """One question, in a form a record can hold.
+
+    The vendor's question objects are models. Anything else is kept as it
+    arrived, because a record of what was asked must not depend on guessing
+    the shape it was asked in.
+    """
+    dump = getattr(question, "model_dump", None)
+    return dump() if callable(dump) else question

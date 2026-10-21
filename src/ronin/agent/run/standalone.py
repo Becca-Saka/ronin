@@ -1,11 +1,22 @@
 """One goal, against a device session this module opens and closes."""
 
+import hashlib
+import logging
 from pathlib import Path
 
-from ronin.agent.device.session import DeviceSession
+from ronin import __version__, identity
 from ronin.agent.device.platform import Platform
+from ronin.agent.device.session import DeviceSession
 from ronin.agent.perception.blind import for_grounding
 from ronin.agent.run.outcomes import DeviceRunResult
+from ronin.llm.prompts import PromptStore
+from ronin.testing import sensitivity
+from ronin.testing.report.usage_tracker import LLMUsageTracker
+
+logger = logging.getLogger(__name__)
+
+AGENT = "agent"
+"""Every call a goal run makes. One client answers for all of them."""
 
 
 def run_goal(
@@ -19,8 +30,14 @@ def run_goal(
     record_session: bool = True,
     keep_device: bool = False,
     reuse_app: bool = False,
+    persist_inputs: bool = True,
 ) -> DeviceRunResult:
-    """Opens a session, runs the goal against it, and closes it either way."""
+    """Opens a session, runs the goal against it, and closes it either way.
+
+    The run leaves a manifest, as a journey run does. It needs no report: a
+    goal reached is the whole verdict. Without a manifest it could not be
+    read back at all, and nothing could say which build it walked.
+    """
     session = DeviceSession(
         device_name=device_name,
         app_path=app_path,
@@ -30,13 +47,90 @@ def run_goal(
         keep_device=keep_device,
         reuse_app=reuse_app,
     )
+    agent.record_prompts(
+        PromptStore(
+            session.prompts_dir,
+            scrub=agent.scrubber.scrub,
+            keep_bodies=persist_inputs,
+        )
+    )
+    # A goal run costs the same per call as a journey run, and left
+    # unattributed its prompts would be files nothing points at.
+    usage = LLMUsageTracker(
+        output_dir=session.telemetry_dir, scrubber=agent.scrubber
+    )
+    agent.llm.usage_callback = lambda call: usage.add_call(AGENT, call)
+    if agent.fast_llm is not agent.llm:
+        agent.fast_llm.usage_callback = lambda call: usage.add_call(AGENT, call)
+    agent.step_opened = usage.mark
+
+    manifest = None
     try:
         device_control = session.start(is_headless=headless)
-        return agent.run(
+        manifest = _manifest(session, agent, goal, platform, device_control)
+        result = agent.run(
             goal=goal,
             device_control=device_control,
             perception=for_grounding(agent.grounding, session),
             session_dir=session.screenshots_dir,
         )
+        manifest.spent(usage.calls_outside_steps(AGENT))
+        manifest.record_goal(result, usage=usage.summary())
+        return result
+    except BaseException as interruption:
+        if manifest is not None:
+            manifest.abort(f"Aborted: {type(interruption).__name__}")
+        raise
     finally:
+        try:
+            usage.save_report()
+        except Exception as exc:  # noqa: BLE001 - telemetry must not fail a run
+            logger.warning("Could not serialize the usage of this run: %s", exc)
         session.close()
+
+
+def _manifest(session, agent, goal: str, platform: Platform, device_control):
+    """The record for this run, opened as soon as the device answers."""
+    from ronin.testing.models import RunEnvironment
+    from ronin.testing.report.manifest import Inputs, RunManifest, Subject
+
+    return RunManifest(
+        session.manifest_path,
+        Subject(
+            kind="goal",
+            id=hashlib.sha256(goal.encode("utf-8")).hexdigest()[:16],
+            name=agent.scrubber.scrub(goal),
+        ),
+        scenarios=(),
+        environment=RunEnvironment(
+            ronin_version=__version__,
+            model=agent.llm.model,
+            platform=platform.value,
+            grounding=agent.grounding,
+            app=identity.app_identity(
+            session.app_path, installed=not session.reuse_app
+        ),
+            device=identity.device_identity(device_control),
+            git=identity.git_identity(),
+            ci=identity.ci_identity(),
+        ),
+        inputs=Inputs(
+            subject="goal",
+            subject_sha256=hashlib.sha256(goal.encode("utf-8")).hexdigest(),
+        ),
+        scrubber=agent.scrubber,
+        mode="run",
+        artifacts=sensitivity.declared_for(_goal_journey(goal)),
+    )
+
+
+def _goal_journey(goal: str):
+    """A goal in the shape the artifact classes read.
+
+    A goal is prose a person typed, so it declares no secret and nothing in
+    the run can mask one. The classes are the same for every run, and this
+    keeps one owner for them rather than a second list here.
+    """
+    from ronin.testing.models import UserJourney
+
+    return UserJourney(id="goal", name=goal, description=goal)

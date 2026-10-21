@@ -1,6 +1,5 @@
 """Reports, progress files and screenshots, and what must never reach them."""
 
-import json
 import tempfile
 import unittest
 
@@ -26,48 +25,6 @@ class ArtifactSafetyTests(unittest.TestCase):
             steps=walk("Enter 'password123' in Password"),
             expected_outcomes=["Do not display '4111222233334444'"],
         )
-
-    def test_progress_sanitizes_the_filename(self):
-        from ronin.testing.models import UserJourney
-        from ronin.testing.report.progress import ScenarioProgress
-        from ronin.utils.secrets import SecretScrubber
-
-        scenario = self._scenario()
-        scrubber = SecretScrubber()
-        journey = UserJourney(
-            id="../../escape", name="Journey", description="test", security_rules=[]
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            progress = ScenarioProgress(
-                Path(directory), journey, [scenario], scrubber=scrubber
-            )
-            progress.write()
-            payload = progress.path.read_text()
-
-            self.assertEqual(progress.path.parent, Path(directory))
-            self.assertIn("TS_1", payload)
-            self.assertFalse(progress.path.with_suffix(".json.tmp").exists())
-
-    def test_progress_redacts_known_values(self):
-        from ronin.testing.models import UserJourney
-        from ronin.testing.report.progress import ScenarioProgress
-        from ronin.utils.secrets import SecretScrubber
-
-        scenario = self._scenario()
-        scrubber = SecretScrubber()
-        scrubber.learn_secrets(
-            {"password": "password123", "card_number": "4111222233334444"}
-        )
-        journey = UserJourney(id="j", name="Journey", description="test", security_rules=[])
-        with tempfile.TemporaryDirectory() as directory:
-            progress = ScenarioProgress(
-                Path(directory), journey, [scenario], scrubber=scrubber
-            )
-            progress.write()
-            payload = progress.path.read_text()
-
-            self.assertNotIn("password123", payload)
-            self.assertNotIn("4111222233334444", payload)
 
     def test_junit_distinguishes_errors_from_assertion_failures(self):
         from ronin.testing.models import JourneyReport, ScenarioReport
@@ -171,7 +128,7 @@ class ArtifactSafetyTests(unittest.TestCase):
 
     def test_report_write_failure_makes_the_run_fail(self):
         from ronin.testing.models import JourneyReport
-        from ronin.testing.runner import RoninTestRunner
+        from ronin.testing.report import infrastructure
 
         report = JourneyReport(
             journey_id="j",
@@ -181,7 +138,7 @@ class ArtifactSafetyTests(unittest.TestCase):
             passed_count=1,
         )
 
-        RoninTestRunner._mark_report_write_failure(
+        infrastructure.write_failure(
             report, "junit_report", OSError("disk full")
         )
 
@@ -269,99 +226,6 @@ class ScanDumpSafetyTests(unittest.TestCase):
         dumped = element_to_dict(self._element("Continue"), 0, scrubber)
 
         self.assertEqual(dumped["text"], "Continue")
-
-
-class ScenarioProgressTests(unittest.TestCase):
-    def _progress(self, directory):
-        from ronin.testing.models import GeneratedTestCase, UserJourney
-        from ronin.testing.report.progress import ScenarioProgress
-
-        journey = UserJourney(id="j1", name="Journey", description="d", security_rules=[])
-        scenarios = [
-            GeneratedTestCase(
-                test_id=f"TS_00{n}",
-                scenario_name=f"Scenario {n}",
-                cell="functional.happy_path.0",
-                category="functional",
-                scenario_type="happy_path",
-                priority="P0",
-                steps=walk("Open the app."),
-                expected_outcomes=["ok"],
-            )
-            for n in (1, 2)
-        ]
-        return ScenarioProgress(Path(directory), journey, scenarios)
-
-    def test_plan_is_written_before_anything_runs(self):
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            progress = self._progress(tmp)
-            progress.write()
-
-            data = json.loads(progress.path.read_text())
-            self.assertEqual(data["total"], 2)
-            self.assertEqual(data["counts"], {"pending": 2})
-
-    def test_status_updates_as_scenarios_finish(self):
-        import tempfile
-
-        from ronin.testing.models import ScenarioReport
-
-        with tempfile.TemporaryDirectory() as tmp:
-            progress = self._progress(tmp)
-            progress.start("TS_001")
-            progress.record(
-                "TS_001",
-                ScenarioReport(
-                    test_id="TS_001",
-                    scenario_name="Scenario 1",
-                    cell="functional.happy_path.0",
-                    status="FAILED",
-                    duration=12.34,
-                    steps_executed=9,
-                    failure_reason="wrong screen",
-                ),
-            )
-
-            data = json.loads(progress.path.read_text())
-            first = data["scenarios"][0]
-            self.assertEqual(first["status"], "FAILED")
-            self.assertEqual(first["steps_executed"], 9)
-            self.assertEqual(first["duration_seconds"], 12.3)
-            self.assertEqual(data["counts"], {"FAILED": 1, "pending": 1})
-
-
-class ProgressAbortTests(unittest.TestCase):
-    def test_a_crash_leaves_nothing_marked_running(self):
-        import tempfile
-
-        from ronin.testing.models import GeneratedTestCase, UserJourney
-        from ronin.testing.report.progress import ScenarioProgress
-
-        journey = UserJourney(id="j1", name="J", description="d", security_rules=[])
-        scenarios = [
-            GeneratedTestCase(
-                test_id=f"TS_00{n}",
-                scenario_name=f"S{n}",
-                cell="functional.happy_path.0",
-                category="functional",
-                scenario_type="happy_path",
-                priority="P0",
-                steps=walk("Launch the app."),
-                expected_outcomes=["ok"],
-            )
-            for n in (1, 2)
-        ]
-
-        with tempfile.TemporaryDirectory() as tmp:
-            progress = ScenarioProgress(Path(tmp), journey, scenarios)
-            progress.start("TS_001")
-            progress.abort("interrupted")
-
-            data = json.loads(progress.path.read_text())
-            self.assertEqual(data["counts"], {"ABORTED": 2})
-            self.assertTrue(all(s["failure_reason"] == "interrupted" for s in data["scenarios"]))
 
 
 class SecretScrubbingTests(unittest.TestCase):

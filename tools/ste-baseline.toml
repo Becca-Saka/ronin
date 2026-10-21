@@ -45,10 +45,9 @@
 "src/ronin/testing/judge/rules.py" = 3
 "src/ronin/testing/judge/transitions.py" = 2
 "src/ronin/testing/judge/verdicts.py" = 2
-"src/ronin/testing/models.py" = 2
+"src/ronin/testing/evidence.py" = 1
 "src/ronin/testing/qa_agent.py" = 1
 "src/ronin/testing/qa_planner.py" = 1
-"src/ronin/testing/report/progress.py" = 1
 "src/ronin/testing/report/usage_tracker.py" = 1
 "src/ronin/testing/runner.py" = 1
 "src/ronin/utils/jev_deps.py" = 1

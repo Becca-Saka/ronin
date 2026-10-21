@@ -55,9 +55,13 @@ class SetupExecutionTests(unittest.TestCase):
     def _run(self, mode):
         from ronin.agent.run.agent import DeviceAgent
 
+        from ronin.utils.secrets import SecretScrubber
+
         agent = DeviceAgent.__new__(DeviceAgent)
         agent.replay_ledger = None
         agent._default_fast_planner = Mock()
+        agent.scrubber = SecretScrubber()
+        agent.step_opened = None
         calls = []
 
         # The run is cut short once setup is done. Only the setup matters.

@@ -64,4 +64,9 @@ def runner_for(
         reuse_app=bool(args.reuse_app),
         keep_app=bool(args.keep_app),
         grounding=setting("grounding", args.grounding) or GROUNDING_COORDINATES,
+        journey_file=filepath,
+        workflow=workflow.name or "",
+        locked=bool(args.locked),
+        persist_inputs=not bool(args.no_persist_inputs),
+        record_secrets=bool(args.record_secrets),
     )

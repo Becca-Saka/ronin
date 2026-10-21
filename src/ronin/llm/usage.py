@@ -60,6 +60,27 @@ class CallRecord:
     raw: dict = field(default_factory=dict)
     """The response as the provider sent it, whole."""
 
+    prompt_sha256: Optional[str] = None
+    """What was asked, as a hash. Present whether or not the body was kept."""
+
+    prompt_ref: Optional[str] = None
+    """Where the rendered prompt was written, or None when it was not kept."""
+
+    schema_sha256: Optional[str] = None
+    """The shape the answer had to take, where one was required.
+
+    Beside the prompt because it decides the answer as much as the words do.
+    """
+
+    answering: Optional[str] = None
+    """What was asked for, by the name of the shape it had to take.
+
+    This is what tells one component from another. The planner and the
+    auditor share a client whenever no fast model is configured, so the call
+    site cannot name them apart. What each one asked for is different, and it
+    is a fact of the call rather than a label somebody maintains.
+    """
+
 
 def _count(block: dict, name: str) -> int:
     """A token count, as zero where the provider reported none.
@@ -87,8 +108,25 @@ def _milliseconds(block: dict, name: str) -> Optional[float]:
     return float(value) if isinstance(value, (int, float)) else None
 
 
-def record(response, model: str, attempt: int) -> CallRecord:
-    """Reads a provider response into a CallRecord."""
+def record(
+    response,
+    model: str,
+    attempt: int,
+    asked: Optional[tuple[Optional[str], Optional[str]]] = None,
+    schema: Optional[str] = None,
+    answering: Optional[str] = None,
+) -> CallRecord:
+    """Reads a provider response into a CallRecord.
+
+    Args:
+        response: What the provider replied.
+        model: The model that was asked.
+        attempt: 1 unless a schema mismatch forced the question again.
+        asked: The prompt's hash and where its body was kept, from the
+            prompt store. None where no store was given.
+        schema: The required answer shape, as a hash.
+        answering: The name of that shape, which says which component asked.
+    """
     usage = response.usage.model_dump()
     prompt_details = usage.get("prompt_tokens_details") or {}
     completion_details = usage.get("completion_tokens_details") or {}
@@ -112,6 +150,10 @@ def record(response, model: str, attempt: int) -> CallRecord:
         prompt_text_tokens=_optional_count(prompt_details, "text_tokens"),
         cost_details=usage.get("cost_details") or {},
         raw=response.model_dump(),
+        prompt_sha256=(asked or (None, None))[0],
+        prompt_ref=(asked or (None, None))[1],
+        schema_sha256=schema,
+        answering=answering,
     )
 
 
@@ -132,7 +174,11 @@ def _request_id(response) -> str:
 
 
 def record_decision(
-    response, model: str, latency_ms: float, cost: Optional[float]
+    response,
+    model: str,
+    latency_ms: float,
+    cost: Optional[float],
+    asked: Optional[tuple[Optional[str], Optional[str]]] = None,
 ) -> CallRecord:
     """Reads a decision response into the same record a completion produces.
 
@@ -156,4 +202,6 @@ def record_decision(
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
         raw=response.model_dump() if hasattr(response, "model_dump") else {},
+        prompt_sha256=(asked or (None, None))[0],
+        prompt_ref=(asked or (None, None))[1],
     )

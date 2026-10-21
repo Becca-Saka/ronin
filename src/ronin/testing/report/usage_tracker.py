@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Optional
 from typing import Any, Dict
 
+from ronin.agent.run.record import CallRow, StepRecord
 from ronin.llm.usage import CallRecord
 from ronin.utils.secrets import SecretScrubber
 
@@ -86,6 +87,8 @@ class LLMUsageTracker:
         self.output_dir = output_dir
         self._scrubber = scrubber
         self.totals = Totals()
+        self._step: Optional[StepRecord] = None
+        self._outside: Dict[str, list[CallRow]] = {}
 
     @property
     def log_path(self) -> Path:
@@ -107,9 +110,25 @@ class LLMUsageTracker:
         except Exception as exc:  # noqa: BLE001 - telemetry must not fail a run
             logger.warning("Could not log the call: %s", exc)
 
+    def mark(self, step: Optional[StepRecord]) -> None:
+        """Says which step the calls from now on belong to.
+
+        Set by whoever runs the loop. A call is made several layers below it,
+        by a planner that has no reason to know which step it is on. So the
+        attribution is made here, rather than carried through the planner.
+        """
+        self._step = step
+
     def add_call(self, component_name: str, call: CallRecord) -> None:
         """Callback to record a single LLM call for a specific component."""
         self._append(component_name, call)
+        row = CallRow.of(component_name, call)
+        if self._step is not None:
+            self._step.calls.append(row)
+        else:
+            # The auditor and the route judge answer once the loop is over,
+            # so their calls belong to the scenario and to no step in it.
+            self._outside.setdefault(component_name, []).append(row)
         self.totals.add(call)
         if call.finish_reason == TRUNCATED:
             logger.warning(
@@ -160,6 +179,25 @@ class LLMUsageTracker:
         except Exception as exc:  # noqa: BLE001 - telemetry must not fail a run
             logger.warning("Could not checkpoint LLM usage: %s", exc)
             return None
+
+    def calls_outside_steps(self, component: str) -> list[CallRow]:
+        """What this component spent while no step was open.
+
+        Without these, the calls recorded under a scenario would not add up
+        to what the scenario cost. A reader would have to know which judges
+        answer after the loop to notice.
+        """
+        return list(self._outside.get(component, []))
+
+    def summary(self) -> dict:
+        """What was spent, without the per-component breakdown.
+
+        The manifest carries each call under the step that made it, so the
+        breakdown there would be the same facts counted twice.
+        """
+        counted = asdict(self.totals)
+        counted.pop("components", None)
+        return counted
 
     def save_report(self) -> Path:
         """Serializes usage records to a JSON file in the assets directory."""

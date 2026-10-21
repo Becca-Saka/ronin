@@ -11,6 +11,7 @@ from ronin.agent.memory.history import AgentHistory
 from ronin.agent.grounding import marks
 from ronin.agent.memory.loop_detector import RollingLoopDetector
 from ronin.agent.memory.stall import Stall
+from ronin.agent.run.record import StepLog
 
 
 @dataclass
@@ -32,6 +33,17 @@ class RunContext:
 
     keyboard_dismissed: set[str] = field(default_factory=set)
     """Screens whose keyboard was already pulled down once to look behind it."""
+
+    steps: StepLog = field(default_factory=StepLog)
+    """One record per step, built as the step goes, carried out on the result.
+
+    Kept here for the same reason the receipts are. A step can end the run
+    part way through. What it reached before that is what a reader of a
+    failed scenario needs.
+
+    The default log has no scrubber, which is what a test gets. A run builds
+    one with its own.
+    """
 
     capability_receipts: list = field(default_factory=list)
     """What the device reported about each capability a step applied.
