@@ -212,6 +212,31 @@ def find_journey_files(directory: Path) -> list[Path]:
     return sorted(candidates, key=lambda path: path.stat().st_mtime, reverse=True)
 
 
+def resolve_journey_file(given: Optional[str]) -> Path:
+    """The journey file to run, looking in the working directory when none is named.
+
+    Raises:
+        UsageError: If the directory holds no journey file, or several, because
+            Ronin cannot choose between them on the user's behalf.
+    """
+    if given:
+        return Path(given)
+
+    candidates = find_journey_files(Path.cwd())
+    if len(candidates) == 1:
+        logger.info("Using journey file %s", candidates[0].name)
+        return candidates[0]
+    if not candidates:
+        raise UsageError(
+            f"No journey file found in {Path.cwd()}.\nPass one: ronin test <journey.yaml>"
+        )
+    listed = "\n".join(f"  {path.name}" for path in candidates)
+    raise UsageError(
+        f"Several journey files found in {Path.cwd()}:\n{listed}\n"
+        "Pass the one you want: ronin test <journey.yaml>"
+    )
+
+
 def resolve_app_path(
     explicit: Optional[str], platform: str, *search_dirs: Optional[Path]
 ) -> Path:

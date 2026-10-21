@@ -1,25 +1,16 @@
 import argparse
 import logging
-import sys
-from pathlib import Path
 from typing import Any, List, Optional
 
-from ronin.agent.device.platform import Platform
-from ronin.agent.plan.planner import GROUNDING_COORDINATES
-from ronin.app_discovery import find_journey_files, resolve_app_path
-from ronin.config import SETTINGS, Config, load_config
+from ronin.app_discovery import resolve_journey_file
+from ronin.config import Config, load_config
+from ronin.defaults import LOG_LEVELS
 from ronin.errors import UsageError
 from ronin.schema import GROUNDINGS, PLATFORMS
-from .runner import RoninTestRunner
-from .suite import Workflow, load_workflows, select
+from .suite import load_workflows, select
+from .wiring import runner_for
 
 logger = logging.getLogger(__name__)
-
-
-def _as_bool(raw: Any) -> bool:
-    if isinstance(raw, bool):
-        return raw
-    return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
 class RoninCLI:
@@ -62,6 +53,11 @@ class RoninCLI:
             "keeps its version, so a stale one is used without warning",
         )
         parser.add_argument(
+            "--log-level",
+            choices=LOG_LEVELS,
+            help="Logging verbosity, when given after the subcommand",
+        )
+        parser.add_argument(
             "--workflow",
             help="Which workflow(s) in the file to run, comma separated. "
             "Every workflow runs when this is not given",
@@ -87,70 +83,16 @@ class RoninCLI:
         )
         return parser
 
-    def _resolve_journey_file(self, given: Optional[str]) -> Path:
-        """Finds the journey file to run, looking in the working directory."""
-        if given:
-            return Path(given)
-
-        candidates = find_journey_files(Path.cwd())
-        if len(candidates) == 1:
-            logger.info("Using journey file %s", candidates[0].name)
-            return candidates[0]
-        if not candidates:
-            raise UsageError(
-                f"No journey file found in {Path.cwd()}.\n"
-                "Pass one: ronin test <journey.yaml>"
-            )
-        listed = "\n".join(f"  {path.name}" for path in candidates)
-        raise UsageError(
-            f"Several journey files found in {Path.cwd()}:\n{listed}\n"
-            "Pass the one you want: ronin test <journey.yaml>"
-        )
-
-    def _runner_for(self, workflow: Workflow, args: Any, filepath: Path) -> "RoninTestRunner":
-        """Builds the runner one workflow needs.
-
-        Settings come from the flag if given, then the workflow, then
-        ronin.yaml and the RONIN_* variables, then the defaults.
-        """
-
-        def setting(name: str, flag: Any) -> Any:
-            if flag is not None:
-                return flag
-            if name in workflow.settings:
-                return workflow.settings[name]
-            # grounding is a flag and a file key only, so the caller supplies
-            # the default rather than ronin.config.
-            return self.config.get(name) if name in SETTINGS else None
-
-        platform_str = setting("platform", args.platform)
-        app_path = resolve_app_path(
-            setting("app_path", args.app_path),
-            platform_str,
-            Path.cwd(),
-            filepath.resolve().parent,
-        )
-        return RoninTestRunner(
-            platform=Platform.named(platform_str),
-            device_name=setting("device", args.device),
-            app_path=str(app_path),
-            model=setting("model", args.model),
-            assets_dir=Path(setting("output_dir", args.output_dir)),
-            max_steps=int(setting("max_steps", args.max_steps)),
-            settle_time=float(setting("settle_time", args.settle_time)),
-            headless=_as_bool(setting("headless", args.headless)),
-            fast_model=setting("fast_model", args.fast_model),
-            record_session=(
-                False if args.no_record else _as_bool(setting("record", None))
-            ),
-            replay=bool(args.replay),
-            reuse_app=bool(args.reuse_app),
-            keep_app=bool(args.keep_app),
-            grounding=setting("grounding", args.grounding) or GROUNDING_COORDINATES,
-        )
-
     def run(self, args_list: Optional[List[str]] = None) -> int:
+        """Parses arguments and executes the suite they ask for."""
+        return self.run_parsed(self.parser.parse_args(args_list))
+
+    def run_parsed(self, args: Any) -> int:
         """Executes all loaded journeys, prints a summary, and returns a code.
+
+        Takes a namespace rather than argv, so a caller that already parsed to
+        run its own checks does not parse a second time. Two parses of one
+        invocation are two answers to the same question.
 
         The caller owns the process. The code is:
 
@@ -158,10 +100,8 @@ class RoninCLI:
         - 1 when any journey failed
         - 2 when Ronin could not load the suite
         """
-        args = self.parser.parse_args(args_list)
-
         try:
-            filepath = self._resolve_journey_file(args.journey_file)
+            filepath = resolve_journey_file(args.journey_file)
             workflows = select(load_workflows(filepath), args.workflow)
         except UsageError as e:
             logger.error("%s", e)
@@ -186,7 +126,7 @@ class RoninCLI:
             if workflow.name:
                 logger.info("Workflow: %s", workflow.name)
             try:
-                runner = self._runner_for(workflow, args, filepath)
+                runner = runner_for(workflow, args, filepath, self.config)
             except Exception as setup_err:
                 logger.error(
                     "Could not prepare workflow '%s': %s", workflow.name, setup_err
@@ -224,8 +164,3 @@ class RoninCLI:
             return 0
         logger.error("One or more user journeys failed or encountered errors.")
         return 1
-
-
-def main():
-    cli = RoninCLI()
-    sys.exit(cli.run())

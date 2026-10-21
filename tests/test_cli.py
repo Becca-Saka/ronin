@@ -43,17 +43,15 @@ class ExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 2)
 
     def test_no_journey_file_is_a_usage_error_not_an_exit(self):
+        from ronin.app_discovery import resolve_journey_file
         from ronin.errors import UsageError
-        from ronin.testing.cli import RoninCLI
-
-        cli = RoninCLI()
 
         with (
             tempfile.TemporaryDirectory() as directory,
-            patch("ronin.testing.cli.Path.cwd", return_value=Path(directory)),
+            patch("ronin.app_discovery.Path.cwd", return_value=Path(directory)),
             self.assertRaises(UsageError),
         ):
-            cli._resolve_journey_file(None)
+            resolve_journey_file(None)
 
     def test_a_setting_ronin_config_does_not_know_is_not_looked_up_there(self):
         """grounding comes from a flag or the journey, or falls back to the default."""
@@ -71,9 +69,9 @@ class ExitCodeTests(unittest.TestCase):
                 "ronin.testing.cli.load_workflows",
                 return_value=[_workflow()],
             ),
-            patch.object(RoninCLI, "_resolve_journey_file", return_value=Path("j.yaml")),
-            patch("ronin.testing.cli.resolve_app_path", return_value=Path("app.apk")),
-            patch("ronin.testing.cli.RoninTestRunner") as runner_class,
+            patch("ronin.testing.cli.resolve_journey_file", return_value=Path("j.yaml")),
+            patch("ronin.testing.wiring.resolve_app_path", return_value=Path("app.apk")),
+            patch("ronin.testing.wiring.RoninTestRunner") as runner_class,
         ):
             runner_class.return_value.run_journey.return_value = report
             cli.run(["j.yaml"])
@@ -98,9 +96,9 @@ class ExitCodeTests(unittest.TestCase):
                 "ronin.testing.cli.load_workflows",
                 return_value=[_workflow()],
             ),
-                patch.object(RoninCLI, "_resolve_journey_file", return_value=Path("j.yaml")),
-                patch("ronin.testing.cli.resolve_app_path", return_value=Path("app.apk")),
-                patch("ronin.testing.cli.RoninTestRunner") as runner_class,
+                patch("ronin.testing.cli.resolve_journey_file", return_value=Path("j.yaml")),
+                patch("ronin.testing.wiring.resolve_app_path", return_value=Path("app.apk")),
+                patch("ronin.testing.wiring.RoninTestRunner") as runner_class,
             ):
                 runner_class.return_value.run_journey.return_value = report(status)
                 self.assertEqual(cli.run(["j.yaml"]), expected)
@@ -137,7 +135,7 @@ class ConfigFileTests(unittest.TestCase):
 
 
 class ReuseAppFlagTests(unittest.TestCase):
-    """Skipping the reinstall, which only `ronin run` could do before."""
+    """Whether a run reinstalls the app, or tests the build already on the device."""
 
     def _runner_kwargs(self, argv):
         from ronin.testing.cli import RoninCLI
@@ -152,9 +150,9 @@ class ReuseAppFlagTests(unittest.TestCase):
                 "ronin.testing.cli.load_workflows",
                 return_value=[_workflow()],
             ),
-            patch.object(RoninCLI, "_resolve_journey_file", return_value=Path("j.yaml")),
-            patch("ronin.testing.cli.resolve_app_path", return_value=Path("app.apk")),
-            patch("ronin.testing.cli.RoninTestRunner") as runner_class,
+            patch("ronin.testing.cli.resolve_journey_file", return_value=Path("j.yaml")),
+            patch("ronin.testing.wiring.resolve_app_path", return_value=Path("app.apk")),
+            patch("ronin.testing.wiring.RoninTestRunner") as runner_class,
         ):
             runner_class.return_value.run_journey.return_value = report
             cli.run(argv)
@@ -178,7 +176,7 @@ class PlatformNameTests(unittest.TestCase):
         self.assertIs(Platform.named("iOS"), Platform.IOS)
 
     def test_a_misspelled_platform_is_refused(self):
-        """'androdi' used to run the iOS path, failing far from the typo."""
+        """A typo fails at the name, not deep in a run on the wrong platform."""
         from ronin.agent.device.platform import Platform
         from ronin.errors import UsageError
 

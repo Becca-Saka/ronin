@@ -5,7 +5,6 @@ and sets up what every command needs: logging, .env loading and configuration.
 """
 
 import argparse
-import logging
 import sys
 from typing import List, Optional
 
@@ -14,13 +13,13 @@ from dotenv import find_dotenv, load_dotenv
 from ronin import __version__
 from ronin.cli import config as config_command
 from ronin.cli import devices, doctor, run, setup, test
-from ronin.cli.console import Console
+from ronin.cli.console import Console, configure_logging
 from ronin.config import load_config
+from ronin.defaults import LOG_LEVELS
 from ronin.errors import UsageError
 
 COMMANDS = (doctor, setup, devices, config_command, test, run)
 
-LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,21 +41,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _configure_logging(level: str) -> None:
-    logging.basicConfig(
-        level=getattr(logging, level.upper()),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        force=True,
-    )
-
-
 def main(argv: Optional[List[str]] = None) -> int:
     """Parses the command line and dispatches to the requested command."""
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
 
     args, extra = parser.parse_known_args(argv)
-    _configure_logging(args.log_level)
+    configure_logging(args.log_level)
     # usecwd: without it find_dotenv walks up from this module's directory,
     # so an installed Ronin would never see the .env next to your app.
     load_dotenv(find_dotenv(usecwd=True))

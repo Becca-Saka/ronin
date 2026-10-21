@@ -5,6 +5,7 @@ line, an indented fix hint — so the glyphs, colours and tty detection live
 here rather than being re-declared per command.
 """
 
+import logging
 import os
 import sys
 from typing import Optional, TextIO
@@ -103,3 +104,16 @@ class Console:
 
     def bullet(self, level: str, text: str, indent: int = 2) -> None:
         self.write(f"{' ' * indent}{GLYPHS[level]} {text}")
+
+
+def configure_logging(level: str) -> None:
+    """Sets the verbosity for the whole process.
+
+    `force=True` because a subcommand may set this after `ronin` already did,
+    and the later word is the one the user typed closest to the command.
+    """
+    logging.basicConfig(
+        level=getattr(logging, level.upper()),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        force=True,
+    )

@@ -4,6 +4,9 @@ Single source of truth for the flag defaults, so the CLI, the testing CLI and
 `ronin doctor` cannot drift apart on what "default" means.
 """
 
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+"""Verbosities every entrypoint offers, so a subcommand accepts what `ronin` does."""
+
 DEFAULT_PLATFORM = "android"
 DEFAULT_DEVICE = "Pixel_8a"
 DEFAULT_MODEL = "openrouter/google/gemini-2.5-flash"
