@@ -16,6 +16,7 @@ from ronin.agent.device.platform import Platform
 from ronin.agent.memory.replay import ReplayLedger
 
 from ronin.defaults import STEP_BUDGET_FLOOR, STEP_BUDGET_PER_INSTRUCTION
+from ronin.llm.failures import reportable
 from ronin.llm.llm_client import LLMClient
 from ronin.testing.models import (
     ExpectedOutcome,
@@ -39,8 +40,8 @@ from ronin.testing.judge.verdicts import (
 )
 from ronin.testing.judge.qa_auditor import Assessment, QAAuditor, ScreenWatch
 from ronin.testing.qa_planner import QAPlanner, QAStepResponse
-from ronin.errors import Cause
-from ronin.testing import taxonomy
+from ronin.errors import Cause, cause_of
+from ronin.testing import steps, taxonomy
 from ronin.testing.judge import transitions
 
 from ronin.agent.actuation.actions import WaitAction
@@ -209,7 +210,8 @@ class QAAgent:
         # Read against the device in front of us, so a scenario whose
         # capability this target cannot apply is skipped rather than failing a
         # step inside itself.
-        unsupported = unsupported_reason(test_case, target_of(device_control))
+        target = target_of(device_control)
+        unsupported = unsupported_reason(test_case, target)
         if unsupported:
             return ScenarioReport(
                 test_id=test_case.test_id,
@@ -255,7 +257,12 @@ class QAAgent:
             # Scenarios share one device, and SetupMode restores the app and
             # not the system around it. Without this, one scenario that goes
             # offline decides what every later scenario was testing.
-            with restoration.preserved(device_control):
+            # The typed capabilities say which states could move, so iOS
+            # reads only those rather than all of them. Read off the steps,
+            # because a declared kind with no step applies nothing.
+            with restoration.preserved(
+                device_control, capabilities=steps.capabilities_in(test_case.steps)
+            ):
                 run_result: DeviceRunResult = self._device_agent.run(
                     goal=test_case.steps_instructions,
                     device_control=device_control,
@@ -365,6 +372,10 @@ class QAAgent:
 
         A failure here leaves them unevidenced, which is the honest answer:
         the judgement did not happen, so nothing was judged.
+
+        A failure of the service is the exception, whether it was spent or
+        refused. Read as missing evidence it would blame the run for an
+        outage, so it ends the scenario on the provider instead.
         """
         try:
             return transitions.settle(
@@ -374,7 +385,12 @@ class QAAgent:
                 scrubber=self._device_agent.scrubber,
             )
         except Exception as exc:  # noqa: BLE001 - model boundary
-            logger.warning("Could not judge the transitions of this scenario: %s", exc)
+            if cause_of(exc) is Cause.PROVIDER:
+                raise
+            logger.warning(
+                "Could not judge the transitions of this scenario: %s",
+                reportable(exc),
+            )
             return []
 
     def _determine_status(

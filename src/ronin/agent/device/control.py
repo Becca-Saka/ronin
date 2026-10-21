@@ -32,6 +32,22 @@ logger = logging.getLogger(__name__)
 ANDROID_KEYCODE_BACK = 4
 
 
+def _listed_udid(device_name: str) -> Optional[str]:
+    """The udid of the listed iOS target with this name, or None.
+
+    Imported here because device enumeration is a command-line concern, and
+    this module is the driver's. A name that resolves to nothing still starts
+    a session, because a simulator is reachable by name alone.
+
+    Raises:
+        UsageError: Two listed targets carry this name, so neither can be
+            chosen for the person who typed it.
+    """
+    from ronin.devices.discovery import identifier_for
+
+    return identifier_for(device_name, "ios")
+
+
 class DeviceControl:
     """Wrapper for executing gesture actions and capturing state from mobile devices."""
 
@@ -49,9 +65,16 @@ class DeviceControl:
         self.platform = platform
         self.device_name = device_name
         self.app_path = app_path
-        self.bundle_id = None
         # Only an Android session resolves one, and teardown asks either way.
         self.package_id: Optional[str] = None
+        self.app_id: Optional[str] = None
+        """The app under test, as its own platform names it.
+
+        An Android package id or an iOS bundle id. A capability acts on the
+        app rather than on a platform, so it asks for this and not for one of
+        the two. `package_id` stays beside it for the adb paths, which take a
+        package and nothing else.
+        """
         self.serial: Optional[str] = None
         self.keep_device = keep_device
         self.reuse_app = reuse_app
@@ -61,6 +84,13 @@ class DeviceControl:
             options.platform_name = "iOS"
             options.automation_name = "XCUITest"
             options.device_name = device_name
+            # A name selects a target only while one target carries it. A
+            # physical iPhone and a simulator can share a name, and the udid
+            # is what separates them. XCUITest wants it for a real device.
+            udid = _listed_udid(device_name)
+            if udid:
+                options.set_capability("appium:udid", udid)
+                logger.info("Targeting iOS device %s (%s)", device_name, udid)
             options.app = app_path
             options.is_headless = is_headless
             options.new_command_timeout = IDLE_SESSION_TIMEOUT_SECONDS
@@ -154,6 +184,7 @@ class DeviceControl:
             pixel_ratio,
         )
         self.serial = self._resolve_serial()
+        self.app_id = self._resolve_app_id()
 
         self.platform_name = self.driver.capabilities.get("platformName")
         self.os_version = self.driver.capabilities.get("platformVersion")
@@ -169,6 +200,21 @@ class DeviceControl:
             self.model,
             self.serial,
         )
+
+    def _resolve_app_id(self) -> Optional[str]:
+        """The app under test, whichever name this platform gives it.
+
+        The driver answers for both. Android reports `appPackage` and iOS
+        reports `bundleId`, each worked out from the app it installed. The
+        fallback is the id read off the apk before the session, which is the
+        same value by another route and is Android's only.
+        """
+        capabilities = self.driver.capabilities
+        for name in ("appPackage", "bundleId", "appium:appPackage", "appium:bundleId"):
+            value = capabilities.get(name)
+            if isinstance(value, str) and value:
+                return value
+        return self.package_id
 
     @property
     def state(self) -> "DeviceState":
@@ -409,12 +455,3 @@ class DeviceControl:
         and the driver refuses the call rather than ignoring the extra layer.
         """
         return self.driver.execute_script(script, args or {})
-
-    def _resolve_bundle_id(self) -> str | None:
-        """Lazily resolve and cache the iOS bundle ID from driver capabilities."""
-        if not self.bundle_id:
-            self.bundle_id = (
-                self.driver.capabilities.get("bundleId")
-                or self.driver.capabilities.get("appium:bundleId")
-            )
-        return self.bundle_id

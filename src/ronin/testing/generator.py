@@ -24,7 +24,8 @@ from typing import Literal
 from pydantic import ValidationError
 
 from ronin.agent.actuation.actions import CapabilityKind
-from ronin.errors import Cause, cause_of
+from ronin.errors import Cause, ProviderUnavailable, cause_of
+from ronin.llm.failures import reportable
 from ronin.llm.llm_client import LLMClient
 from ronin.llm.messages import TextMessage
 from ronin.testing import steps
@@ -278,9 +279,20 @@ class ScenarioGenerator:
                     self._failed(cell, Cause.PROVIDER, f"schema never matched: {mismatch}")
                 )
                 continue
-            except Exception as failure:
+            except ProviderUnavailable as spent:
+                # The service may answer the next cell, and a cell nobody
+                # covered is recorded rather than lost.
                 suite.uncovered.append(
-                    self._failed(cell, cause_of(failure), str(failure))
+                    self._failed(cell, Cause.PROVIDER, reportable(spent))
+                )
+                continue
+            except Exception as failure:
+                if cause_of(failure) is Cause.PROVIDER:
+                    # A refused request is refused for every later cell, so
+                    # asking for them spends calls on the same answer.
+                    raise
+                suite.uncovered.append(
+                    self._failed(cell, cause_of(failure), reportable(failure))
                 )
                 continue
             stamped = GeneratedTestCase.of(
@@ -342,6 +354,11 @@ class ScenarioGenerator:
                     context=context,
                 )
             except Exception as exc:
+                # The client already decided this one. It retried what a pause
+                # could fix and raised what it could not, so asking again here
+                # spends provider calls on an answer that will not change.
+                if cause_of(exc) is Cause.PROVIDER:
+                    raise
                 last_error = exc
                 logger.warning(
                     "Cell %s attempt %d/%d failed: %s",

@@ -2,21 +2,16 @@
 # not targets. Lower a value when a file improves. Delete the entry when
 # it reaches zero. Do not add new entries.
 [files]
-"src/ronin/agent/actuation/actions.py" = 7
 "src/ronin/agent/device/adb_control.py" = 2
-"src/ronin/agent/device/capability_controller.py" = 2
 "src/ronin/agent/device/control.py" = 10
 "src/ronin/agent/device/session.py" = 2
 "src/ronin/agent/run/agent.py" = 1
-"src/ronin/agent/plan/planner.py" = 1
 "src/ronin/agent/device/launch.py" = 1
 "src/ronin/agent/perception/detector.py" = 2
 "src/ronin/agent/perception/screen.py" = 4
 "src/ronin/llm/credentials.py" = 1
-"src/ronin/llm/llm_client.py" = 6
+"src/ronin/llm/llm_client.py" = 5
 "src/ronin/setup/steps.py" = 4
-"src/ronin/testing/generator.py" = 1
 "src/ronin/testing/qa_agent.py" = 1
-"src/ronin/testing/qa_planner.py" = 3
 "src/ronin/testing/runner.py" = 4
 "src/ronin/utils/platform_checks.py" = 1

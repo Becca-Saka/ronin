@@ -214,7 +214,7 @@ class ScenarioDraft(BaseModel):
         wanted = (info.context or {}).get("capability")
         if wanted is None:
             return self
-        if wanted not in steps.capabilities_in(self.steps):
+        if wanted not in steps.capability_kinds_in(self.steps):
             raise ValueError(
                 f"This cell is about the device being {wanted.value}. One "
                 f"'capability' step has to carry a {wanted.value} capability."
@@ -258,7 +258,7 @@ class GeneratedTestCase(ScenarioDraft):
         if not self.steps_instructions:
             self.steps_instructions = steps.rendered(self.steps)
         if not self.required_capabilities:
-            self.required_capabilities = steps.capabilities_in(self.steps)
+            self.required_capabilities = steps.capability_kinds_in(self.steps)
         return self
 
     @classmethod

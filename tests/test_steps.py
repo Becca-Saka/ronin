@@ -58,11 +58,11 @@ class CapabilityStepTests(unittest.TestCase):
             ActionStep(instruction="Tap the Retry button."),
         ]
 
-        self.assertEqual(steps.capabilities_in(walk), [CapabilityKind.NETWORK])
+        self.assertEqual(steps.capability_kinds_in(walk), [CapabilityKind.NETWORK])
 
     def test_a_walk_with_no_capability_needs_none(self):
         self.assertEqual(
-            steps.capabilities_in([ActionStep(instruction="Launch the app.")]), []
+            steps.capability_kinds_in([ActionStep(instruction="Launch the app.")]), []
         )
 
     def test_the_same_capability_twice_is_named_once(self):
@@ -71,7 +71,7 @@ class CapabilityStepTests(unittest.TestCase):
             CapabilityStep(capability=NetworkCapability(mode="online")),
         ]
 
-        self.assertEqual(steps.capabilities_in(walk), [CapabilityKind.NETWORK])
+        self.assertEqual(steps.capability_kinds_in(walk), [CapabilityKind.NETWORK])
 
     def test_one_field_reads_as_a_plain_sentence(self):
         step = CapabilityStep(capability=NetworkCapability(mode="offline"))

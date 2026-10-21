@@ -77,8 +77,8 @@ class ActionOrchestrator:
     def _run_action(self, action: Action) -> Optional[Receipt]:
         if action.type == ActionType.TARGET_NOT_LISTED:
             raise ValueError(
-                "target_not_listed reports a missing target and has nothing to "
-                "execute; the caller is expected to stop the step and record it."
+                "target_not_listed reports a missing target and has nothing "
+                "to execute. The caller stops the step and records it."
             )
         self._validate(action)
         match action.type:

@@ -14,114 +14,31 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+from fakes import (
+    BUNDLE,
+    EVERY_CAPABILITY,
+    PACKAGE,
+    SERIAL,
+    FakeDriver,
+    controller,
+    silent_reads,
+)
+
 from ronin.agent.actuation.actions import (
-    AccessibilityCapability,
     AppStateCapability,
     BatteryCapability,
-    BiometricCapability,
     CapabilityKind,
-    ClipboardCapability,
     DeeplinkCapability,
     InterruptCapability,
-    LocaleCapability,
     LocationCapability,
     MediaInjectCapability,
     NetworkCapability,
     PermissionCapability,
     TimezoneCapability,
 )
-from ronin.agent.device import capability_controller, capability_receipts
-from ronin.agent.device.capability_controller import CapabilityController
+from ronin.agent.device import capability_controller
 from ronin.agent.device.platform import Platform
 from ronin.errors import ActionRejected
-
-SERIAL = "emulator-5554"
-PACKAGE = "com.example.app"
-
-# Every read-back the command-line fallback can ask for. Silenced by default,
-# so a dispatch case is about the command that was sent and nothing else.
-READERS = (
-    "airplane_mode",
-    "timezone",
-    "app_locale",
-    "battery_level",
-    "battery_state",
-    "permission_granted",
-    "accessibility_enabled",
-    "app_running",
-)
-
-# One instance of every capability, so a capability added to the union without
-# a case in the dispatch fails here rather than at run time on a device.
-EVERY_CAPABILITY = {
-    CapabilityKind.LOCATION: LocationCapability(latitude=1.0, longitude=2.0),
-    CapabilityKind.NETWORK: NetworkCapability(mode="offline"),
-    CapabilityKind.BATTERY: BatteryCapability(level=50),
-    CapabilityKind.TIMEZONE: TimezoneCapability(timezone="Europe/London"),
-    CapabilityKind.LOCALE: LocaleCapability(language="fr", country="FR"),
-    CapabilityKind.PERMISSION: PermissionCapability(permission="camera", grant=True),
-    CapabilityKind.INTERRUPT: InterruptCapability(type="low_memory"),
-    CapabilityKind.BIOMETRIC: BiometricCapability(action="match"),
-    CapabilityKind.CLIPBOARD: ClipboardCapability(text="hello"),
-    CapabilityKind.DEEPLINK: DeeplinkCapability(url="app://cart"),
-    CapabilityKind.APP_STATE: AppStateCapability(action="force_stop"),
-    CapabilityKind.MEDIA_INJECT: MediaInjectCapability(local_path=__file__),
-    CapabilityKind.ACCESSIBILITY: AccessibilityCapability(enabled=True),
-}
-
-
-class FakeDriver:
-    """A driver that records the `mobile:` methods it was asked for.
-
-    `answers` is what a read returns. `without` names methods this driver does
-    not have, which is how a real driver behaves on a platform or version that
-    never implemented one, and is what sends a capability to the command line.
-    """
-
-    def __init__(self, answers=None, without=(), package=PACKAGE):
-        self.capabilities = {"appPackage": package, "udid": SERIAL}
-        self.calls = []
-        self.answers = answers or {}
-        self.without = set(without)
-        self.set_network_connection = mock.Mock()
-        self.finger_print = mock.Mock()
-
-    def execute_script(self, script, params=None):
-        method = script.removeprefix("mobile: ")
-        self.calls.append((method, params or {}))
-        if method in self.without:
-            raise RuntimeError(f"Unknown mobile command '{method}'")
-        return self.answers.get(method)
-
-    def asked(self, method):
-        """The params one method was called with, or None if it never was."""
-        for name, params in self.calls:
-            if name == method:
-                return params
-        return None
-
-
-def controller(platform=Platform.ANDROID, package=PACKAGE, driver=None):
-    driver = driver or FakeDriver(package=package)
-    device = SimpleNamespace(
-        driver=driver,
-        platform=platform,
-        device_name=SERIAL,
-        serial=SERIAL,
-        package_id=package,
-        adb_control=SimpleNamespace(resolve_emulator_serial=lambda name: SERIAL),
-    )
-    return CapabilityController(device)
-
-
-def silent_reads():
-    """A device that answers no command-line state question."""
-    patched = mock.patch.object(capability_receipts, "receipts")
-    reads = patched.start()
-    for name in READERS:
-        getattr(reads, name).return_value = None
-    return patched, reads
-
 
 class DriverFirstTests(unittest.TestCase):
     """The session already holds a driver, so it is asked before adb."""
@@ -259,6 +176,28 @@ class FallbackTests(unittest.TestCase):
 
         self.assertIn("pid", str(raised.exception))
 
+    def test_a_memory_warning_carries_the_bundle_id_the_driver_requires(self):
+        """`mobile: sendMemoryWarning` names it required, and refuses without it."""
+        _, _, driver = self._run(
+            InterruptCapability(type="low_memory"), without=[], platform=Platform.IOS
+        )
+
+        self.assertEqual(driver.asked("sendMemoryWarning"), {"bundleId": BUNDLE})
+
+    def test_a_memory_warning_without_a_known_app_goes_to_simctl(self):
+        """simctl asks for neither a bundle id nor a running app.
+
+        The driver path needs both, so a session that cannot name the app
+        would be refused where simctl would have posted the warning.
+        """
+        driver = FakeDriver(package=None, platform=Platform.IOS)
+        control = controller(platform=Platform.IOS, package="", driver=driver)
+        with mock.patch.object(capability_controller, "SimctlControl") as simctl:
+            control.execute(InterruptCapability(type="low_memory"))
+
+        simctl.notify_low_memory.assert_called_once_with(SERIAL)
+        self.assertIsNone(driver.asked("sendMemoryWarning"))
+
     def test_a_simulator_location_falls_back_to_simctl(self):
         _, simctl, _ = self._run(
             LocationCapability(latitude=1.0, longitude=2.0),
@@ -267,6 +206,86 @@ class FallbackTests(unittest.TestCase):
         )
 
         simctl.set_location.assert_called_once_with(SERIAL, 1.0, 2.0)
+
+
+class AppIdentityTests(unittest.TestCase):
+    """The app under test, asked for by what it is and not by one platform.
+
+    Reading `appPackage` alone left every iOS capability that acts on the app
+    with nothing. A permission and a force-stop were refused as though no app
+    were installed, and a low-memory warning fell through to simctl, which a
+    physical phone does not have.
+    """
+
+    def setUp(self):
+        self._reads, self.reads = silent_reads()
+        self.addCleanup(self._reads.stop)
+
+    def _run(self, capability, platform=Platform.IOS):
+        control = controller(platform=platform)
+        driver = control.driver
+        with mock.patch.object(capability_controller, "AdbControl"), \
+             mock.patch.object(capability_controller, "SimctlControl") as simctl:
+            control.execute(capability)
+        return driver, simctl
+
+    def test_a_permission_reaches_the_app_by_its_bundle_id(self):
+        driver, _ = self._run(PermissionCapability(permission="camera", grant=True))
+
+        self.assertEqual(
+            driver.asked("setPermission"),
+            {"access": {"camera": "yes"}, "bundleId": BUNDLE},
+        )
+
+    def test_stopping_the_app_reaches_it_by_its_bundle_id(self):
+        driver, _ = self._run(AppStateCapability(action="force_stop"))
+
+        self.assertEqual(driver.asked("terminateApp")["bundleId"], BUNDLE)
+
+    def test_a_memory_warning_takes_the_driver_path_on_a_device(self):
+        """The simctl fallback is not there on a phone, so this must not need it."""
+        driver, simctl = self._run(InterruptCapability(type="low_memory"))
+
+        self.assertEqual(driver.asked("sendMemoryWarning"), {"bundleId": BUNDLE})
+        simctl.notify_low_memory.assert_not_called()
+
+    def test_the_android_package_is_still_what_android_capabilities_get(self):
+        """One contract, and each platform's own value inside it."""
+        driver, _ = self._run(
+            PermissionCapability(permission="camera", grant=True),
+            platform=Platform.ANDROID,
+        )
+
+        self.assertEqual(driver.asked("changePermissions")["appPackage"], PACKAGE)
+
+
+class SessionIdentityTests(unittest.TestCase):
+    """What the session reads off the driver to name the app."""
+
+    def _resolved(self, capabilities, package_id=None):
+        from ronin.agent.device.control import DeviceControl
+
+        control = object.__new__(DeviceControl)
+        control.driver = SimpleNamespace(capabilities=capabilities)
+        control.package_id = package_id
+        return control._resolve_app_id()
+
+    def test_an_android_session_is_named_by_its_package(self):
+        self.assertEqual(self._resolved({"appPackage": PACKAGE}), PACKAGE)
+
+    def test_an_ios_session_is_named_by_its_bundle_id(self):
+        """The driver works it out from the app it installed."""
+        self.assertEqual(self._resolved({"bundleId": BUNDLE}), BUNDLE)
+
+    def test_a_prefixed_capability_is_read_too(self):
+        self.assertEqual(self._resolved({"appium:bundleId": BUNDLE}), BUNDLE)
+
+    def test_the_apk_reading_answers_where_the_driver_does_not(self):
+        """Android resolves the id before the session, by another route."""
+        self.assertEqual(self._resolved({}, package_id=PACKAGE), PACKAGE)
+
+    def test_a_session_that_names_no_app_answers_nothing(self):
+        self.assertIsNone(self._resolved({"udid": SERIAL}))
 
 
 class RefusalTests(unittest.TestCase):
@@ -310,18 +329,10 @@ class RefusalTests(unittest.TestCase):
         message = self._refuse(
             PermissionCapability(permission="camera", grant=True),
             platform=Platform.ANDROID,
-            package=None,
+            package="",
         )
 
-        self.assertIn("package", message)
-
-    def test_a_file_that_is_not_there_is_refused(self):
-        message = self._refuse(
-            MediaInjectCapability(local_path="/no/such/file.png"),
-            platform=Platform.ANDROID,
-        )
-
-        self.assertIn("/no/such/file.png", message)
+        self.assertIn("app id", message)
 
     def test_a_permission_the_platform_does_not_name_is_refused(self):
         """simctl has no notification service, and 'all' would grant the rest."""
@@ -330,6 +341,32 @@ class RefusalTests(unittest.TestCase):
         )
 
         self.assertIn("notifications", message)
+
+    def test_a_limited_grant_is_refused_before_anything_writes_to_it(self):
+        """A person picks which photos in a picker, and no command picks again.
+
+        Overwritten, the decision could not be put back, so the refusal has
+        to come before the write rather than from the receipt afterwards.
+        """
+        driver = FakeDriver(
+            answers={"getPermission": "limited"}, platform=Platform.IOS
+        )
+        control = controller(platform=Platform.IOS, driver=driver)
+
+        with mock.patch.object(capability_controller, "SimctlControl"), \
+             self.assertRaises(ActionRejected) as raised:
+            control.execute(PermissionCapability(permission="photos", grant=True))
+
+        self.assertIn("limited to part of the library", str(raised.exception))
+        self.assertIsNone(driver.asked("setPermission"))
+
+    def test_a_file_that_is_not_there_is_refused(self):
+        message = self._refuse(
+            MediaInjectCapability(local_path="/no/such/file.png"),
+            platform=Platform.ANDROID,
+        )
+
+        self.assertIn("/no/such/file.png", message)
 
     def test_a_failing_command_is_reported_as_a_refusal(self):
         """Nothing downstream may read the device as having changed."""
@@ -429,36 +466,6 @@ class DeviceTruthTests(unittest.TestCase):
             )
 
         self.assertEqual(answer, module.NOT_REQUESTED)
-
-    def test_a_discharging_battery_uses_a_word_simctl_accepts(self):
-        from ronin.agent.device.simctl_control import BATTERY_STATES
-
-        control = controller(Platform.IOS)
-        with mock.patch.object(capability_controller, "SimctlControl") as simctl:
-            control._battery(SERIAL, BatteryCapability(level=42, charging=False))
-
-        state = simctl.override_battery.call_args[0][2]
-        self.assertEqual(state, "discharging")
-        self.assertIn(state, BATTERY_STATES)
-
-    def test_a_battery_state_simctl_rejects_never_reaches_it(self):
-        """simctl answers an invalid state with a usage message and exit 117."""
-        from ronin.agent.device.simctl_control import SimctlControl
-        from ronin.errors import DeviceUnavailable
-
-        with mock.patch(
-            "ronin.agent.device.simctl_control.run_command"
-        ) as run, self.assertRaises(DeviceUnavailable):
-            SimctlControl.override_battery(SERIAL, 42, "discharged")
-
-        run.assert_not_called()
-
-    def test_granting_notifications_does_not_grant_everything(self):
-        """simctl's 'all' service would grant every other permission too."""
-        services = capability_controller.IOS_PRIVACY_SERVICES
-
-        self.assertNotIn("all", services.values())
-        self.assertNotIn("notifications", services)
 
 
 class BothWaysFailedTests(unittest.TestCase):

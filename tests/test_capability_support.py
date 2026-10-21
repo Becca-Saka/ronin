@@ -11,7 +11,12 @@ from fakes import walk
 from types import SimpleNamespace
 from unittest import mock
 
-from ronin.agent.actuation.actions import CapabilityKind
+from ronin.agent.actuation.actions import (
+    AppStateCapability,
+    CapabilityKind,
+    InterruptCapability,
+    NetworkCapability,
+)
 from ronin.agent.device.platform import Platform
 
 SERIAL = "emulator-5554"
@@ -20,7 +25,7 @@ SERIAL = "emulator-5554"
 class PreflightTests(unittest.TestCase):
     """What a scenario declares, read against the target in front of it."""
 
-    def _case(self, *required, outcomes=("a banner appears",)):
+    def _case(self, *required, outcomes=("a banner appears",), steps=None):
         from ronin.testing.models import GeneratedTestCase
 
         return GeneratedTestCase(
@@ -30,10 +35,20 @@ class PreflightTests(unittest.TestCase):
             category="input",
             scenario_type="negative",
             priority="P1",
-            steps=walk("Open the app."),
+            steps=steps or walk("Open the app."),
             expected_outcomes=list(outcomes),
             required_capabilities=list(required),
         )
+
+    def _asking_for(self, capability):
+        """A scenario whose steps ask for this capability, as a run would.
+
+        A declared kind is the fallback. The step is where the capability
+        itself lives, and the variant with it.
+        """
+        from ronin.testing.steps import CapabilityStep
+
+        return self._case(steps=[CapabilityStep(capability=capability)])
 
     def _target(self, platform=Platform.ANDROID, **kwargs):
         from ronin.testing.judge.capabilities import Target
@@ -67,31 +82,45 @@ class PreflightTests(unittest.TestCase):
         self.assertIn("emulator", reason)
         self.assertIn("physical device", reason)
 
-    def test_an_api_below_the_floor_skips_the_scenario(self):
+    def test_a_release_below_the_floor_skips_the_scenario(self):
         reason = self._reason(
-            self._case(CapabilityKind.LOCALE), self._target(api_level=31)
+            self._case(CapabilityKind.LOCALE), self._target(release=(31,))
         )
 
         self.assertIn("API 33", reason)
 
-    def test_an_api_at_the_floor_is_enough(self):
+    def test_a_release_at_the_floor_is_enough(self):
         self.assertIsNone(
-            self._reason(self._case(CapabilityKind.LOCALE), self._target(api_level=33))
+            self._reason(self._case(CapabilityKind.LOCALE), self._target(release=(33,)))
         )
 
-    def test_an_unknown_api_refuses_nothing(self):
+    def test_an_unknown_release_refuses_nothing(self):
         """A read that failed must not skip work the target can do."""
         self.assertIsNone(
-            self._reason(self._case(CapabilityKind.LOCALE), self._target(api_level=None))
+            self._reason(self._case(CapabilityKind.LOCALE), self._target(release=None))
         )
 
     def test_a_missing_tool_skips_the_scenario(self):
+        """Only switching the screen reader on needs it installed."""
+        from ronin.agent.actuation.actions import AccessibilityCapability
+
         reason = self._reason(
-            self._case(CapabilityKind.ACCESSIBILITY),
+            self._asking_for(AccessibilityCapability(enabled=True)),
             self._target(packages=frozenset({"com.example.app"})),
         )
 
         self.assertIn("talkback", reason.lower())
+
+    def test_switching_a_missing_tool_off_asks_nothing_of_it(self):
+        """A device without the screen reader already has it off."""
+        from ronin.agent.actuation.actions import AccessibilityCapability
+
+        self.assertIsNone(
+            self._reason(
+                self._asking_for(AccessibilityCapability(enabled=False)),
+                self._target(packages=frozenset({"com.example.app"})),
+            )
+        )
 
     def test_an_unknown_package_list_refuses_nothing(self):
         self.assertIsNone(
@@ -99,6 +128,59 @@ class PreflightTests(unittest.TestCase):
                 self._case(CapabilityKind.ACCESSIBILITY), self._target(packages=None)
             )
         )
+
+    def test_a_variant_a_step_asks_for_is_read_off_the_step(self):
+        """A kind cannot say which variant a scenario wants. The step can.
+
+        Placing a call needs an emulator console, and a low-memory warning
+        needs nothing. Both are `interrupt`, so reading the kind alone lets
+        one of them reach a phone and fail there.
+        """
+        reason = self._reason(
+            self._asking_for(InterruptCapability(type="incoming_call")),
+            self._target(emulator=False),
+        )
+
+        self.assertIn("incoming_call", reason)
+        self.assertIn("emulator", reason)
+
+    def test_the_other_variant_of_that_kind_is_no_obstacle(self):
+        self.assertIsNone(
+            self._reason(
+                self._asking_for(InterruptCapability(type="low_memory")),
+                self._target(emulator=False),
+            )
+        )
+
+    def test_a_capability_a_step_asks_for_is_refused_once(self):
+        """The kind is derived from the steps, so it is declared as well.
+
+        Reported twice, the same obstacle would read as two.
+        """
+        reason = self._reason(
+            self._asking_for(NetworkCapability(mode="offline")),
+            self._target(Platform.IOS),
+        )
+
+        self.assertEqual(reason.count("network cannot be set"), 1)
+
+    def test_a_capability_with_no_row_for_the_platform_is_refused(self):
+        """An absent row is how two implemented iOS capabilities were skipped."""
+        from ronin.testing.judge.capabilities import (
+            CAPABILITY_SUPPORT,
+            Support,
+            unsupported_capability,
+        )
+
+        with mock.patch.dict(
+            CAPABILITY_SUPPORT,
+            {CapabilityKind.CLIPBOARD: {Platform.ANDROID: Support()}},
+        ):
+            refusal = unsupported_capability(
+                CapabilityKind.CLIPBOARD, self._target(Platform.IOS)
+            )
+
+        self.assertIn("clipboard is not available on ios", refusal)
 
     def test_declaring_nothing_leaves_the_prose_check_alone(self):
         """A step is typed now, so the prose left to read is the outcome."""
@@ -115,18 +197,28 @@ class PreflightTests(unittest.TestCase):
 
         self.assertIsNone(unsupported_reason(self._case(CapabilityKind.NETWORK)))
 
-    def test_every_capability_is_declared_in_the_support_table(self):
-        """A capability with no entry would be refused on every target."""
+    def test_every_capability_states_a_verdict_on_every_platform(self):
+        """A platform with no row is refused the capability by that absence.
+
+        One row per platform makes a capability say what it can do on each,
+        rather than inherit a refusal from a line nobody wrote. Two iOS
+        capabilities were implemented and refused this way.
+        """
         from ronin.testing.judge.capabilities import CAPABILITY_SUPPORT
 
         self.assertEqual(set(CAPABILITY_SUPPORT), set(CapabilityKind))
+        for kind in CapabilityKind:
+            with self.subTest(kind=kind.value):
+                self.assertEqual(set(CAPABILITY_SUPPORT[kind]), set(Platform))
 
 
 class TargetReadingTests(unittest.TestCase):
     """Identifying the target without a driver session."""
 
     def _read(self, avd, api="33", packages=frozenset()):
-        device = SimpleNamespace(platform=Platform.ANDROID, serial=SERIAL)
+        device = SimpleNamespace(
+            platform=Platform.ANDROID, serial=SERIAL, os_version="14"
+        )
         adb = mock.patch(
             "ronin.agent.device.adb_control.AdbControl.avd_name", return_value=avd
         )
@@ -148,34 +240,36 @@ class TargetReadingTests(unittest.TestCase):
     def test_a_device_with_no_avd_name_is_physical(self):
         self.assertFalse(self._read(avd=None).emulator)
 
-    def test_the_api_level_is_read_as_a_number(self):
-        self.assertEqual(self._read(avd="Pixel_8", api="36").api_level, 36)
+    def test_the_api_level_is_read_as_the_release(self):
+        """Support is keyed on the API level, which is the number adb reports."""
+        self.assertEqual(self._read(avd="Pixel_8", api="36").release, (36,))
 
     def test_an_api_level_that_is_not_a_number_is_unknown(self):
-        self.assertIsNone(self._read(avd="Pixel_8", api="null").api_level)
+        self.assertIsNone(self._read(avd="Pixel_8", api="null").release)
 
     def test_a_target_with_no_serial_reads_nothing_off_it(self):
         from ronin.testing.judge.capabilities import target_of
 
-        target = target_of(SimpleNamespace(platform=Platform.ANDROID, serial=""))
+        target = target_of(
+            SimpleNamespace(platform=Platform.ANDROID, serial="", os_version=None)
+        )
 
-        self.assertIsNone(target.api_level)
+        self.assertIsNone(target.release)
         self.assertIsNone(target.packages)
 
 
 class PhysicalDeviceTests(unittest.TestCase):
-    """A real iPhone can have almost none of these, and said so when asked.
+    """A real iPhone has fewer of these than a simulator, and says which.
 
-    Before this, every iOS target was read as a simulator, so eight
-    capabilities a physical device cannot apply preflighted as supported. A
-    scenario declaring one was run rather than skipped, and the capability
-    failed inside it.
+    Before this, every iOS target was read as a simulator, so capabilities a
+    physical device cannot apply preflighted as supported. A scenario
+    declaring one was run rather than skipped, and it failed inside the run.
     """
 
     PHYSICAL = "00008140-00096DC43A52801C"
     SIMULATED = "8B59D40E-33B7-40EC-AB5D-50FFA0AB306E"
 
-    def _target(self, listed):
+    def _target(self, listed, os_version="18.2"):
         from ronin.testing.judge.capabilities import target_of
 
         with mock.patch(
@@ -183,7 +277,11 @@ class PhysicalDeviceTests(unittest.TestCase):
             return_value=listed,
         ):
             return target_of(
-                SimpleNamespace(platform=Platform.IOS, serial=self.PHYSICAL)
+                SimpleNamespace(
+                    platform=Platform.IOS,
+                    serial=self.PHYSICAL,
+                    os_version=os_version,
+                )
             )
 
     def _allowed(self, target):
@@ -207,10 +305,40 @@ class PhysicalDeviceTests(unittest.TestCase):
 
         self.assertTrue(target.emulator)
 
-    def test_a_physical_iphone_allows_almost_nothing(self):
+    def test_a_physical_iphone_allows_only_what_the_driver_reaches(self):
+        """Each of these four is a driver call rather than a simctl one.
+
+        A simctl command needs a simulator. A command the driver proxies to
+        the test runner on the device does not, so refusing it here would skip
+        work this target can do.
+        """
         target = self._target("-- iOS 18.2 --\n  (none)")
 
-        self.assertEqual(self._allowed(target), {"clipboard"})
+        self.assertEqual(
+            self._allowed(target),
+            {"clipboard", "deeplink", "app_state", "interrupt", "location"},
+        )
+
+    def test_the_release_a_capability_needs_is_read_off_the_driver(self):
+        """VoiceOver arrived in iOS 27, and this target reports 18.2."""
+        from ronin.testing.judge.capabilities import unsupported_capability
+
+        refusal = unsupported_capability(
+            CapabilityKind.ACCESSIBILITY, self._target("  (none)")
+        )
+
+        self.assertIn("iOS 27", refusal)
+        self.assertIn("iOS 18", refusal)
+
+    def test_a_release_nothing_reported_refuses_nothing(self):
+        """The same rule as an unread API level, for the same reason."""
+        from ronin.testing.judge.capabilities import unsupported_capability
+
+        self.assertIsNone(
+            unsupported_capability(
+                CapabilityKind.ACCESSIBILITY, self._target("  (none)", os_version=None)
+            )
+        )
 
     def test_a_simulator_still_allows_what_it_can_do(self):
         target = self._target(f"  iPhone ({self.PHYSICAL}) (Booted)")
@@ -218,11 +346,54 @@ class PhysicalDeviceTests(unittest.TestCase):
         self.assertIn("location", self._allowed(target))
         self.assertIn("biometric", self._allowed(target))
 
+    def test_a_variant_the_target_cannot_apply_is_refused_on_its_own(self):
+        """A kind this target supports does not clear every variant of it.
+
+        Clearing app data reads the simulator's data container, and stopping
+        the app is a driver call. Both are `app_state`, and only one of them
+        works on a phone.
+        """
+        from ronin.testing.judge.capabilities import unsupported_for
+
+        target = self._target("  (none)")
+
+        self.assertIsNone(unsupported_for(AppStateCapability(action="force_stop"), target))
+        refusal = unsupported_for(AppStateCapability(action="clear_data"), target)
+        self.assertIn("clear_data", refusal)
+        self.assertIn("emulator", refusal)
+
+    def test_a_call_no_ios_target_can_place_is_refused_on_either_kind(self):
+        from ronin.testing.judge.capabilities import unsupported_for
+
+        for listed in ("  (none)", f"  iPhone ({self.PHYSICAL}) (Booted)"):
+            with self.subTest(listed=listed):
+                refusal = unsupported_for(
+                    InterruptCapability(type="incoming_call"), self._target(listed)
+                )
+
+                self.assertIn("incoming_call", refusal)
+
+    def test_a_low_memory_warning_is_allowed_on_either_kind(self):
+        """The driver sends one to a phone and simctl posts one to a simulator."""
+        from ronin.testing.judge.capabilities import unsupported_for
+
+        for listed in ("  (none)", f"  iPhone ({self.PHYSICAL}) (Booted)"):
+            with self.subTest(listed=listed):
+                self.assertIsNone(
+                    unsupported_for(
+                        InterruptCapability(type="low_memory"), self._target(listed)
+                    )
+                )
+
     def test_a_simctl_that_will_not_answer_refuses_nothing(self):
-        """Unknown reads as a simulator, as an unread API level does."""
+        """An unestablished kind refuses nothing, as an unread release does."""
+        from ronin.testing.judge.capabilities import unsupported_capability
+
         target = self._target(None)
 
-        self.assertTrue(target.emulator)
+        self.assertIsNone(target.emulator)
+        self.assertIn("unestablished", target.describe())
+        self.assertIsNone(unsupported_capability(CapabilityKind.LOCATION, target))
 
 
 class DeclaredCapabilityTests(unittest.TestCase):

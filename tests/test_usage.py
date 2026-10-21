@@ -174,3 +174,68 @@ class DecisionRecordTests(unittest.TestCase):
         self.assertEqual(record.prompt_tokens, 3216)
         self.assertEqual(record.completion_tokens, 36)
         self.assertEqual(record.total_tokens, 3252)
+
+
+class ResponseReadingTests(unittest.TestCase):
+    """What a provider sent, read into the record a run keeps.
+
+    Every field here is the provider's, so each one is optional in practice. A
+    count nothing reported is zero, and a measurement nothing reported is
+    unknown. Those are different answers, and writing one as the other puts a
+    number in a report that nobody measured.
+    """
+
+    def _response(self, usage=None, hidden=None):
+        from types import SimpleNamespace
+
+        block = {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
+        block.update(usage or {})
+        return SimpleNamespace(
+            usage=SimpleNamespace(model_dump=lambda: block),
+            model="provider/model-002",
+            id="gen-1",
+            choices=[SimpleNamespace(finish_reason="stop")],
+            _hidden_params=hidden if hidden is not None else {"_response_ms": 1200.0},
+            model_dump=lambda: {"usage": block},
+        )
+
+    def _record(self, **kwargs):
+        from ronin.llm.usage import record
+
+        return record(self._response(**kwargs), "provider/model", 1)
+
+    def test_a_latency_the_route_did_not_report_is_unknown(self):
+        """Zero would read as an instant answer, which nothing observed."""
+        self.assertIsNone(self._record(hidden={}).latency_ms)
+
+    def test_a_reported_latency_is_kept_as_a_number(self):
+        self.assertEqual(self._record().latency_ms, 1200.0)
+
+    def test_a_count_the_provider_left_out_is_zero(self):
+        """A block that breaks out no reasoning tokens spent none."""
+        record = self._record()
+
+        self.assertEqual(record.reasoning_tokens, 0)
+        self.assertEqual(record.cached_tokens, 0)
+
+    def test_an_image_count_the_provider_left_out_stays_unknown(self):
+        """Zero image tokens would say the call sent no image, which it may have."""
+        self.assertIsNone(self._record().prompt_image_tokens)
+
+    def test_a_count_that_is_not_a_number_is_not_believed(self):
+        """The block is the provider's, so its types are not ours to assume."""
+        record = self._record(usage={"prompt_tokens": "lots"})
+
+        self.assertEqual(record.prompt_tokens, 0)
+
+    def test_the_counts_a_provider_did_report_are_kept(self):
+        record = self._record(
+            usage={
+                "prompt_tokens_details": {"cached_tokens": 7, "image_tokens": 4},
+                "completion_tokens_details": {"reasoning_tokens": 11},
+            }
+        )
+
+        self.assertEqual(record.cached_tokens, 7)
+        self.assertEqual(record.prompt_image_tokens, 4)
+        self.assertEqual(record.reasoning_tokens, 11)

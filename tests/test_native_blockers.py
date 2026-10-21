@@ -79,6 +79,75 @@ class SystemPromptTests(unittest.TestCase):
         self.assertFalse(control.showing_system_prompt())
 
 
+class FocusTests(unittest.TestCase):
+    """Whether the device is still in the app, asked of a real session shape.
+
+    Both platforms answer from `app_id`, which is an Android package or an
+    iOS bundle id. Asking iOS for a field of its own left the check raising
+    an AttributeError, which the handler below reads as "still in the app" —
+    so drift went undetected and recovery never ran.
+    """
+
+    def _control(self, platform, app_id, foreground):
+        from ronin.agent.device.control import DeviceControl
+
+        control = DeviceControl.__new__(DeviceControl)
+        control.platform = platform
+        control.app_id = app_id
+        control.package_id = app_id
+        control.driver = SimpleNamespace(
+            current_package=foreground,
+            query_app_state=lambda bundle: 4 if bundle == foreground else 2,
+        )
+        return control
+
+    def _in_sut(self, control) -> bool:
+        from ronin.agent.device.state import DeviceState
+
+        return DeviceState(control).is_still_in_sut()
+
+    def test_an_ios_app_in_the_foreground_is_in_the_app(self):
+        from ronin.agent.device.platform import Platform
+
+        control = self._control(Platform.IOS, "com.example.App", "com.example.App")
+
+        self.assertTrue(self._in_sut(control))
+
+    def test_an_ios_device_outside_the_app_is_reported_as_drift(self):
+        """The whole point of the check, and it answered True for a year."""
+        from ronin.agent.device.platform import Platform
+
+        control = self._control(Platform.IOS, "com.example.App", "com.apple.Preferences")
+
+        self.assertFalse(self._in_sut(control))
+
+    def test_an_android_device_outside_the_app_is_reported_as_drift(self):
+        from ronin.agent.device.platform import Platform
+
+        control = self._control(Platform.ANDROID, "com.example.app", "com.android.settings")
+
+        self.assertFalse(self._in_sut(control))
+
+    def test_a_session_that_names_no_app_claims_nothing(self):
+        """Nothing can be compared, and claiming drift would recover blindly."""
+        from ronin.agent.device.platform import Platform
+
+        control = self._control(Platform.IOS, None, "com.example.App")
+
+        self.assertTrue(self._in_sut(control))
+
+    def test_recovery_brings_the_app_forward_by_its_own_id(self):
+        from ronin.agent.device.platform import Platform
+        from ronin.agent.device.state import DeviceState
+
+        control = self._control(Platform.IOS, "com.example.App", "com.apple.Preferences")
+        control.driver.activate_app = Mock()
+
+        DeviceState(control).recover_to_sut()
+
+        control.driver.activate_app.assert_called_once_with("com.example.App")
+
+
 class DriftRecoveryTests(unittest.TestCase):
     """What the agent does about being outside the app it is testing."""
 

@@ -12,7 +12,8 @@ from ronin.agent.perception.detector import YOLO_REPO_ID, YOLO_REVISION
 from ronin.agent.perception.blind import for_grounding
 from ronin.agent.plan.planner import GROUNDING_COORDINATES
 from ronin.agent.memory.replay import ReplayLedger
-from ronin.errors import ArtifactWriteFailed, cause_of
+from ronin.errors import ArtifactWriteFailed, Cause, ProviderUnavailable, cause_of
+from ronin.llm.failures import reportable
 from .judge.coverage import unevidenced_security_rules
 from .generator import ScenarioGenerator
 from .report.progress import ScenarioProgress
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 def is_session_responsive(device_control) -> bool:
-    """Lightweight check to verify if the webdriver connection and instrumentation server are alive."""
+    """Checks whether the driver connection and the instrumentation server are alive."""
     if not device_control or not device_control.driver:
         return False
     try:
@@ -259,14 +260,23 @@ class RoninTestRunner:
 
                     usage_tracker.output_dir = session.telemetry_dir
 
-                scen_report = agent.execute_scenario(
-                    test_case=scenario,
-                    security_rules=journey.security_rules,
-                    device_control=device_control,
-                    perception=perception,
-                    session_dir=session.screenshots_dir,
-                    session_trail=trail,
-                )
+                try:
+                    scen_report = agent.execute_scenario(
+                        test_case=scenario,
+                        security_rules=journey.security_rules,
+                        device_control=device_control,
+                        perception=perception,
+                        session_dir=session.screenshots_dir,
+                        session_trail=trail,
+                    )
+                except ProviderUnavailable as exc:
+                    # The service was asked again and still would not answer.
+                    # The scenario is over, and the next one is not: a rate
+                    # limit that has passed by then costs nothing here, and
+                    # the device state was restored on the way out.
+                    scen_report = self._provider_error(
+                        scenario, exc, artifact_scrubber
+                    )
 
                 progress.record(scenario.test_id, scen_report)
 
@@ -288,7 +298,7 @@ class RoninTestRunner:
                     )
 
         except BaseException as e:
-            safe_error = artifact_scrubber.scrub(str(e)) or type(e).__name__
+            safe_error = artifact_scrubber.scrub(reportable(e))
             logger.error(
                 "Fatal run interruption (%s): %s", type(e).__name__, safe_error
             )
@@ -385,8 +395,7 @@ class RoninTestRunner:
         nothing. It would otherwise report zero tests and zero failures, which
         CI reads as a pass.
         """
-        error_text = str(error) or type(error).__name__
-        reason = f"Aborted due to run failure/interrupt: {error_text}"
+        reason = f"Aborted due to run failure/interrupt: {reportable(error)}"
         if not scenarios:
             scenario_reports.append(
                 ScenarioReport(
@@ -394,6 +403,9 @@ class RoninTestRunner:
                     scenario_name="Scenario generation",
                     cell="infrastructure",
                     status="ERROR",
+                    # Generation is a model call, so its failure is usually
+                    # the provider's, and a reader should not look in the app.
+                    cause=cause_of(error).value,
                     failure_reason=reason,
                 )
             )
@@ -415,6 +427,26 @@ class RoninTestRunner:
             )
             recorded += 1
         return recorded
+
+    def _provider_error(
+        self, scenario: GeneratedTestCase, error: BaseException, scrubber
+    ) -> ScenarioReport:
+        """The report for a scenario a model service would not answer for.
+
+        ERROR rather than FAILED, because nothing was learned about the app.
+        The cause says whose problem it is, so a reader of a red build does
+        not go looking in the app for it.
+        """
+        reason = scrubber.scrub(reportable(error))
+        logger.error("Scenario %s ended on the provider: %s", scenario.test_id, reason)
+        return ScenarioReport(
+            test_id=scenario.test_id,
+            scenario_name=scenario.scenario_name,
+            cell=scenario.cell,
+            status="ERROR",
+            cause=Cause.PROVIDER.value,
+            failure_reason=reason,
+        )
 
     def _save_checkpoint(
         self,

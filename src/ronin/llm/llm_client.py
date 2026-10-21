@@ -5,12 +5,15 @@ Supports standard messaging and structured output via Pydantic schemas.
 
 import json
 import logging
-from typing import TypeVar, overload
+import time
+from typing import Callable, TypeVar, overload
 
 import litellm
 from pydantic import BaseModel, ValidationError
 
-from . import usage
+from ronin.errors import ProviderUnavailable
+
+from . import failures, usage
 from .messages import Message, TextMessage
 
 logger = logging.getLogger(__name__)
@@ -29,15 +32,23 @@ Answer = TypeVar("Answer", bound=BaseModel)
 class LLMClient:
     """Client for making calls to the OpenRouter/LiteLLM completion API."""
 
-    def __init__(self, model: str, usage_callback=None):
+    def __init__(
+        self,
+        model: str,
+        usage_callback=None,
+        wait: Callable[[float], None] = time.sleep,
+    ):
         """Initializes the LLM client.
 
         Args:
             model: The API model identifier to use for requests.
             usage_callback: Optional callable receiving a usage.CallRecord per call.
+            wait: How to pause between provider attempts. Injected so a test
+                exercises the backoff without spending the time.
         """
         self._model = model
         self.usage_callback = usage_callback
+        self._wait = wait
 
     @overload
     def generate_response(self, messages: list[Message]) -> str: ...
@@ -84,11 +95,12 @@ class LLMClient:
         # than losing the scenario the call belongs to.
         for attempt in range(STRUCTURED_ATTEMPTS if response_model else 1):
             try:
-                return self._complete(attempts, response_model, attempt + 1, context)
+                return self._asked(attempts, response_model, attempt + 1, context)
             except ValidationError as exc:
                 last_error = exc
                 logger.warning(
-                    "Model response did not match %s (attempt %d/%d; %d validation errors)",
+                    "Model response did not match %s. Attempt %d of %d, with "
+                    "%d validation errors.",
                     response_model.__name__ if response_model else "schema",
                     attempt + 1,
                     STRUCTURED_ATTEMPTS,
@@ -106,6 +118,52 @@ class LLMClient:
                 ]
 
         raise last_error
+
+    def _asked(
+        self,
+        messages: list[Message],
+        response_model: type[BaseModel] | None,
+        attempt: int,
+        context: dict | None,
+    ) -> str | BaseModel:
+        """One question, asked again while the provider could still answer it.
+
+        A rate limit, a timeout or a server error is the service rather than
+        the request. The same call is made again after a pause. A refusal of
+        the request itself is raised as it came. Every later scenario would be
+        refused the same way, so the run should stop.
+
+        A schema mismatch is not handled here. It is the caller's loop, which
+        asks a different question, with the reason.
+        """
+        last: BaseException | None = None
+        for attempt_number in range(1, failures.ATTEMPTS + 1):
+            try:
+                return self._complete(messages, response_model, attempt, context)
+            except ValidationError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - provider boundary
+                if not failures.is_retryable(exc):
+                    raise
+                last = exc
+                described = failures.describe(exc)
+                if attempt_number == failures.ATTEMPTS:
+                    break
+                pause = failures.BACKOFF_SECONDS[attempt_number - 1]
+                logger.warning(
+                    "The provider did not answer (%s). Attempt %d of %d, "
+                    "waiting %.0fs.",
+                    described,
+                    attempt_number,
+                    failures.ATTEMPTS,
+                    pause,
+                )
+                self._wait(pause)
+
+        raise ProviderUnavailable(
+            f"The provider did not answer after {failures.ATTEMPTS} attempts: "
+            f"{failures.describe(last) if last else 'no attempt was made'}"
+        ) from last
 
     def _complete(
         self,

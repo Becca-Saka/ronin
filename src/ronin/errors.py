@@ -43,6 +43,19 @@ class TargetNotInteractive(ActionRejected):
     """
 
 
+class ProviderUnavailable(RoninError):
+    """A model service would not answer, and the attempts are spent.
+
+    Raised only where another attempt could have answered: a timeout, a rate
+    limit, a connection that dropped, a server error. So the scenario ends
+    and the suite goes on, because the same service may answer the next one.
+
+    A provider that refused the request itself is not this. It is raised as
+    it came, and it ends the run, because every later call carries the same
+    request and meets the same refusal.
+    """
+
+
 class ArtifactWriteFailed(RoninError):
     """Ronin could not write a report, a log or a screenshot."""
 
@@ -103,6 +116,8 @@ def cause_of(exc: BaseException) -> Cause:
     """
     if isinstance(exc, (DeviceUnavailable, ObservationUnavailable)):
         return Cause.DEVICE
+    if isinstance(exc, ProviderUnavailable):
+        return Cause.PROVIDER
     if isinstance(exc, ArtifactWriteFailed):
         return Cause.ARTIFACT
     package = type(exc).__module__.split(".")[0]

@@ -10,7 +10,14 @@ from ronin.devices.android import (
     installed_system_images,
     pick_image,
 )
-from ronin.devices.discovery import Device, android_devices, ios_devices, list_devices
+from ronin.devices.discovery import (
+    Device,
+    android_devices,
+    ios_devices,
+    ios_physical_devices,
+    ios_simulators,
+    list_devices,
+)
 
 __all__ = [
     "AndroidToolingError",
@@ -23,6 +30,8 @@ __all__ = [
     "install_system_image",
     "installed_system_images",
     "ios_devices",
+    "ios_physical_devices",
+    "ios_simulators",
     "list_devices",
     "pick_image",
 ]

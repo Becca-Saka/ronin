@@ -6,9 +6,13 @@ counted every docstring twice, and it read neither a prompt constant nor a
 model-facing field description.
 """
 
+import os
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 TOOLS = Path(__file__).resolve().parents[1] / "tools"
 if str(TOOLS) not in sys.path:
@@ -126,3 +130,184 @@ class BaselineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LinterResolutionTests(unittest.TestCase):
+    """Which linter runs, and why a gate that skips is worth nothing.
+
+    The gate used to pass on a machine without the skill installed. That is
+    right for a checkout that cannot speak about the rules, and wrong for CI,
+    which would have reported a green prose gate that ran on no file.
+    """
+
+    def test_the_copy_beside_the_gate_is_what_ci_runs(self):
+        self.assertTrue(
+            ste_gate.VENDORED_LINTER.is_file(), ste_gate.VENDORED_LINTER
+        )
+
+    def test_the_copy_wins_over_an_installed_skill(self):
+        """A gate whose rules depend on the machine answers differently per machine."""
+        with mock.patch.object(ste_gate.Path, "is_file", return_value=True), \
+             mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(ste_gate._find_linter(), ste_gate.VENDORED_LINTER)
+
+    def test_a_named_linter_overrides_the_copy(self):
+        """Trying a rule before the copy is updated is a deliberate act."""
+        with mock.patch.object(ste_gate.Path, "is_file", return_value=True), \
+             mock.patch.dict(os.environ, {ste_gate.LINTER_ENV: "/tmp/other.py"}):
+            self.assertEqual(ste_gate._find_linter(), Path("/tmp/other.py"))
+
+    def test_the_vendored_linter_checks_its_own_rules(self):
+        """Vendored unchanged, so its self-test is the proof it still works."""
+        done = subprocess.run(
+            [sys.executable, str(ste_gate.VENDORED_LINTER), "--selftest"],
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+
+class WiderExtractionTests(unittest.TestCase):
+    """Two kinds of prose the gate used to walk straight past.
+
+    A prompt built with a value in it, and a prompt handed back rather than
+    assigned. Both reach a model, and neither is a docstring, a comment or an
+    assignment, so the gate read none of them.
+    """
+
+    def _prose(self, body: str) -> str:
+        with tempfile.TemporaryDirectory() as directory:
+            return ste_gate.prose_of(_written(Path(directory), body))
+
+    def test_the_words_around_a_value_are_read(self):
+        prose = self._prose(
+            'def refuse(name):\n'
+            '    return f"The capability {name} could not be applied on this target."\n'
+        )
+
+        self.assertIn("could not be applied on this target", prose)
+
+    def test_what_a_value_holds_is_not_read(self):
+        """It is decided at run time, and the words around it are not."""
+        prose = self._prose(
+            'def refuse(name):\n'
+            '    return f"The capability {name} could not be applied on this target."\n'
+        )
+
+        self.assertNotIn("name", prose)
+
+    def test_a_sentence_handed_back_is_read(self):
+        prose = self._prose(
+            'def rendered():\n'
+            '    return "Set the device network to offline before the next step."\n'
+        )
+
+        self.assertIn("Set the device network to offline", prose)
+
+    def test_a_file_ronin_writes_out_is_not_prose(self):
+        """A template carries its own comments, and they are not text to hold."""
+        prose = self._prose(
+            'TEMPLATE = """# Credentials Ronin reads\n'
+            'OPENROUTER_API_KEY=\n'
+            '"""\n'
+        )
+
+        self.assertNotIn("Credentials Ronin reads", prose)
+
+    def test_a_name_is_still_not_a_sentence(self):
+        self.assertEqual(self._prose('NAME = "a short label"\n').strip(), "")
+
+
+class CallSiteExtractionTests(unittest.TestCase):
+    """Prose that reaches a person or a model without being assigned first.
+
+    A log line, a refusal and a `--help` string are read under pressure by
+    somebody working out what broke. The gate passed on every one of them,
+    so "STE gate passed" said nothing about the debug context or the errors.
+    """
+
+    def _prose(self, body: str) -> str:
+        with tempfile.TemporaryDirectory() as directory:
+            return ste_gate.prose_of(_written(Path(directory), body))
+
+    def test_the_sentence_a_log_line_opens_with_is_read(self):
+        prose = self._prose(
+            'def warn(count):\n'
+            '    logger.warning("The device answered %d times fewer than '
+            'asked.", count)\n'
+        )
+
+        self.assertIn("The device answered", prose)
+
+    def test_an_f_string_log_line_is_read_too(self):
+        prose = self._prose(
+            'def warn(name):\n'
+            '    logger.error(f"The capability {name} could not be applied here.")\n'
+        )
+
+        self.assertIn("could not be applied here", prose)
+
+    def test_the_values_after_a_log_line_are_not_prose(self):
+        """They are decided at run time, and the format string is the English."""
+        prose = self._prose(
+            'def warn(path):\n'
+            '    logger.info("Wrote the report.", "/some/long/path/to/a/file")\n'
+        )
+
+        self.assertNotIn("/some/long/path", prose)
+
+    def test_the_sentence_a_refusal_was_built_with_is_read(self):
+        prose = self._prose(
+            'def refuse():\n'
+            '    raise ValueError("The scenario asked for a state nothing sets.")\n'
+        )
+
+        self.assertIn("asked for a state nothing sets", prose)
+
+    def test_a_refusal_joined_from_two_literals_is_read_as_one(self):
+        """Split across lines to fit, it is still one sentence to a reader."""
+        prose = self._prose(
+            'def refuse():\n'
+            '    raise ValueError(\n'
+            '        "The capability could not be applied on this target; "\n'
+            '        "nothing read the device as being in that state."\n'
+            '    )\n'
+        )
+
+        self.assertIn("nothing read the device", prose)
+
+    def test_a_command_line_help_string_is_read(self):
+        prose = self._prose(
+            'def add(parser):\n'
+            '    parser.add_argument("--grounding", help="How the planner '
+            'names a target on the screen.")\n'
+        )
+
+        self.assertIn("How the planner names a target", prose)
+
+    def test_a_message_to_a_model_is_read(self):
+        prose = self._prose(
+            'def ask():\n'
+            '    return TextMessage(content="Answer again as JSON matching '
+            'the schema exactly.")\n'
+        )
+
+        self.assertIn("Answer again as JSON", prose)
+
+    def test_what_a_check_reports_is_read(self):
+        prose = self._prose(
+            'def checked():\n'
+            '    return CheckResult("node", OK, detail="Installed, and new '
+            'enough to run the driver.")\n'
+        )
+
+        self.assertIn("new enough to run the driver", prose)
+
+    def test_a_label_is_still_not_a_sentence(self):
+        """Most short log lines are labels, and holding them to prose is noise."""
+        for line in ('"done"', '"Screen: %s", size', '"Goal reached: %s", goal'):
+            with self.subTest(line=line):
+                prose = self._prose(f"def log():\n    logger.info({line})\n")
+
+                self.assertEqual(prose.strip(), "")

@@ -48,7 +48,7 @@ def action_result(
         coords = action.coordinates
         obs = (
             f"type executed at ({coords.x}, {coords.y}) — screen unchanged "
-            f"(text may have been entered; masked fields cannot be visually confirmed)"
+            f"(text may have been entered. A masked field cannot be confirmed by sight)"
         )
     elif t in (ActionType.TAP.value, ActionType.DOUBLE_TAP.value):
         coords = action.coordinates

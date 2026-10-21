@@ -35,7 +35,13 @@ class CallRecord:
     Empty on a decision: a typed answer cannot run out of room.
     """
 
-    latency_ms: float
+    latency_ms: Optional[float]
+    """How long the call took, or None where the provider did not report it.
+
+    Optional because a route that reports no timing leaves this unknown, and
+    a zero would read as an instant answer. The tracker sums it as zero.
+    """
+
     cost: Optional[float]
 
     prompt_tokens: int = 0
@@ -55,9 +61,30 @@ class CallRecord:
     """The response as the provider sent it, whole."""
 
 
-def _detail(block: dict, name: str, default=0):
+def _count(block: dict, name: str) -> int:
+    """A token count, as zero where the provider reported none.
+
+    Zero is the honest reading for a count: a block that does not break out
+    reasoning tokens is reporting that none were spent on them.
+    """
     value = (block or {}).get(name)
-    return default if value is None else value
+    return value if isinstance(value, int) else 0
+
+
+def _optional_count(block: dict, name: str) -> Optional[int]:
+    """A token count a provider may not break out at all.
+
+    None rather than zero, because an image-token count nothing reported is
+    not a call that sent no image.
+    """
+    value = (block or {}).get(name)
+    return value if isinstance(value, int) else None
+
+
+def _milliseconds(block: dict, name: str) -> Optional[float]:
+    """A duration the provider may not report, as a number or None."""
+    value = (block or {}).get(name)
+    return float(value) if isinstance(value, (int, float)) else None
 
 
 def record(response, model: str, attempt: int) -> CallRecord:
@@ -73,16 +100,16 @@ def record(response, model: str, attempt: int) -> CallRecord:
         generation_id=response.id,
         attempt=attempt,
         finish_reason=response.choices[0].finish_reason,
-        latency_ms=hidden.get("_response_ms"),
+        latency_ms=_milliseconds(hidden, "_response_ms"),
         cost=usage.get("cost"),
-        prompt_tokens=_detail(usage, "prompt_tokens"),
-        completion_tokens=_detail(usage, "completion_tokens"),
-        total_tokens=_detail(usage, "total_tokens"),
-        cached_tokens=_detail(prompt_details, "cached_tokens"),
-        cache_write_tokens=_detail(prompt_details, "cache_write_tokens"),
-        reasoning_tokens=_detail(completion_details, "reasoning_tokens"),
-        prompt_image_tokens=_detail(prompt_details, "image_tokens", None),
-        prompt_text_tokens=_detail(prompt_details, "text_tokens", None),
+        prompt_tokens=_count(usage, "prompt_tokens"),
+        completion_tokens=_count(usage, "completion_tokens"),
+        total_tokens=_count(usage, "total_tokens"),
+        cached_tokens=_count(prompt_details, "cached_tokens"),
+        cache_write_tokens=_count(prompt_details, "cache_write_tokens"),
+        reasoning_tokens=_count(completion_details, "reasoning_tokens"),
+        prompt_image_tokens=_optional_count(prompt_details, "image_tokens"),
+        prompt_text_tokens=_optional_count(prompt_details, "text_tokens"),
         cost_details=usage.get("cost_details") or {},
         raw=response.model_dump(),
     )

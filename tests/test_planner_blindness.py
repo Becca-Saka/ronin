@@ -123,7 +123,13 @@ class PlannerBoundaryTests(unittest.TestCase):
             agent.execute_scenario(
                 self._case_with_rules(),
                 [SENTINEL_SECURITY],
-                SimpleNamespace(platform=Platform.ANDROID, serial=""),
+                SimpleNamespace(
+                    platform=Platform.ANDROID,
+                    serial="",
+                    os_version=None,
+                    package_id=None,
+                    driver=None,
+                ),
                 SimpleNamespace(reset=Mock()),
                 Path("unused"),
                 session_trail=object(),

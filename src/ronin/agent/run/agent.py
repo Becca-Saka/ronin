@@ -39,7 +39,8 @@ from ronin.agent.perception import keyboard
 from ronin.agent.artifacts.redaction import RedactedImages
 from ronin.agent.perception.screen import ScreenPerception
 from ronin.agent.memory.trail import SessionTrail
-from ronin.errors import TargetNotInteractive, cause_of
+from ronin.errors import Cause, TargetNotInteractive, cause_of
+from ronin.llm.failures import reportable
 from ronin.llm.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -187,7 +188,14 @@ class DeviceAgent:
             )
 
         except Exception as exc:
-            safe_error = self.scrubber.scrub(str(exc))
+            if cause_of(exc) is Cause.PROVIDER:
+                # Not a result. The run reached no state worth judging, and
+                # the suite decides what a service that stopped answering
+                # means. Read by cause rather than by type, so a refused key
+                # leaves the same way a spent one does. Device state is
+                # restored as this leaves.
+                raise
+            safe_error = self.scrubber.scrub(reportable(exc))
             logger.error(
                 "Device agent run failed (%s): %s", type(exc).__name__, safe_error
             )

@@ -155,7 +155,7 @@ def check_disk_space_for_emulator():
     free = free_disk_gb()
     if free < MIN_EMULATOR_FREE_GB:
         raise PlatformError(
-            f"Only {free:.1f}GB free on this volume; the Android emulator needs at least "
+            f"Only {free:.1f}GB free on this volume. The Android emulator needs at least "
             f"{MIN_EMULATOR_FREE_GB:.0f}GB to boot and will fail with an unrelated-looking "
             "session timeout. Free up space and try again."
         )

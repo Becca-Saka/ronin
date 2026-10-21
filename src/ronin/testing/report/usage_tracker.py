@@ -7,7 +7,7 @@ a schema mismatch.
 
 Written three times over, because a run can stop at three different moments.
 Each call is appended to a log as it happens. Each scenario leaves a rolled-up
-file. The run ends with the report. The log costs one line per call; rewriting
+file. The run ends with the report. The log costs one line per call. Rewriting
 the roll-up per call would rewrite a megabyte to add four kilobytes.
 
 A response quotes the values a journey declared secret, because the model
@@ -113,8 +113,9 @@ class LLMUsageTracker:
         self.totals.add(call)
         if call.finish_reason == TRUNCATED:
             logger.warning(
-                "Answer truncated at the token limit (%s); it will read as malformed "
-                "rather than wrong, so raise the limit before rewording the schema.",
+                "Answer truncated at the token limit (%s). It reads as "
+                "malformed rather than wrong, so raise the limit before "
+                "rewording the schema.",
                 call.generation_id,
             )
 

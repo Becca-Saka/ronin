@@ -20,9 +20,6 @@ from ronin.utils.subprocess_runner import SubprocessRunError, run_command
 
 logger = logging.getLogger(__name__)
 
-BATTERY_STATES = ("charging", "charged", "discharging")
-"""Every value `simctl status_bar --batteryState` accepts."""
-
 APPEARANCES = ("light", "dark")
 
 CONTENT_SIZES = (
@@ -77,32 +74,6 @@ class SimctlControl:
         SimctlControl.run(
             "location", udid, "set", f"{latitude},{longitude}",
             doing="set the simulated location",
-        )
-
-    @staticmethod
-    def override_battery(udid: str, level: int, state: str) -> None:
-        """Overrides the status bar battery.
-
-        Raises:
-            DeviceUnavailable: `state` is not one simctl accepts. Checked here
-                because simctl answers an invalid value with a usage message.
-        """
-        if state not in BATTERY_STATES:
-            raise DeviceUnavailable(
-                f"'{state}' is not a battery state simctl accepts. "
-                f"It takes {', '.join(BATTERY_STATES)}."
-            )
-        SimctlControl.run(
-            "status_bar", udid, "override",
-            "--batteryLevel", str(level), "--batteryState", state,
-            doing="override the battery",
-        )
-
-    @staticmethod
-    def clear_status_bar(udid: str) -> None:
-        """Drops every status bar override, which is the only way back."""
-        SimctlControl.run(
-            "status_bar", udid, "clear", doing="clear the status bar"
         )
 
     @staticmethod

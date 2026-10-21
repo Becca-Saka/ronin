@@ -19,7 +19,7 @@ from ronin.agent.perception.detector import (
 )
 from ronin.cli.console import FAIL, INFO, OK, SKIP, WARN
 from ronin.defaults import DEFAULT_MODEL
-from ronin.doctor import Status, check_appium_driver
+from ronin.doctor import Status, check_appium_driver, is_macos
 from ronin.utils.subprocess_runner import run_command
 from ronin.utils.vision_deps import vision_available
 
@@ -161,6 +161,54 @@ def install_driver(ctx: SetupContext, driver: str) -> StepResult:
     ctx.log(f"Installing the {driver} driver...")
     if _run_visible(command) != 0:
         return StepResult(FAIL, label, "install failed", f"Try manually: {' '.join(command)}")
+    return StepResult(OK, label, "installed")
+
+
+def install_applesimutils(ctx: SetupContext) -> StepResult:
+    """Installs the program that reads an iOS permission back.
+
+    `simctl privacy` sets a decision and reports nothing, so without this a
+    permission scenario is skipped rather than guessed at. Only iOS needs it,
+    and it is a warning everywhere else.
+
+    The tap is not Homebrew's own, so the formula is trusted explicitly.
+    Trusting one formula is narrower than trusting the tap.
+    """
+    import shutil
+
+    label = "applesimutils"
+    if not is_macos():
+        return StepResult(SKIP, label, "iOS automation requires macOS")
+    if shutil.which(label):
+        result = run_command([label, "--version"], log_command=False)
+        return StepResult(OK, label, (result.stdout or "").strip() or "installed")
+    if not shutil.which("brew"):
+        return StepResult(
+            SKIP,
+            label,
+            "cannot install: brew not found",
+            "Install Homebrew first, then: brew tap wix/brew && brew install applesimutils",
+        )
+
+    steps = [
+        ["brew", "tap", "wix/brew"],
+        ["brew", "trust", "--formula", "wix/brew/applesimutils"],
+        ["brew", "install", label],
+    ]
+    if ctx.dry_run:
+        return _planned(label, steps[-1])
+    if not ctx.approved(
+        "Install applesimutils from the wix/brew tap? iOS permission "
+        "scenarios are skipped without it"
+    ):
+        return _declined(label, steps[-1])
+
+    ctx.log("Installing applesimutils...")
+    for command in steps:
+        if _run_visible(command) != 0:
+            return StepResult(
+                FAIL, label, "install failed", f"Try manually: {' '.join(command)}"
+            )
     return StepResult(OK, label, "installed")
 
 

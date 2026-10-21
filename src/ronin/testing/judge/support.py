@@ -1,0 +1,250 @@
+"""What each platform can do, capability by capability.
+
+Knowledge rather than logic: two tables and the shape of a row. Support is
+not a property of the platform alone. A row can also name an emulator, a
+release floor, a package on the device, or a program on the host.
+
+A platform absent from a capability's entry cannot apply it at all. The
+controller refuses the same cases at the device, and
+`test_the_table_refuses_what_the_controller_refuses` is what holds the two
+to each other.
+"""
+
+from dataclasses import dataclass
+from typing import Optional
+
+from ronin.agent.actuation.actions import CapabilityKind
+from ronin.agent.device.capability_maps import TALKBACK_PACKAGE
+from ronin.agent.device.platform import Platform
+
+HOST_TOOLS = ("applesimutils",)
+"""Every program on this machine that a capability can need.
+
+Named here rather than looked for on demand, so one read answers for every
+capability and a tool nothing needs is never searched for.
+"""
+
+
+@dataclass(frozen=True)
+class Support:
+    """What one capability needs of a target on one platform.
+
+    `available` is false for a capability the platform offers no working path
+    to at all. Spelled out rather than left out of the table, so the reason
+    travels with the refusal.
+    """
+
+    available: bool = True
+    emulator_only: bool = False
+    min_release: Optional[tuple[int, ...]] = None
+    needs_package: Optional[str] = None
+    needs_host_tool: Optional[str] = None
+    """A program this machine has to have, named as it is installed.
+
+    The device can be perfect and the capability still unusable, because the
+    read runs on the host. Kept beside `needs_package` because the two ask
+    the same question of two different machines.
+    """
+
+    detail: str = ""
+
+    physical_min_release: Optional[tuple[int, ...]] = None
+    """A floor that only a physical target has to meet.
+
+    One capability can reach both kinds of target by two paths with two
+    floors. A low-memory warning goes through simctl on a simulator, which
+    has no floor, and through the driver on a device, which arrived in iOS 17.
+    """
+
+    physical_detail: str = ""
+    """Why the physical floor exists, because it is not the reason above."""
+
+
+# A platform absent from a capability's entry cannot apply it at all. The
+# controller refuses the same cases at the device. This is that knowledge
+# early enough to skip a scenario instead of failing a step inside it.
+CAPABILITY_SUPPORT: dict[CapabilityKind, dict[Platform, Support]] = {
+    CapabilityKind.LOCATION: {
+        Platform.ANDROID: Support(
+            emulator_only=True, detail="'adb emu geo fix' needs an emulator console"
+        ),
+        Platform.IOS: Support(
+            min_release=(16, 4),
+            detail=(
+                "simulating a location through the driver arrived in iOS 16.4, "
+                "and simctl is the simulator's fallback for it"
+            ),
+        ),
+    },
+    CapabilityKind.NETWORK: {
+        Platform.ANDROID: Support(),
+        Platform.IOS: Support(
+            available=False,
+            detail=(
+                "the simulator shares the host network connection, and the "
+                "condition inducers that would change it need a real device"
+            ),
+        ),
+    },
+    CapabilityKind.BATTERY: {
+        Platform.ANDROID: Support(),
+        Platform.IOS: Support(
+            available=False,
+            detail=(
+                "'simctl status_bar' overrides what the status bar draws and "
+                "nothing else. Its clock override leaves the system clock "
+                "alone in the same way, so no app reads the level it was given"
+            ),
+        ),
+    },
+    CapabilityKind.TIMEZONE: {
+        Platform.ANDROID: Support(
+            available=False,
+            detail=(
+                "the system zone is persist.sys.timezone, which the shell user "
+                "cannot set, and a write to 'settings global timezone' changes "
+                "nothing the device reads"
+            ),
+        ),
+        Platform.IOS: Support(
+            available=False, detail="simctl sets no system zone at all"
+        ),
+    },
+    CapabilityKind.LOCALE: {
+        Platform.ANDROID: Support(
+            min_release=(33,), detail="per-app locales arrived in Android 13"
+        ),
+        Platform.IOS: Support(
+            available=False,
+            detail=(
+                "'mobile: configureLocalization' needs a booted simulator. It "
+                "reaches no app that is already running, so the app under test "
+                "keeps the locale it launched with"
+            ),
+        ),
+    },
+    CapabilityKind.PERMISSION: {
+        Platform.ANDROID: Support(),
+        Platform.IOS: Support(
+            emulator_only=True,
+            needs_host_tool="applesimutils",
+            detail=(
+                "'simctl privacy' needs a simulator, and reading the decision "
+                "back needs applesimutils. Install it with: brew tap wix/brew "
+                "&& brew install applesimutils. Note that simctl warns a "
+                "permission change can terminate a running app"
+            ),
+        ),
+    },
+    CapabilityKind.INTERRUPT: {
+        Platform.ANDROID: Support(),
+        Platform.IOS: Support(
+            physical_min_release=(17,),
+            physical_detail=(
+                "'mobile: sendMemoryWarning' is the only path to a device, "
+                "and it arrived in iOS 17 with Xcode 15"
+            ),
+        ),
+    },
+    CapabilityKind.BIOMETRIC: {
+        Platform.ANDROID: Support(
+            emulator_only=True, detail="a fingerprint can only be injected into an emulator"
+        ),
+        Platform.IOS: Support(
+            emulator_only=True, detail="biometric enrolment needs a simulator"
+        ),
+    },
+    CapabilityKind.CLIPBOARD: {
+        Platform.ANDROID: Support(),
+        Platform.IOS: Support(),
+    },
+    CapabilityKind.DEEPLINK: {
+        Platform.ANDROID: Support(),
+        Platform.IOS: Support(
+            min_release=(16, 4),
+            detail="opening a URL through the driver arrived in iOS 16.4",
+        ),
+    },
+    CapabilityKind.APP_STATE: {
+        Platform.ANDROID: Support(),
+        Platform.IOS: Support(),
+    },
+    CapabilityKind.MEDIA_INJECT: {
+        Platform.ANDROID: Support(),
+        Platform.IOS: Support(
+            emulator_only=True, detail="'simctl addmedia' needs a simulator"
+        ),
+    },
+    CapabilityKind.ACCESSIBILITY: {
+        Platform.ANDROID: Support(),
+        Platform.IOS: Support(
+            min_release=(27,), detail="VoiceOver automation arrived in iOS 27"
+        ),
+    },
+}
+
+
+# A variant one target answers and another does not. Every capability absent
+# from here is decided by its kind alone.
+VARIANT_SUPPORT: dict[tuple[CapabilityKind, str], dict[Platform, Support]] = {
+    (CapabilityKind.INTERRUPT, "incoming_call"): {
+        Platform.ANDROID: Support(
+            emulator_only=True, detail="placing a call needs an emulator console"
+        ),
+        Platform.IOS: Support(
+            available=False,
+            detail="neither simctl nor the driver places a call into a device",
+        ),
+    },
+    (CapabilityKind.PERMISSION, "notifications"): {
+        Platform.ANDROID: Support(
+            min_release=(33,),
+            detail="POST_NOTIFICATIONS is a runtime permission from Android 13",
+        ),
+        Platform.IOS: Support(
+            available=False,
+            detail=(
+                "simctl has no notification service, and the service that "
+                "would cover it grants every other permission too"
+            ),
+        ),
+    },
+    # Every other service answers yes, no or unset. Location answers always,
+    # inuse, never or unset, across two simctl services, so neither the write
+    # nor the way back is expressible as a decision to allow or deny.
+    (CapabilityKind.PERMISSION, "location"): {
+        Platform.IOS: Support(
+            available=False,
+            detail=(
+                "an iOS location decision is always, inuse, never or unset, "
+                "which a grant or a revoke cannot express or put back"
+            ),
+        ),
+    },
+    (CapabilityKind.PERMISSION, "storage"): {
+        Platform.IOS: Support(
+            available=False,
+            detail="simctl has no service for file or media storage",
+        ),
+    },
+    (CapabilityKind.PERMISSION, "photos"): {
+        Platform.ANDROID: Support(
+            min_release=(33,),
+            detail="READ_MEDIA_IMAGES replaced the storage permission in Android 13",
+        ),
+    },
+    # Only switching the screen reader on needs it installed. Switching it
+    # off is already true of a device that does not have it.
+    (CapabilityKind.ACCESSIBILITY, "on"): {
+        Platform.ANDROID: Support(
+            needs_package=TALKBACK_PACKAGE,
+            detail="the screen reader must be installed to be switched on",
+        ),
+    },
+    (CapabilityKind.APP_STATE, "clear_data"): {
+        Platform.IOS: Support(
+            emulator_only=True,
+            detail="'mobile: clearApp' reads the simulator's data container",
+        ),
+    },
+}

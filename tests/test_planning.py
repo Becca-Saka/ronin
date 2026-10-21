@@ -390,17 +390,28 @@ class ScenarioGenerationTests(unittest.TestCase):
         self.assertEqual(gap.cause, Cause.PROVIDER)
 
     def test_a_provider_outage_is_not_blamed_on_the_scenario(self):
-        import httpx
+        """The client retried and gave up, so this cell is lost and the rest are not."""
+        from ronin.errors import Cause, ProviderUnavailable
 
-        from ronin.errors import Cause
-
-        outage = httpx.ConnectError("connection refused")
-        generator, _ = self._generator([outage] * 3)
+        spent = ProviderUnavailable("the provider did not answer after 3 attempts")
+        generator, _ = self._generator([spent] * 3)
 
         gap = generator.generate_suite(self._journey()).uncovered[0]
 
         self.assertEqual(gap.status, "ERROR")
         self.assertEqual(gap.cause, Cause.PROVIDER)
+
+    def test_a_refused_request_stops_the_generator_asking_for_more(self):
+        """A key the service rejects is rejected for every cell after this one."""
+        from litellm import exceptions
+
+        refused = exceptions.AuthenticationError("bad key", "m", "openrouter")
+        generator, llm = self._generator([refused] * 9)
+
+        with self.assertRaises(exceptions.AuthenticationError):
+            generator.generate_suite(self._journey())
+
+        self.assertEqual(llm.generate_response.call_count, 1)
 
     def test_ronin_writes_the_outcome_for_a_value_the_file_says_is_refused(self):
         """The file said so, so the words carrying it are not the model's prose."""

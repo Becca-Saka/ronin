@@ -44,7 +44,7 @@ def read_back(
     target: str,
     capability: Capability,
     commands: DriverCommands,
-    package: Optional[str],
+    app_id: Optional[str],
 ) -> Optional[Receipt]:
     """The receipt for one capability, or None when nothing can read it."""
 
@@ -59,8 +59,8 @@ def read_back(
         )
 
     if platform == Platform.IOS:
-        return _ios(capability, commands, package, seen)
-    return _android(target, capability, commands, package, seen)
+        return _ios(capability, commands, app_id, seen)
+    return _android(target, capability, commands, app_id, seen)
 
 
 def _android(target, capability, commands, package, seen: Seen) -> Optional[Receipt]:
@@ -124,26 +124,18 @@ def _android(target, capability, commands, package, seen: Seen) -> Optional[Rece
             return None
 
 
-def _ios(capability, commands, package, seen: Seen) -> Optional[Receipt]:
+def _ios(capability, commands, app_id, seen: Seen) -> Optional[Receipt]:
     match capability:
         case LocationCapability():
             return _location(capability, commands.ios_location(), seen,
                              "mobile: getSimulatedLocation")
-        case BatteryCapability(level=level):
-            battery = commands.ios_battery()
-            if battery is None or "level" not in battery:
-                return None
-            # The driver reports the level as a fraction of one.
-            return seen(
-                level, round(float(battery["level"]) * 100), "mobile: batteryInfo"
-            )
         case PermissionCapability(grant=grant):
             service = IOS_PRIVACY_SERVICES.get(capability.permission)
-            if not service or not package:
+            if not service or not app_id:
                 return None
             return seen(
                 "yes" if grant else "no",
-                commands.ios_permission(package, service),
+                commands.ios_permission(app_id, service),
                 "mobile: getPermission",
             )
         case AccessibilityCapability(enabled=enabled):
@@ -151,14 +143,9 @@ def _ios(capability, commands, package, seen: Seen) -> Optional[Receipt]:
                 enabled, commands.ios_voice_over(), "mobile: isVoiceOverEnabled"
             )
         case AppStateCapability(action="force_stop"):
-            return _stopped(None, commands, package, seen)
+            return _stopped(None, commands, app_id, seen)
         case ClipboardCapability(text=text):
             return seen(text, commands.clipboard(), "mobile: getClipboard")
-        case LocaleCapability():
-            info = commands.ios_device_info()
-            if info is None or "locale" not in info:
-                return None
-            return seen(capability.language, info["locale"], "mobile: deviceInfo")
         case _:
             return None
 

@@ -124,7 +124,7 @@ def rendered(steps: list) -> list[str]:
     return [step.rendered() for step in steps]
 
 
-def capabilities_in(steps: list) -> list[CapabilityKind]:
+def capability_kinds_in(steps: list) -> list[CapabilityKind]:
     """Which device states these steps ask for, in the order they ask.
 
     Read off the steps rather than declared beside them. A scenario that
@@ -135,6 +135,17 @@ def capabilities_in(steps: list) -> list[CapabilityKind]:
         if isinstance(step, CapabilityStep) and step.capability.kind not in found:
             found.append(step.capability.kind)
     return found
+
+
+def capabilities_in(steps: list) -> list[Capability]:
+    """Every capability these steps ask for, in the order they ask.
+
+    The capability survives rather than its kind, so a caller can read the
+    variant. Support can differ between two variants of one kind, and a kind
+    on its own cannot say which one a scenario wants. `capability_kinds_in`
+    answers the narrower question.
+    """
+    return [step.capability for step in steps if isinstance(step, CapabilityStep)]
 
 
 def entered_values(steps: list) -> list[EnterStep]:

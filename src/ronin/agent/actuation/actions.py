@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Annotated, Any, Literal, get_args, get_origin
+from typing import Annotated, Any, ClassVar, Literal, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
@@ -72,6 +72,17 @@ class CapabilityModel(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @property
+    def support_variant(self) -> str | None:
+        """The sub-choice the preflight decides separately, or None.
+
+        A kind alone does not always say whether a target can apply it. An
+        incoming call needs an emulator console and a low-memory warning does
+        not, and both are one kind. A capability whose variants are all
+        supported wherever the kind is answers None.
+        """
+        return None
+
 
 class LocationCapability(CapabilityModel):
     kind: Literal[CapabilityKind.LOCATION] = CapabilityKind.LOCATION
@@ -108,11 +119,19 @@ class PermissionCapability(CapabilityModel):
     ]
     grant: bool
 
+    @property
+    def support_variant(self) -> str | None:
+        return self.permission
+
 
 class InterruptCapability(CapabilityModel):
     kind: Literal[CapabilityKind.INTERRUPT] = CapabilityKind.INTERRUPT
     type: Literal["low_memory", "incoming_call"]
     phone: str = Field(default="555-5555", description="Used by 'incoming_call' only.")
+
+    @property
+    def support_variant(self) -> str | None:
+        return self.type
 
 
 class BiometricCapability(CapabilityModel):
@@ -136,6 +155,10 @@ class AppStateCapability(CapabilityModel):
     kind: Literal[CapabilityKind.APP_STATE] = CapabilityKind.APP_STATE
     action: Literal["force_stop", "clear_data"]
 
+    @property
+    def support_variant(self) -> str | None:
+        return self.action
+
 
 class MediaInjectCapability(CapabilityModel):
     kind: Literal[CapabilityKind.MEDIA_INJECT] = CapabilityKind.MEDIA_INJECT
@@ -145,6 +168,10 @@ class MediaInjectCapability(CapabilityModel):
 class AccessibilityCapability(CapabilityModel):
     kind: Literal[CapabilityKind.ACCESSIBILITY] = CapabilityKind.ACCESSIBILITY
     enabled: bool
+
+    @property
+    def support_variant(self) -> str | None:
+        return "on" if self.enabled else "off"
 
 
 Capability = Annotated[
@@ -337,7 +364,48 @@ class WaitAction(BaseModel):
     reason: str = Field(..., description="What the screen is expected to finish doing.")
 
 
-def _marks_variant(model, name: str):
+class RetargetedAction(BaseModel):
+    """An action whose target is a mark or a description, not a coordinate.
+
+    Declared so that `coordinate_form` has one owner. Two groundings read it
+    off the class, to turn a placed target back into the action the device
+    takes. A class attribute nobody declares cannot be read safely.
+
+    No fields and no docstring reach the schema from here. The variant builds
+    its own fields, and a created class carries its own empty docstring.
+    """
+
+    coordinate_form: ClassVar[type[BaseModel]]
+
+
+def _retargeted(
+    model: type[BaseModel],
+    name: str,
+    target: str,
+    definition: tuple[type, Any],
+) -> type[BaseModel]:
+    """One action model with `coordinates` replaced by another way to name a target.
+
+    The field map is typed loosely for one reason. `create_model` takes field
+    definitions and reserved keywords through the same keyword arguments, and
+    no overload describes a map of the first. The looseness is narrow: the map
+    is built here, and the class it returns is a BaseModel subclass.
+
+    `coordinate_form` carries the model this one resolves back into, once the
+    mark or the description has been placed on the screen.
+    """
+    fields: dict[str, Any] = {
+        field_name: (info.annotation, info)
+        for field_name, info in model.model_fields.items()
+        if field_name != "coordinates"
+    }
+    fields[target] = definition
+    variant = create_model(name, __base__=RetargetedAction, **fields)
+    variant.coordinate_form = model
+    return variant
+
+
+def _marks_variant(model: type[BaseModel], name: str) -> type[BaseModel]:
     """The same action with coordinates removed and `mark` required.
 
     Marks mode is enforced by the schema rather than by prose plus a check
@@ -345,46 +413,35 @@ def _marks_variant(model, name: str):
     intermittently, which turns every omission into a wasted step. A field it
     cannot omit and a field that does not exist leave nothing to get wrong.
     """
-    fields = {
-        field_name: (info.annotation, info)
-        for field_name, info in model.model_fields.items()
-        if field_name != "coordinates"
-    }
-    fields["mark"] = (
-        int,
-        Field(..., description="Number of the target element on the screenshot."),
+    return _retargeted(
+        model,
+        name,
+        "mark",
+        (int, Field(..., description="Number of the target element on the screenshot.")),
     )
-    variant = create_model(name, **fields)
-    # Resolution turns the number back into this, once we know where it points.
-    variant.coordinate_form = model
-    return variant
 
 
-def _describe_variant(model, name: str):
+def _describe_variant(model: type[BaseModel], name: str) -> type[BaseModel]:
     """The same action with coordinates replaced by a description of the target.
 
     Built like the marks variant, for the same reason: a field the model
     cannot omit and a field that does not exist leave nothing to get wrong.
     """
-    fields = {
-        field_name: (info.annotation, info)
-        for field_name, info in model.model_fields.items()
-        if field_name != "coordinates"
-    }
-    fields["target"] = (
-        str,
-        Field(
-            ...,
-            description=(
-                "What to act on, described as you would point it out to "
-                "someone looking at the screen."
+    return _retargeted(
+        model,
+        name,
+        "target",
+        (
+            str,
+            Field(
+                ...,
+                description=(
+                    "What to act on, described as you would point it out to "
+                    "someone looking at the screen."
+                ),
             ),
         ),
     )
-    variant = create_model(name, **fields)
-    # Resolution turns the description back into this, once it has been placed.
-    variant.coordinate_form = model
-    return variant
 
 
 TypeMarkAction = _marks_variant(TypeAction, "TypeMarkAction")

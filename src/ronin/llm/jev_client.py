@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from typing import Any, Mapping, Optional
 
-from ronin.llm import usage
+from ronin.llm import failures, usage
 from ronin.utils.jev_deps import require_jev
 
 logger = logging.getLogger(__name__)
@@ -121,11 +121,19 @@ class JevClient:
 
     @property
     def client(self):
-        """The vendor client, built on first use so construction stays cheap."""
-        if self._client is None:
-            from typesafe_sdk import TypeSafeClient
+        """The vendor client, built on first use so construction stays cheap.
 
-            self._client = TypeSafeClient(model=self._version)
+        Built with its own retries off. The SDK retries twice by default and
+        `failures.answered` retries three times around it. One rate limit
+        then became nine requests, and three backoff budgets, while a device
+        waited. One owner for the policy, and it is ours.
+        """
+        if self._client is None:
+            from typesafe_sdk import RetryPolicy, TypeSafeClient
+
+            self._client = TypeSafeClient(
+                model=self._version, retry=RetryPolicy(max_retries=0)
+            )
         return self._client
 
     @property
@@ -152,11 +160,14 @@ class JevClient:
             assets = {ASSET: Image(prepare(screenshot).png)}
 
         started = time.perf_counter()
-        response = self.client.system_one(
-            state=state,
-            questions=dict(questions),
-            assets=assets,
-            extra_headers=IMAGES_HEADER,
+        response = failures.answered(
+            lambda: self.client.system_one(
+                state=state,
+                questions=dict(questions),
+                assets=assets,
+                extra_headers=IMAGES_HEADER,
+            ),
+            "The decision model",
         )
         latency_ms = (time.perf_counter() - started) * 1000
 

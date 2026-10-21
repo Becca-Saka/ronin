@@ -132,7 +132,7 @@ class SetupMode(str, Enum):
     """
 
     CLEAR_DATA = "clear_data"
-    """Wipe the app's data. The scenario starts as a first install would."""
+    """Wipe the app's data. The scenario then sees a first install."""
 
     RELAUNCH = "relaunch"
     """Restart the app and keep its data, including any session."""
@@ -170,10 +170,12 @@ def clear_app_data(device_control) -> bool:
 
     Android only. Returns whether the data went. A caller that asked for a
     cleared app and did not get one is testing a different scenario from the
-    one it described, so it needs to know.
+    one it described. So it needs to know.
     """
     if device_control.platform != Platform.ANDROID:
-        logger.warning("Clearing app data is an Android operation; leaving state as it is.")
+        logger.warning(
+            "Clearing app data is an Android operation. Leaving state as it is."
+        )
         return False
     try:
         AdbControl.clear_app_data(device_control.serial, device_control.package_id)

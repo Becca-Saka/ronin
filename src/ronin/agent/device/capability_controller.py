@@ -38,15 +38,27 @@ from ronin.agent.device.capability_maps import (
     APPIUM_NETWORK_TYPES,
     CONNECTIVITY,
     IOS_PRIVACY_SERVICES,
+    PERMISSION_LIMITED,
     TALKBACK,
 )
 from ronin.agent.device.driver_commands import DriverCommands
 from ronin.agent.device.platform import Platform
 from ronin.agent.device.receipts import Receipt
-from ronin.agent.device.simctl_control import BATTERY_STATES, SimctlControl
+from ronin.agent.device.simctl_control import SimctlControl
 from ronin.errors import ActionRejected, DeviceUnavailable
 
 logger = logging.getLogger(__name__)
+
+def _named(capability: Capability) -> str:
+    """A capability as a reader needs it, with the variant it chose.
+
+    The kind alone leaves a log and a failure saying `interrupt` where the
+    scenario asked for an incoming call. The two variants have different
+    support, and they fail for different reasons.
+    """
+    variant = capability.support_variant
+    return f"{capability.kind.value} '{variant}'" if variant else capability.kind.value
+
 
 class CapabilityController:
     """Dispatches system-level state commands to the active device."""
@@ -69,22 +81,11 @@ class CapabilityController:
         Returns:
             String representing the device serial/UDID.
         """
+        name = self.device_control.device_name
         if self.platform == Platform.IOS:
-            udid = self.driver.capabilities.get("udid")
-            if not udid:
-                udid = getattr(self.device_control, "device_name", None)
-            return udid or ""
-        else:
-            if hasattr(self.device_control, "device_name"):
-                name = self.device_control.device_name
-                adb_runner = (
-                    self.adb_control if self.adb_control is not None else AdbControl
-                )
-                resolved = adb_runner.resolve_emulator_serial(name)
-                if resolved:
-                    return resolved
-                return name
-            return "emulator-5554"
+            return self.driver.capabilities.get("udid") or name or ""
+        adb_runner = self.adb_control if self.adb_control is not None else AdbControl
+        return adb_runner.resolve_emulator_serial(name) or name or ""
 
     def execute(self, capability: Capability) -> Optional[Receipt]:
         """Applies one capability, reads the state back, or refuses it.
@@ -101,22 +102,19 @@ class CapabilityController:
                 device reports a state other than the one asked for. Nothing
                 may read the device as being in the requested state.
         """
-        logger.info("Executing capability control: %s", capability.kind.value)
+        named = _named(capability)
+        logger.info("Executing capability control: %s", named)
         target = self.get_udid_or_serial()
         try:
             self._apply(target, capability)
         except ActionRejected:
             raise
         except Exception as exc:
-            logger.error(
-                "Failed to execute capability %s: %s", capability.kind.value, exc
-            )
-            raise ActionRejected(
-                f"Capability {capability.kind.value} failed: {exc}"
-            ) from exc
+            logger.error("Failed to execute capability %s: %s", named, exc)
+            raise ActionRejected(f"Capability {named} failed: {exc}") from exc
 
         receipt = capability_receipts.read_back(
-            self.platform, target, capability, self.commands, self._known_package()
+            self.platform, target, capability, self.commands, self._known_app()
         )
         if receipt is None:
             return None
@@ -175,19 +173,21 @@ class CapabilityController:
             f"{self.platform.value}: {detail}"
         )
 
-    def _package(self, capability: Capability) -> str:
+    def _app(self, capability: Capability) -> str:
         """The app under test, which several capabilities act on.
 
+        An Android package id or an iOS bundle id, whichever this session
+        resolved. Asking for one of the two by name left every iOS capability
+        that acts on the app without an answer.
+
         Raises:
-            ActionRejected: No package is known, so the capability would be
+            ActionRejected: No app is known, so the capability would be
                 applied to nothing.
         """
-        package = self.driver.capabilities.get("appPackage") or getattr(
-            self.device_control, "package_id", None
-        )
-        if not package:
-            raise self._refuse(capability, "the app package id is not known")
-        return package
+        app_id = self._known_app()
+        if not app_id:
+            raise self._refuse(capability, "the app id is not known")
+        return app_id
 
     def _or_else(self, doing: str, driver: Callable, command: Callable) -> None:
         """The driver's way, and the command line when the driver has no way.
@@ -268,9 +268,18 @@ class CapabilityController:
         self.driver.set_network_connection(APPIUM_NETWORK_TYPES[mode])
 
     def _battery(self, target: str, capability: BatteryCapability) -> None:
+        """Set on Android, and refused on iOS.
+
+        `simctl status_bar` overrides what the status bar draws. The battery
+        an app reads is a different value, and the override does not change
+        it. So nothing confirms the state and nothing puts it back.
+        """
         if self.platform == Platform.IOS:
-            state = BATTERY_STATES[0] if capability.charging else BATTERY_STATES[2]
-            SimctlControl.override_battery(target, capability.level, state)
+            raise self._refuse(
+                capability,
+                "the status-bar override does not change the level an app "
+                "reads, so no read confirms it",
+            )
         else:
             AdbControl.set_battery_status(
                 target, capability.level, capability.charging
@@ -291,12 +300,20 @@ class CapabilityController:
         )
 
     def _locale(self, target: str, capability: LocaleCapability) -> None:
+        """Per-app on Android, and refused on iOS.
+
+        simctl and the driver both set the locale of the whole simulator, and
+        neither reaches an app that is already running. A scenario would go on
+        reading the locale it launched with while the receipt confirmed the
+        device had moved.
+        """
         if self.platform == Platform.IOS:
-            self.commands.configure_ios_localization(
-                capability.language, capability.country
+            raise self._refuse(
+                capability,
+                "the localization command reaches no app that is already "
+                "running, and it sets the simulator rather than the app",
             )
-            return
-        package = self._package(capability)
+        package = self._app(capability)
         locale = (
             f"{capability.language}-{capability.country}"
             if capability.country
@@ -305,23 +322,10 @@ class CapabilityController:
         AdbControl.set_app_locale(target, package, locale)
 
     def _permission(self, target: str, capability: PermissionCapability) -> None:
-        package = self._package(capability)
+        package = self._app(capability)
 
         if self.platform == Platform.IOS:
-            service = IOS_PRIVACY_SERVICES.get(capability.permission)
-            if not service:
-                raise self._refuse(
-                    capability,
-                    f"'{capability.permission}' names no simctl privacy service",
-                )
-            action = "grant" if capability.grant else "revoke"
-            self._or_else(
-                f"{action} {service}",
-                lambda: self.commands.set_ios_permission(
-                    package, service, capability.grant
-                ),
-                lambda: SimctlControl.set_privacy(target, action, service, package),
-            )
+            self._ios_permission(target, package, capability)
             return
 
         permission = ANDROID_PERMISSIONS.get(capability.permission)
@@ -339,16 +343,42 @@ class CapabilityController:
             ),
         )
 
+    def _ios_permission(
+        self, target: str, app_id: str, capability: PermissionCapability
+    ) -> None:
+        """Grants or revokes one service, where the decision can be put back.
+
+        A grant limited to part of the library is refused rather than
+        overwritten. Nothing sets a limited grant, so a scenario that changed
+        one would hand the next scenario a decision nobody declared.
+        """
+        service = IOS_PRIVACY_SERVICES.get(capability.permission)
+        if not service:
+            raise self._refuse(
+                capability,
+                f"'{capability.permission}' names no simctl privacy service",
+            )
+        if self.commands.ios_permission(app_id, service) == PERMISSION_LIMITED:
+            raise self._refuse(
+                capability,
+                f"the {service} permission is limited to part of the library, "
+                "and no command sets that state again",
+            )
+        action = "grant" if capability.grant else "revoke"
+        self._or_else(
+            f"{action} {service}",
+            lambda: self.commands.set_ios_permission(
+                app_id, service, capability.grant
+            ),
+            lambda: SimctlControl.set_privacy(target, action, service, app_id),
+        )
+
     def _interrupt(self, target: str, capability: InterruptCapability) -> None:
         if capability.type == "low_memory":
             if self.platform == Platform.IOS:
-                self._or_else(
-                    "post a memory warning",
-                    self.commands.send_ios_memory_warning,
-                    lambda: SimctlControl.notify_low_memory(target),
-                )
+                self._ios_memory_warning(target)
                 return
-            package = self._package(capability)
+            package = self._app(capability)
             self._or_else(
                 "send a trim-memory signal",
                 lambda: self.commands.send_android_trim_memory(package),
@@ -364,6 +394,23 @@ class CapabilityController:
             "place a call",
             lambda: self.commands.gsm_call(capability.phone),
             lambda: AdbControl.simulate_incoming_call(target, capability.phone),
+        )
+
+    def _ios_memory_warning(self, target: str) -> None:
+        """The driver path on a device, and simctl on a simulator.
+
+        The driver needs the bundle id to find the process. simctl needs
+        neither it nor a running app, so a session that cannot name the app
+        can still post a warning to a simulator.
+        """
+        package = self._known_app()
+        if not package:
+            SimctlControl.notify_low_memory(target)
+            return
+        self._or_else(
+            "post a memory warning",
+            lambda: self.commands.send_ios_memory_warning(package),
+            lambda: SimctlControl.notify_low_memory(target),
         )
 
     def _trim_memory_by_pid(
@@ -408,7 +455,7 @@ class CapabilityController:
                 lambda: SimctlControl.open_url(target, capability.url),
             )
             return
-        package = self._package(capability)
+        package = self._app(capability)
         self._or_else(
             "open a deep link",
             lambda: self.commands.open_deeplink(capability.url),
@@ -416,7 +463,7 @@ class CapabilityController:
         )
 
     def _app_state(self, target: str, capability: AppStateCapability) -> None:
-        package = self._package(capability)
+        package = self._app(capability)
 
         if capability.action == "force_stop":
             self._or_else(
@@ -427,12 +474,15 @@ class CapabilityController:
             return
 
         if self.platform != Platform.ANDROID:
+            def no_command_line() -> None:
+                raise self._refuse(
+                    capability, "simctl cannot clear an installed app"
+                )
+
             self._or_else(
                 "clear the app container",
                 lambda: self.commands.clear_app(package),
-                lambda: (_ for _ in ()).throw(
-                    self._refuse(capability, "simctl cannot clear an installed app")
-                ),
+                no_command_line,
             )
             return
         AdbControl.clear_app_data(target, package)
@@ -460,12 +510,10 @@ class CapabilityController:
             return
         AdbControl.set_accessibility_service(target, TALKBACK, capability.enabled)
 
-    def _known_package(self) -> Optional[str]:
-        """The app under test, or None. Unlike `_package`, this never raises.
+    def _known_app(self) -> Optional[str]:
+        """The app under test, or None. Unlike `_app`, this never raises.
 
-        A receipt is read after the capability was applied, so a missing
-        package there is not a reason to fail the capability a second time.
+        A receipt is read after the capability was applied, so a missing app
+        there is not a reason to fail the capability a second time.
         """
-        return self.driver.capabilities.get("appPackage") or getattr(
-            self.device_control, "package_id", None
-        )
+        return self.device_control.app_id

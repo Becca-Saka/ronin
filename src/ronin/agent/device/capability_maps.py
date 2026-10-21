@@ -35,12 +35,27 @@ ANDROID_PERMISSIONS = {
 # simctl's own service names. 'notifications' is absent on purpose: simctl has
 # no notification service, and the service that would cover it is 'all', which
 # grants every other permission too.
+PERMISSION_LIMITED = "limited"
+"""Access to part of the photo library, as the read reports it.
+
+A person chooses which photos in a picker, and no command sets that again.
+So a scenario that would overwrite one is refused instead.
+"""
+
+PERMISSION_UNSET = "unset"
+"""No decision has been made. `simctl privacy reset` is the way back to it."""
+
 IOS_PRIVACY_SERVICES = {
-    "location": "location",
     "camera": "camera",
     "photos": "photos",
     "contacts": "contacts",
 }
+"""The services a decision can be set on and read back from.
+
+Location is absent. simctl splits it into `location` and `location-always`,
+and the reader answers `always`, `inuse`, `never` or `unset`. A decision to
+allow or deny cannot express any of that, so nothing here can put one back.
+"""
 
 TALKBACK_PACKAGE = "com.google.android.marvin.talkback"
 TALKBACK = f"{TALKBACK_PACKAGE}/com.google.android.marvin.talkback.TalkBackService"

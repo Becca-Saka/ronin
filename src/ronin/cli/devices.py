@@ -14,7 +14,13 @@ from ronin.devices.android import (
     install_system_image,
     pick_image,
 )
-from ronin.devices.discovery import android_devices, list_devices
+from ronin.devices.discovery import (
+    addressable,
+    android_devices,
+    list_devices,
+    resolve,
+)
+from ronin.errors import UsageError
 
 
 def register(subcommands: argparse._SubParsersAction) -> None:
@@ -47,6 +53,20 @@ def register(subcommands: argparse._SubParsersAction) -> None:
     default_parser.add_argument("name", help="Device name to target by default")
 
 
+def _chosen(target, devices):
+    """Which listed device the configured target names, or None.
+
+    An ambiguous target names none of them. The run would refuse it, and
+    marking either row would say Ronin had chosen.
+    """
+    if not target:
+        return None
+    try:
+        return resolve(target, devices)
+    except UsageError:
+        return None
+
+
 def show(devices, config: Config, console: Console) -> int:
     if not devices:
         console.write()
@@ -54,10 +74,14 @@ def show(devices, config: Config, console: Console) -> int:
         return 1
 
     target = config.get("device")
+    # Marked by which device the target picks, not by what it is spelled as.
+    # A name, a udid and a serial can all name one target, and two devices
+    # can share a name, which would otherwise mark both rows.
+    chosen = _chosen(target, devices)
     columns = ("", "NAME", "PLATFORM", "STATE", "RUNTIME", "ID")
     rows = [
         (
-            "*" if device.name == target else " ",
+            "*" if device is chosen else " ",
             device.name,
             f"{device.platform}/{device.kind}",
             device.state,
@@ -134,14 +158,34 @@ def create(name: str, api, profile_request, assume_yes: bool, config: Config, co
 
 
 def set_default(name: str, config: Config, console: Console) -> int:
-    known = {device.name for device in list_devices()}
-    if name not in known:
+    """Saves the target a run uses when none is named.
+
+    A device is addressable by the name it was listed under or by its own id,
+    and a person may paste either. The name resolves through the same
+    function a session uses, so the two cannot disagree about which target a
+    word picks.
+
+    What is stored is the durable name of whatever was picked, which
+    `addressable` decides. A listing name is not always one: an Android
+    handset is listed by its model, and nothing can select that.
+    """
+    try:
+        found = resolve(name, list_devices())
+    except UsageError as ambiguous:
+        console.result(FAIL, "device", f"'{name}' is not one target", str(ambiguous))
+        return 1
+    if found is None:
         console.result(
             FAIL, "device", f"'{name}' not found", "See what is available with: ronin devices"
         )
         return 1
-    path = set_value("device", name)
-    console.result(OK, "device", f"{name} saved to {path}")
+
+    saved = addressable(found) or name
+    path = set_value("device", saved)
+    detail = f"{saved} saved to {path}"
+    if saved != name:
+        detail = f"{name} saved to {path} as {saved}"
+    console.result(OK, "device", detail)
     return 0
 
 

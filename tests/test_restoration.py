@@ -9,13 +9,13 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+from fakes import PACKAGE, SERIAL, session as device
+
 from ronin.agent.device import restoration
 from ronin.agent.device.platform import Platform
-from ronin.agent.device.restoration import DeviceStateSnapshot
+from ronin.agent.device.restoration import AndroidStateSnapshot
 from ronin.errors import DeviceUnavailable
 
-SERIAL = "emulator-5554"
-PACKAGE = "com.example.app"
 
 FOUND = {
     "airplane_mode": "off",
@@ -24,10 +24,6 @@ FOUND = {
     "app_locale": "en-GB",
     "accessibility_enabled": "off",
 }
-
-
-def device(platform=Platform.ANDROID, serial=SERIAL):
-    return SimpleNamespace(platform=platform, serial=serial, package_id=PACKAGE)
 
 
 class RestorationTests(unittest.TestCase):
@@ -157,8 +153,8 @@ class RestorationTests(unittest.TestCase):
         self.assertIsNone(found)
         self.reads.airplane_mode.assert_not_called()
 
-    def test_a_simulator_is_left_untouched(self):
-        """No capability Ronin applies to a simulator sets a readable state."""
+    def test_an_ios_session_with_no_driver_reads_nothing(self):
+        """Every iOS state is read through the driver, and adb reads none of them."""
         with restoration.preserved(device(platform=Platform.IOS)) as found:
             pass
 
@@ -170,13 +166,13 @@ class SnapshotTests(unittest.TestCase):
     """Reporting a snapshot without inventing what it does not hold."""
 
     def test_an_unread_state_is_absent_from_the_description(self):
-        found = DeviceStateSnapshot(airplane="off", timezone=None)
+        found = AndroidStateSnapshot(airplane="off", timezone=None)
 
         self.assertIn("airplane=off", found.describe())
         self.assertNotIn("timezone", found.describe())
 
     def test_a_snapshot_that_read_nothing_says_so(self):
-        self.assertEqual(DeviceStateSnapshot().describe(), "nothing")
+        self.assertEqual(AndroidStateSnapshot().describe(), "nothing")
 
 
 class RadioRestorationTests(unittest.TestCase):
@@ -253,7 +249,7 @@ class RadioRestorationTests(unittest.TestCase):
         self.adb.set_airplane_mode.assert_called_once_with(SERIAL, False)
 
     def test_a_snapshot_names_the_radios_it_read(self):
-        found = DeviceStateSnapshot(airplane="off", wifi="on", data="off")
+        found = AndroidStateSnapshot(airplane="off", wifi="on", data="off")
 
         self.assertIn("wifi=on", found.describe())
         self.assertIn("data=off", found.describe())

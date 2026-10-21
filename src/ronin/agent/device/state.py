@@ -33,7 +33,7 @@ def context_drift(
     device_control, last_external_nav: bool, settle_time: float
 ) -> Optional[str]:
     # Asked before anything else. On Android the prompt reads as lost focus and
-    # recovery would press back, which answers it as "deny"; on iOS the app
+    # recovery would press back, which answers it as "deny". On iOS the app
     # stays in the foreground and nothing below would see the prompt at all.
     # The planner reads it off the screenshot like any other screen.
     if device_control.showing_system_prompt():
@@ -54,7 +54,7 @@ def context_drift(
                 logger.error("Recovery failed.")
                 return (
                     "Warning: The device has drifted outside the target app (SUT) and recovery failed. "
-                    "Please take an action to navigate back to the app, or terminate the scenario."
+                    "Navigate back to the app, or stop the scenario."
                 )
             logger.info("Recovery successful.")
             return None
@@ -79,10 +79,12 @@ class DeviceState:
         """Checks if the device is currently focused on the target app under test (SUT)."""
         try:
             if self.control.platform == Platform.ANDROID:
-                return self.control.driver.current_package == self.control.package_id
-            bundle_id = self.control._resolve_bundle_id()
-            if bundle_id:
-                return self.control.driver.query_app_state(bundle_id) == IOS_APP_STATE_FOREGROUND
+                return self.control.driver.current_package == self.control.app_id
+            if self.control.app_id:
+                return (
+                    self.control.driver.query_app_state(self.control.app_id)
+                    == IOS_APP_STATE_FOREGROUND
+                )
         except Exception as e:  # noqa: BLE001 - driver boundary
             logger.warning("Failed to check SUT focus: %s", e)
         return True
@@ -166,11 +168,7 @@ class DeviceState:
         if self.control.is_still_in_sut():
             return
 
-        app_id = (
-            self.control.package_id
-            if self.control.platform == Platform.ANDROID
-            else self.control._resolve_bundle_id()
-        )
+        app_id = self.control.app_id
 
         if not app_id:
             logger.error("Cannot recover: no app ID available.")

@@ -128,6 +128,14 @@ class DriverCommands:
         answer = self.ask("getSimulatedLocation")
         return answer if isinstance(answer, dict) else None
 
+    def reset_ios_location(self) -> None:
+        """Gives the device its own location back.
+
+        A simulated location outlives the session that set it, and the next
+        scenario would run somewhere it never declared.
+        """
+        self.change("resetSimulatedLocation")
+
     def change_android_permissions(
         self, app_id: str, permissions: list[str], grant: bool
     ) -> None:
@@ -165,8 +173,13 @@ class DriverCommands:
             "sendTrimMemory", {"pkg": app_id, "level": "RUNNING_CRITICAL"}
         )
 
-    def send_ios_memory_warning(self) -> None:
-        self.change("sendMemoryWarning")
+    def send_ios_memory_warning(self, app_id: str) -> None:
+        """Physical device only, from iOS 17 and Xcode 15.
+
+        The bundle id is required. The driver finds the process from it, and
+        without it the command is refused before it reaches the device.
+        """
+        self.change("sendMemoryWarning", {"bundleId": app_id})
 
     def gsm_call(self, phone: str) -> None:
         """Android emulator only."""
@@ -180,22 +193,13 @@ class DriverCommands:
         self.change("enableVoiceOver" if enabled else "disableVoiceOver")
 
     def ios_voice_over(self) -> Optional[bool]:
+        """Whether the screen reader is on, or None where the driver would not say.
+
+        The driver answers with an object carrying `enabled`. A bare boolean
+        is read too. The value comes from the test runner on the device, and
+        the wrapper around it is not ours to depend on.
+        """
         answer = self.ask("isVoiceOverEnabled")
+        if isinstance(answer, dict):
+            answer = answer.get("enabled")
         return answer if isinstance(answer, bool) else None
-
-    def configure_ios_localization(self, language: str, country: str) -> None:
-        """Booted simulator only. The locale is per device, not per app."""
-        locale = {"name": f"{language}_{country}"} if country else {"name": language}
-        self.change(
-            "configureLocalization",
-            {"locale": locale, "keyboard": {"name": language, "layout": "QWERTY"}},
-        )
-
-    def ios_device_info(self) -> Optional[dict]:
-        """Locale, timezone, model and appearance, as the device reports them."""
-        answer = self.ask("deviceInfo")
-        return answer if isinstance(answer, dict) else None
-
-    def ios_battery(self) -> Optional[dict]:
-        answer = self.ask("batteryInfo")
-        return answer if isinstance(answer, dict) else None

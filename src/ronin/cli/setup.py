@@ -59,6 +59,7 @@ def run(args: argparse.Namespace, config: Config) -> int:
     from ronin.setup import (
         ensure_env_file,
         install_appium,
+        install_applesimutils,
         install_driver,
         install_vision,
         prefetch_models,
@@ -90,6 +91,10 @@ def run(args: argparse.Namespace, config: Config) -> int:
         if driver == "xcuitest" and not is_macos():
             continue
         appium_results.append(install_driver(ctx, driver))
+    if "ios" in platforms and is_macos():
+        # Reading an iOS permission back runs a program on the host, so the
+        # host is part of what a run needs.
+        appium_results.append(install_applesimutils(ctx))
     _report(console, appium_results)
     steps.extend(appium_results)
 

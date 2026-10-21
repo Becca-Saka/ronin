@@ -276,7 +276,8 @@ def resolve_app_path(
                 )
         else:
             logger.warning(
-                "Found %d different app binaries; using the one built most recently: %s (%s)",
+                "Found %d different app binaries. Using the one built most "
+                "recently: %s (%s)",
                 len(groups),
                 chosen,
                 _built_at(chosen),

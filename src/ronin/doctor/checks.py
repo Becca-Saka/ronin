@@ -77,7 +77,7 @@ def _capture(cmd: list[str], timeout: float = 20.0) -> Optional[subprocess.Compl
 
 
 def _streams(result: subprocess.CompletedProcess) -> str:
-    """Appium and friends split output across stdout and stderr; search both."""
+    """Appium and friends split output across stdout and stderr. Both are searched."""
     return f"{result.stdout or ''}\n{result.stderr or ''}"
 
 
@@ -134,7 +134,7 @@ def check_credentials(model: str = DEFAULT_MODEL) -> CheckResult:
 
 
 def check_disk_space() -> CheckResult:
-    """Emulators and simulators need several GB free; model weights need a few hundred MB."""
+    """An emulator or simulator needs several GB free. Model weights need a few hundred MB."""
     free = free_disk_gb()
     if free < MIN_EMULATOR_FREE_GB:
         return CheckResult(
@@ -300,7 +300,7 @@ def check_avds(expected_device: Optional[str] = None) -> CheckResult:
             "avds",
             Status.WARN,
             f"{', '.join(avds)} (no '{expected}')",
-            f"Ronin targets '{expected}'; run: ronin config set device {avds[0]}",
+            f"Ronin targets '{expected}'. Run: ronin config set device {avds[0]}",
         )
     if avds:
         return CheckResult("avds", Status.OK, ", ".join(avds))
@@ -325,6 +325,31 @@ def check_xcode() -> CheckResult:
         "command-line tools not installed",
         "xcode-select --install",
     )
+
+
+def check_applesimutils() -> CheckResult:
+    """Whether the host can read an iOS permission back.
+
+    `simctl privacy` sets a decision and reports nothing. The read is
+    `mobile: getPermission`, which runs this program on the host. Without it
+    a permission scenario is skipped, because a state nothing confirms is not
+    evidence.
+
+    A warning rather than a failure. Every other iOS capability works
+    without it.
+    """
+    if not is_macos():
+        return CheckResult("applesimutils", Status.SKIP, "iOS automation requires macOS")
+    if not shutil.which("applesimutils"):
+        return CheckResult(
+            "applesimutils",
+            Status.WARN,
+            "not installed, so iOS permission scenarios are skipped",
+            "brew tap wix/brew && brew install applesimutils",
+        )
+    result = _capture(["applesimutils", "--version"])
+    version = (result.stdout or "").strip() if result else ""
+    return CheckResult("applesimutils", Status.OK, version or "installed")
 
 
 def check_simulators() -> CheckResult:
@@ -384,6 +409,11 @@ def run_checks(platforms: tuple[str, ...] = ("android", "ios")) -> list[CheckSec
         )
 
     if "ios" in platforms:
-        sections.append(CheckSection("iOS", [check_xcode(), check_simulators()]))
+        sections.append(
+            CheckSection(
+                "iOS",
+                [check_xcode(), check_simulators(), check_applesimutils()],
+            )
+        )
 
     return sections

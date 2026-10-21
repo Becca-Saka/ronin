@@ -248,8 +248,57 @@ class VendorContractTests(unittest.TestCase):
     def test_the_sdk_exports_what_the_grounder_needs(self):
         import typesafe_sdk
 
-        for name in ("TypeSafeClient", "Image", "Box", "Noul"):
+        for name in ("TypeSafeClient", "Image", "Box", "Noul", "RetryPolicy"):
             self.assertTrue(hasattr(typesafe_sdk, name), f"SDK has no {name}")
+
+    def _requests_for_a_rate_limit(self, policy):
+        """How many times the real client asks, against a transport that refuses."""
+        import httpx2
+        from typesafe_sdk import TypeSafeClient
+
+        asked = []
+
+        def refuse(request):
+            asked.append(request.url.path)
+            return httpx2.Response(429, json={"error": "slow down"})
+
+        client = TypeSafeClient(
+            model="noul-1",
+            retry=policy,
+            transport=httpx2.MockTransport(refuse),
+        )
+        import typesafe_sdk
+
+        with self.assertRaises(typesafe_sdk.TypeSafeRateLimitError):
+            client.system_one(
+                state="", questions={"q": {"type": "boolean", "prompt": "is it?"}}
+            )
+        return len(asked)
+
+    def test_the_sdk_retries_on_its_own_unless_told_not_to(self):
+        """Why Ronin sets a policy at all. Left alone this is three requests."""
+        self.assertGreater(self._requests_for_a_rate_limit(None), 1)
+
+    def test_a_zero_policy_leaves_the_sdk_asking_once(self):
+        """So Ronin's own three attempts are three requests, and not nine."""
+        from typesafe_sdk import RetryPolicy
+
+        self.assertEqual(
+            self._requests_for_a_rate_limit(RetryPolicy(max_retries=0)), 1
+        )
+
+    def test_the_grounder_builds_its_client_with_that_policy(self):
+        """One owner for the retry policy, and `failures.answered` is it."""
+        from unittest import mock
+
+        import typesafe_sdk
+
+        from ronin.llm.jev_client import JevClient
+
+        with mock.patch.object(typesafe_sdk, "TypeSafeClient") as built:
+            self.assertIsNotNone(JevClient(model="x/noul-1").client)
+
+        self.assertEqual(built.call_args.kwargs["retry"].max_retries, 0)
 
 
 class SdkCompatibilityTests(unittest.TestCase):

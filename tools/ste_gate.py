@@ -8,11 +8,15 @@ rather than holding a second copy of the rules that can disagree with it.
 
 What this file owns is the extraction. A linter reading a `.py` file counts
 identifiers and argv as words and reports on code nobody wrote as prose, so
-only the docstrings and the comments are passed to it.
+only the English is passed to it: docstrings, comments, the sentences
+assigned to a name or handed back from a function, the literal halves of an
+f-string, and every `description=` a call carries.
 
-The linter is a personal tool rather than a dependency of this repository. A
-checkout without it reports that and passes, because a gate that fails for a
-missing tool stops work it cannot speak about.
+The linter is vendored beside this file, so CI runs the same rules a local
+check runs. A machine with the skill installed uses that copy instead, which
+keeps a rule fix one edit rather than two. A checkout with neither reports
+that and passes, because a gate that fails for a missing tool stops work it
+cannot speak about.
 """
 
 from __future__ import annotations
@@ -31,19 +35,32 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 BASELINE_PATH = Path(__file__).resolve().with_name("ste-baseline.toml")
 
 LINTER_ENV = "RONIN_STE_LINT"
-DEFAULT_LINTER = Path.home() / ".claude/skills/asd-ste100/scripts/ste-lint.py"
+SKILL_LINTER = Path.home() / ".claude/skills/asd-ste100/scripts/ste-lint.py"
+VENDORED_LINTER = Path(__file__).resolve().with_name("ste_lint.py")
 
 COMMENT = re.compile(r"\s*#\s?(.+)")
 MACHINERY = ("noqa", "type:", "ruff:", "pylint", "mypy", "fmt:")
 
 
 def _find_linter() -> Path | None:
-    """The skill's linter, or None when this machine does not have it."""
+    """The linter to run, or None where this machine has none.
+
+    The copy in this directory wins, so that a local run and a CI run enforce
+    the same rules. A gate whose rules depend on what is installed on the
+    machine reports a different answer per machine, which is not a gate.
+
+    `RONIN_STE_LINT` overrides it. That is how a rule is tried before the
+    copy here is updated, and the override is deliberate rather than
+    whatever happened to be installed.
+    """
     named = os.environ.get(LINTER_ENV)
     if named:
         path = Path(named).expanduser()
         return path if path.is_file() else None
-    return DEFAULT_LINTER if DEFAULT_LINTER.is_file() else None
+    for candidate in (VENDORED_LINTER, SKILL_LINTER):
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 SENTENCE_LENGTH = 40
@@ -67,31 +84,146 @@ def _assigned_prose(node: ast.AST) -> str | None:
     if not isinstance(node.value, ast.Constant):
         return None
     value = node.value.value
-    if isinstance(value, str) and " " in value and len(value) >= SENTENCE_LENGTH:
-        return value
-    return None
+    return value if isinstance(value, str) and _is_prose(value) else None
 
 
 def _described(node: ast.AST) -> list[str]:
-    """Every `description=` a call passes as a plain string."""
+    """Every prose keyword a call passes, as a string or an f-string."""
     if not isinstance(node, ast.Call):
         return []
-    return [
-        keyword.value.value
-        for keyword in node.keywords
-        if keyword.arg == "description"
-        and isinstance(keyword.value, ast.Constant)
-        and isinstance(keyword.value.value, str)
+    found = []
+    for keyword in node.keywords:
+        if keyword.arg not in PROSE_KEYWORDS:
+            continue
+        if isinstance(keyword.value, ast.Constant) and isinstance(
+            keyword.value.value, str
+        ):
+            found.append(keyword.value.value)
+        else:
+            found.extend(_formatted(keyword.value))
+    return found
+
+
+# A line of a file Ronin writes, rather than a line of English. A template
+# for a .env or for a throwaway script is a long string too, and its own
+# comments are not text this gate has anything to say about.
+CODE_LINE = re.compile(r"^\s*(#|//|import\s|from\s|\w+\s*=[^=])")
+
+
+def _is_prose(value: str) -> bool:
+    """Whether a string is English rather than a file Ronin writes out."""
+    if " " not in value or len(value) < SENTENCE_LENGTH:
+        return False
+    return not any(CODE_LINE.match(line) for line in value.splitlines())
+
+
+LOG_METHODS = ("debug", "info", "warning", "error", "exception", "critical")
+"""The logging calls whose first argument is a sentence a person reads.
+
+A log line is read by somebody under pressure, looking for what broke. It is
+the debug context the skill asks to hold to the same rules as a prompt.
+"""
+
+PROSE_KEYWORDS = (
+    "description",
+    "help",
+    "content",
+    "detail",
+    "hint",
+    "reason",
+)
+"""Keyword arguments that carry English rather than a value.
+
+`description` reaches a model through a schema. `help` reaches a person
+through `--help`. `content` is a message to a model. `detail`, `hint` and
+`reason` are what a check or a report says went wrong.
+"""
+
+
+def _logged(node: ast.AST) -> list[str]:
+    """The sentence a logging call opens with, where it is one.
+
+    The arguments after it are values, and the format string is the English.
+    """
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        return []
+    if node.func.attr not in LOG_METHODS or not node.args:
+        return []
+    first = node.args[0]
+    if isinstance(first, ast.Constant) and _is_prose(first.value):
+        return [first.value]
+    return _formatted(first)
+
+
+def _refused(node: ast.AST) -> list[str]:
+    """Every sentence the exception of a `raise` was built with.
+
+    A refusal is read twice: once by whoever reads the report, and once by
+    whoever is deciding whether Ronin was right to refuse.
+    """
+    if not isinstance(node, ast.Raise) or not isinstance(node.exc, ast.Call):
+        return []
+    found = []
+    for argument in node.exc.args:
+        if isinstance(argument, ast.Constant) and _is_prose(argument.value):
+            found.append(argument.value)
+        found.extend(_formatted(argument))
+        if isinstance(argument, ast.BinOp):
+            found.extend(_joined(argument))
+    return found
+
+
+def _joined(node: ast.AST) -> list[str]:
+    """One sentence built by adding or implicitly joining string literals."""
+    parts = [
+        part.value
+        for part in ast.walk(node)
+        if isinstance(part, ast.Constant) and isinstance(part.value, str)
     ]
+    literal = "".join(parts)
+    return [literal] if _is_prose(literal) else []
+
+
+def _formatted(node: ast.AST) -> list[str]:
+    """The literal halves of an f-string long enough to be a sentence.
+
+    A prompt built with a value in it is still a prompt, and a refusal
+    message is written the same way. The interpolations are left out: what
+    they hold is decided at run time, and the words around them are not.
+    """
+    if not isinstance(node, ast.JoinedStr):
+        return []
+    literal = "".join(
+        part.value
+        for part in node.values
+        if isinstance(part, ast.Constant) and isinstance(part.value, str)
+    )
+    return [literal] if _is_prose(literal) else []
+
+
+def _returned(node: ast.AST) -> list[str]:
+    """A sentence a function hands back rather than assigns.
+
+    Several prompts are built and returned in one step, and a gate that read
+    only assignments and docstrings never saw them.
+    """
+    if not isinstance(node, ast.Return) or not isinstance(node.value, ast.Constant):
+        return []
+    value = node.value.value
+    return [value] if isinstance(value, str) and _is_prose(value) else []
 
 
 def prose_of(path: Path) -> str:
     """Every word in one file that a person or a model reads as English.
 
-    Docstrings and comments, the long strings assigned to a name, and every
-    `description=` a call carries. A prompt and a field description both
-    reach a model, so a gate that read only docstrings passed the text that
-    matters most.
+    Docstrings and comments. The long strings assigned to a name or returned
+    from a function. The literal halves of an f-string. The sentence a
+    logging call opens with, and the ones a refusal was built with. And every
+    prose keyword a call carries, such as `description`, `help` and `hint`.
+
+    A prompt, a field description, a log line and a refusal are all read by
+    somebody or something, so a gate that read only docstrings passed the
+    text that matters most.
     """
     source = path.read_text()
     found: list[str] = []
@@ -129,6 +261,10 @@ def prose_of(path: Path) -> str:
         if assigned:
             found.append(assigned)
         found.extend(_described(node))
+        found.extend(_formatted(node))
+        found.extend(_returned(node))
+        found.extend(_logged(node))
+        found.extend(_refused(node))
 
     for line in source.splitlines():
         match = COMMENT.match(line)
@@ -211,7 +347,7 @@ def main() -> int:
     linter = _find_linter()
     if linter is None:
         print(
-            f"STE gate skipped: no linter at {DEFAULT_LINTER}. "
+            f"STE gate skipped: no linter at {SKILL_LINTER} or {VENDORED_LINTER}. "
             f"Set {LINTER_ENV} to run it."
         )
         return 0

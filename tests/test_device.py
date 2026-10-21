@@ -333,7 +333,13 @@ class ScenarioIsolationTests(unittest.TestCase):
 
         # A serial-less control is enough: the capability preflight reads the
         # platform, and reads nothing off a device it cannot address.
-        device_control = SimpleNamespace(platform=Platform.ANDROID, serial="")
+        device_control = SimpleNamespace(
+            platform=Platform.ANDROID,
+            serial="",
+            os_version=None,
+            package_id=None,
+            driver=None,
+        )
 
         report = agent.execute_scenario(
             case, [], device_control, perception, Path("unused"), session_trail=object()

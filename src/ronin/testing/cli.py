@@ -39,11 +39,11 @@ class RoninCLI:
         parser.add_argument(
             "--grounding",
             choices=list(GROUNDINGS),
-            help="How the planner names a target: 'coordinates' (default), "
-            "'marks', where every detected element is numbered on the screenshot "
-            "and the planner selects a number, which Ronin validates against the "
-            "detected set before anything is executed, or 'describe', where "
-            "nothing is detected and the planner names its target in words",
+            help="How the planner names a target. 'coordinates' is the "
+            "default. 'marks' numbers every detected element on the screenshot, "
+            "and the planner picks a number. Ronin checks that number against "
+            "the detected set before anything runs. 'describe' detects nothing, "
+            "and the planner names its target in words.",
         )
         parser.add_argument(
             "--reuse-app",

@@ -17,6 +17,7 @@ from ronin.agent.actuation.actions import (
     BiometricCapability,
     ClipboardCapability,
     DeeplinkCapability,
+    LocaleCapability,
     LocationCapability,
     NetworkCapability,
     PermissionCapability,
@@ -24,7 +25,7 @@ from ronin.agent.actuation.actions import (
 from ronin.agent.device import capability_controller
 from ronin.agent.device.platform import Platform
 from ronin.errors import ActionRejected
-from test_capabilities import FakeDriver, controller, silent_reads
+from fakes import FakeDriver, controller, silent_reads
 
 
 class ReceiptTests(unittest.TestCase):
@@ -144,8 +145,10 @@ class IosReceiptTests(unittest.TestCase):
             return control.execute(capability)
 
     def test_the_screen_reader_is_read_back(self):
+        """The driver answers with an object, and the bare value is inside it."""
         receipt = self._apply(
-            AccessibilityCapability(enabled=True), answers={"isVoiceOverEnabled": True}
+            AccessibilityCapability(enabled=True),
+            answers={"isVoiceOverEnabled": {"enabled": True}},
         )
 
         self.assertTrue(receipt.confirmed)
@@ -155,25 +158,54 @@ class IosReceiptTests(unittest.TestCase):
         with self.assertRaises(ActionRejected):
             self._apply(
                 AccessibilityCapability(enabled=True),
-                answers={"isVoiceOverEnabled": False},
+                answers={"isVoiceOverEnabled": {"enabled": False}},
             )
 
-    def test_the_battery_is_read_back_as_a_percentage(self):
-        """The driver reports the level as a fraction of one."""
+    def test_a_screen_reader_answered_without_its_object_is_still_read(self):
+        """The value comes from the runner on the device, through two wrappers."""
         receipt = self._apply(
-            BatteryCapability(level=42), answers={"batteryInfo": {"level": 0.42}}
+            AccessibilityCapability(enabled=True), answers={"isVoiceOverEnabled": True}
         )
 
         self.assertTrue(receipt.confirmed)
-        self.assertEqual(receipt.observed, "42")
+
+    def test_a_battery_is_refused_rather_than_read_back(self):
+        """The override changes the status bar, and the read answers the app."""
+        with self.assertRaises(ActionRejected) as raised:
+            self._apply(BatteryCapability(level=42))
+
+        self.assertIn("status-bar", str(raised.exception))
 
     def test_a_permission_is_read_back(self):
+        """`simctl privacy` reports nothing, so the read is the only evidence."""
         receipt = self._apply(
             PermissionCapability(permission="camera", grant=True),
             answers={"getPermission": "yes"},
         )
 
         self.assertTrue(receipt.confirmed)
+        self.assertEqual(receipt.source, "mobile: getPermission")
+
+    def test_a_permission_the_device_did_not_take_is_refused(self):
+        with self.assertRaises(ActionRejected):
+            self._apply(
+                PermissionCapability(permission="camera", grant=True),
+                answers={"getPermission": "no"},
+            )
+
+    def test_a_locale_is_refused_rather_than_read_back(self):
+        """A confirmed device locale would say nothing about the running app.
+
+        The localization command sets the simulator and reaches no app that
+        already started, so a receipt on the device locale would report a
+        change the scenario cannot see.
+        """
+        with self.assertRaises(ActionRejected) as raised:
+            self._apply(LocaleCapability(language="fr", country="FR"))
+
+        self.assertIn("locale", str(raised.exception))
+
+
 
     def test_a_capability_nothing_reads_reports_no_receipt(self):
         self.assertIsNone(self._apply(DeeplinkCapability(url="app://x")))

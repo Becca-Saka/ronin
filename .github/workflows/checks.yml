@@ -25,6 +25,10 @@ jobs:
       # a conflict marker. Empty on a push, since the merge base is HEAD.
       - run: git diff --check "$(git merge-base origin/${{ github.event.repository.default_branch }} HEAD)"..HEAD
       - run: uv run python tools/quality_gate.py
+      # Prompts, error messages and field descriptions are read by a model or
+      # by a person under pressure. The linter is vendored beside the gate, so
+      # this runs the same rules a local check runs.
+      - run: uv run python tools/ste_gate.py
       # The schema editors read is generated from the models that validate a
       # ronin.yaml, so it cannot be left behind by a change to them.
       - run: uv run python tools/emit_schema.py --check

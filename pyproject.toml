@@ -56,6 +56,9 @@ dev = [
 
 [tool.ruff]
 line-length = 100
+# Vendored from the asd-ste100 skill, so its style is not ours to change. A
+# fix here could not be landed upstream, and the next copy would undo it.
+extend-exclude = ["tools/ste_lint.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "B", "SIM", "C90", "BLE", "W"]

@@ -7,31 +7,51 @@ one then tests a device nobody configured, and its verdict is about a state it
 never declared.
 
 So each scenario reads the states a capability could change, and writes back
-the ones that moved. Reading first is what makes this honest. A state that could not be read is not
-restored, because restoring it would write a value that was never observed.
+the ones that moved. Reading first is what makes this honest. A state that
+could not be read is not restored, because restoring it would write a value
+that was never observed.
 """
 
 import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Optional, Protocol, Sequence
 
+from ronin.agent.actuation.actions import (
+    Capability,
+    CapabilityKind,
+    PermissionCapability,
+)
 from ronin.agent.device import receipts
 from ronin.agent.device.adb_control import AdbControl
+from ronin.agent.device.capability_maps import IOS_PRIVACY_SERVICES, PERMISSION_UNSET
 from ronin.agent.device.driver_commands import DriverCommands
 from ronin.agent.device.platform import Platform
+from ronin.agent.device.simctl_control import SimctlControl
 from ronin.errors import DeviceUnavailable
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class DeviceStateSnapshot:
-    """The system states a capability can change, as they were found.
+class StateSnapshot:
+    """What was read before a scenario, whichever platform answered.
 
-    Every field is optional. None means the state could not be read, and an
-    unread state is left alone rather than guessed at.
+    Every field of every snapshot is optional. None means the state could not
+    be read, and an unread state is left alone rather than guessed at.
     """
+
+    def describe(self) -> str:
+        known = {
+            name: value
+            for name, value in vars(self).items()
+            if value is not None
+        }
+        return ", ".join(f"{name}={value}" for name, value in known.items()) or "nothing"
+
+
+@dataclass(frozen=True)
+class AndroidStateSnapshot(StateSnapshot):
+    """The Android states a capability can change, as they were found."""
 
     airplane: Optional[str] = None
     wifi: Optional[str] = None
@@ -47,13 +67,42 @@ class DeviceStateSnapshot:
     whatever that boolean implied and drop every other service in it.
     """
 
-    def describe(self) -> str:
-        known = {
-            name: value
-            for name, value in vars(self).items()
-            if value is not None
-        }
-        return ", ".join(f"{name}={value}" for name, value in known.items()) or "nothing"
+
+@dataclass(frozen=True)
+class IosStateSnapshot(StateSnapshot):
+    """The iOS states a capability can change, as they were found.
+
+    Read only where the scenario declared the capability that changes one. A
+    read for a state no scenario touches costs a driver call on every
+    scenario. The screen reader answers nothing at all before iOS 27.
+    """
+
+    voice_over: Optional[bool] = None
+
+    permissions: Optional[dict[str, str]] = None
+    """What the app was allowed, service by service, before the scenario ran.
+
+    A decision outlives the install, so each service is read and written back
+    on its own. The values are the reader's own words, including `unset`,
+    which `simctl privacy reset` is the way back to.
+    """
+
+    simulated_location: Optional[str] = None
+    """Where the device was told it is, or `NOWHERE` where it was told nothing.
+
+    Three states and not two. The driver answers with a pair of nulls for a
+    location nobody simulated, which is a reading rather than a failed read.
+    An unread state stays None, and nothing is written back for it.
+    """
+
+
+def _switch(state: Optional[bool]) -> Optional[str]:
+    """A read-back boolean as "on" or "off", or None where nothing answered.
+
+    One writer puts every state back, and it is handed text. A None read as
+    False would restore a state the device was never read for.
+    """
+    return None if state is None else ("on" if state else "off")
 
 
 def _radio(radios: Optional[dict], name: str) -> Optional[str]:
@@ -63,18 +112,19 @@ def _radio(radios: Optional[dict], name: str) -> Optional[str]:
     return "on" if radios[name] else "off"
 
 
-def snapshot(
+def snapshot_android(
     serial: str, package: Optional[str], commands: Optional[DriverCommands] = None
-) -> DeviceStateSnapshot:
+) -> AndroidStateSnapshot:
     """The states to put back, read before the scenario runs.
 
-    The three radios are read together where the driver can read them. Airplane mode alone is not enough. A scenario that asks for wifi_only
-        turns mobile data off and leaves airplane mode where it was. A
-        restore watching only airplane mode then sees nothing move, and
-        leaves data off for every scenario after it.
+    The three radios are read together where the driver can read them.
+    Airplane mode alone is not enough. A scenario that asks for wifi_only
+    turns mobile data off and leaves airplane mode where it was. A restore
+    watching only airplane mode then sees nothing move, and leaves data off
+    for every scenario after it.
     """
     radios = commands.connectivity() if commands is not None else None
-    return DeviceStateSnapshot(
+    return AndroidStateSnapshot(
         airplane=receipts.airplane_mode(serial),
         wifi=_radio(radios, "wifi"),
         data=_radio(radios, "data"),
@@ -82,6 +132,91 @@ def snapshot(
         timezone=receipts.timezone(serial),
         locale=receipts.app_locale(serial, package) if package else None,
         accessibility=AdbControl.enabled_accessibility_services(serial),
+    )
+
+
+PERMISSION_ACTIONS = {
+    "yes": "grant",
+    "no": "revoke",
+    PERMISSION_UNSET: "reset",
+}
+"""How to write back each decision the reader can report.
+
+`limited` is absent. Nothing sets a partial grant, so the capability refuses
+to change one rather than leaving it unrestorable here.
+"""
+
+NOWHERE = "none"
+"""No location was simulated. Distinct from a location nothing could read."""
+
+
+def _simulated_location(commands: DriverCommands) -> Optional[str]:
+    """Where the device was told it is, as text, or None where it would not say.
+
+    The driver answers with nulls for a location nobody set, so the absence
+    of one is readable and `NOWHERE` records it. A reset then puts that back,
+    which a pair of coordinates could not express.
+    """
+    answer = commands.ios_location()
+    if answer is None:
+        return None
+    latitude, longitude = answer.get("latitude"), answer.get("longitude")
+    if latitude is None or longitude is None:
+        return NOWHERE
+    return f"{latitude},{longitude}"
+
+
+def _services_named(capabilities: Sequence[Capability]) -> set[str]:
+    """The privacy services these steps ask for, as simctl names them.
+
+    Read off the capabilities rather than off the kind. One permission step
+    changes one service, and reading the other three costs a driver call each
+    and can ask about a service this platform refuses.
+    """
+    return {
+        service
+        for capability in capabilities
+        if isinstance(capability, PermissionCapability)
+        and (service := IOS_PRIVACY_SERVICES.get(capability.permission))
+    }
+
+
+def snapshot_ios(
+    commands: DriverCommands,
+    capabilities: Sequence[Capability] = (),
+    app_id: Optional[str] = None,
+) -> IosStateSnapshot:
+    """The iOS states to put back, read before the scenario runs.
+
+    Only the states these capabilities could change are read, service by
+    service rather than kind by kind. A scenario that asks for nothing is not
+    worth four driver calls, and a screen-reader read answers nothing before
+    iOS 27.
+
+    The driver takes every read. No command line answers any of them, so this
+    asks for a driver rather than one that might be absent.
+    """
+    wanted = {capability.kind for capability in capabilities}
+    permissions = None
+    services = _services_named(capabilities)
+    if services and app_id:
+        permissions = {
+            service: decision
+            for service in services
+            if (decision := commands.ios_permission(app_id, service)) is not None
+        }
+    return IosStateSnapshot(
+        permissions=permissions,
+        voice_over=(
+            commands.ios_voice_over()
+            if CapabilityKind.ACCESSIBILITY in wanted
+            else None
+        ),
+        simulated_location=(
+            _simulated_location(commands)
+            if CapabilityKind.LOCATION in wanted
+            else None
+        ),
     )
 
 
@@ -96,8 +231,9 @@ def _put_back(
     The writer is handed the value, rather than closing over it, so it is
     called only with a state that was actually observed.
 
-    A failure here is reported and does not propagate. Restoration runs while a scenario is ending, often while an exception is on
-    its way out. Losing that exception would hide why the scenario ended.
+    A failure here is reported and does not propagate. Restoration runs while
+    a scenario is ending, often while an exception is on its way out. Losing
+    that exception would hide why the scenario ended.
     """
     if wanted is None or observed is None or observed == wanted:
         return
@@ -109,7 +245,7 @@ def _put_back(
 
 
 def _restore_radios(
-    serial: str, found: DeviceStateSnapshot, commands: Optional[DriverCommands]
+    serial: str, found: AndroidStateSnapshot, commands: Optional[DriverCommands]
 ) -> None:
     """Put the three radios back, in one call where the driver can read them.
 
@@ -148,10 +284,10 @@ def _restore_radios(
         logger.warning("Could not restore the radios to %s: %s", wanted, exc)
 
 
-def restore(
+def restore_android(
     serial: str,
     package: Optional[str],
-    found: DeviceStateSnapshot,
+    found: AndroidStateSnapshot,
     commands: Optional[DriverCommands] = None,
 ) -> None:
     """Put back every state that moved during the scenario."""
@@ -185,26 +321,138 @@ def restore(
     )
 
 
+def _restore_location(found: IosStateSnapshot, commands: DriverCommands) -> None:
+    """Put the simulated location back, or take it away again.
+
+    A reset is the only way back to no location, and a pair of coordinates
+    is the way back to one. Which of the two is needed is why the snapshot
+    records `NOWHERE` rather than None for a device nobody had placed.
+    """
+
+    def write(value: str) -> None:
+        if value == NOWHERE:
+            commands.reset_ios_location()
+            return
+        latitude, _, longitude = value.partition(",")
+        commands.set_ios_location(float(latitude), float(longitude))
+
+    _put_back(
+        "the simulated location",
+        write,
+        found.simulated_location,
+        _simulated_location(commands),
+    )
+
+
+def _restore_permissions(
+    udid: str,
+    app_id: Optional[str],
+    found: IosStateSnapshot,
+    commands: DriverCommands,
+) -> None:
+    """Put back each decision the scenario could have changed.
+
+    Written through simctl rather than the driver. The driver takes a
+    boolean, and `unset` is a third state that only `simctl privacy reset`
+    reaches.
+    """
+    if not found.permissions or not app_id:
+        return
+    for service, decision in found.permissions.items():
+        _put_back(
+            f"the {service} permission",
+            lambda value, service=service: SimctlControl.set_privacy(
+                udid, PERMISSION_ACTIONS[value], service, app_id
+            ),
+            decision if decision in PERMISSION_ACTIONS else None,
+            commands.ios_permission(app_id, service),
+        )
+
+
+def restore_ios(
+    udid: str,
+    app_id: Optional[str],
+    found: IosStateSnapshot,
+    commands: DriverCommands,
+) -> None:
+    """Put back every iOS state this snapshot read.
+
+    A state the snapshot did not read is not read a second time. Nothing
+    could be written back to it, and the read costs a driver call.
+    """
+    if found.voice_over is not None:
+        _put_back(
+            "VoiceOver",
+            lambda value: commands.set_ios_voice_over(value == "on"),
+            _switch(found.voice_over),
+            _switch(commands.ios_voice_over()),
+        )
+    if found.simulated_location is not None:
+        _restore_location(found, commands)
+    _restore_permissions(udid, app_id, found, commands)
+
+
+class RestorableDevice(Protocol):
+    """What this module reads off a session to put its states back.
+
+    Stated rather than reached for, so a caller holding something else fails
+    where it is written and not inside a `finally` on the way out.
+    """
+
+    platform: Platform
+    serial: Optional[str]
+    package_id: Optional[str]
+    app_id: Optional[str]
+    driver: object
+
+
 @contextmanager
-def preserved(device_control, package: Optional[str] = None):
+def preserved(
+    device_control: RestorableDevice,
+    package: Optional[str] = None,
+    capabilities: Sequence[Capability] = (),
+):
     """Hands the device back as the scenario found it, whatever ended it.
 
     Restoration is in a `finally`, so it runs after a pass, after a failure,
-    and after an interruption. Only Android states are read and written: no
-    capability Ronin applies to a simulator changes a state it can read back.
+    and after an interruption.
+
+    `capabilities` are the typed states the steps ask for. Android reads its
+    states through adb either way, which is cheap and needs no driver. iOS
+    reads each state through the driver, so it reads only what these
+    capabilities could change, down to the privacy service. Asking for a
+    screen reader on iOS 18 answers nothing and warns about it, once per
+    scenario.
+
+    Not every state is covered. Android puts back the radios, the battery,
+    the clock, the app locale and the accessibility services. iOS puts back
+    the screen reader, the simulated location, and each privacy decision a
+    step asked for. Those are the states a supported iOS capability changes
+    and something reads.
     """
-    platform = getattr(device_control, "platform", None)
-    serial = getattr(device_control, "serial", None) or ""
-    if platform != Platform.ANDROID or not serial:
-        yield None
+    platform = device_control.platform
+    serial = device_control.serial or ""
+    driver = device_control.driver
+    commands = DriverCommands(driver) if driver is not None else None
+
+    if platform == Platform.ANDROID and serial:
+        package = package or device_control.package_id
+        android_found = snapshot_android(serial, package, commands)
+        logger.info("Device state before the scenario: %s", android_found.describe())
+        try:
+            yield android_found
+        finally:
+            restore_android(serial, package, android_found, commands)
         return
 
-    package = package or getattr(device_control, "package_id", None)
-    driver = getattr(device_control, "driver", None)
-    commands = DriverCommands(driver) if driver is not None else None
-    found = snapshot(serial, package, commands)
-    logger.info("Device state before the scenario: %s", found.describe())
-    try:
-        yield found
-    finally:
-        restore(serial, package, found, commands)
+    if platform == Platform.IOS and commands is not None:
+        app_id = device_control.app_id
+        ios_found = snapshot_ios(commands, capabilities, app_id)
+        logger.info("Device state before the scenario: %s", ios_found.describe())
+        try:
+            yield ios_found
+        finally:
+            restore_ios(serial, app_id, ios_found, commands)
+        return
+
+    yield None
