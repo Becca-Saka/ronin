@@ -14,7 +14,7 @@ checks run in, and each check names the cause it reports.
 """
 
 import logging
-from typing import TYPE_CHECKING, List, NamedTuple, Optional, Sequence
+from typing import List, NamedTuple, Optional, Protocol, Sequence
 
 from ronin.agent.run.outcomes import DeviceRunResult
 from ronin.errors import Cause
@@ -29,9 +29,17 @@ from ronin.testing.models import (
     Status,
 )
 
-if TYPE_CHECKING:
-    from ronin.testing.judge.qa_auditor import Assessment
-    from ronin.testing.qa_planner import QAStepResponse
+class Feasibility(Protocol):
+    """What the verdict reads off the planner's last answer.
+
+    A protocol rather than the response model, because two things answer it.
+    A live run passes what the planner said. A stored run passes what the
+    record kept, which is these two fields and nothing else.
+    """
+
+    is_scenario_feasible: bool
+    infeasibility_reason: Optional[str]
+
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +61,8 @@ def determine_status(
     stop_reason: Optional[str],
     all_verifications: List[RuleVerification],
     all_issues: List[QAIssue],
-    qa_outputs: List["QAStepResponse"],
-    assessments: List["Assessment"],
+    qa_outputs: Sequence[Feasibility],
+    assessments: Sequence[object],
     required_outcomes: Sequence[ExpectedOutcome | str],
     security_rules: Sequence[str],
     all_findings: Optional[List[SensitiveFinding]] = None,
@@ -68,7 +76,8 @@ def determine_status(
         all_verifications: Every answer the auditor gave about a rule.
         all_issues: Every defect the auditor reported.
         qa_outputs: What the planner answered, for feasibility alone.
-        assessments: The screens that were judged. Read for whether any was.
+        assessments: The screens that were judged. Counted, never read, so a
+            caller that kept only how many there were can say so.
         required_outcomes: What the scenario declared it would show.
         security_rules: What must never happen.
         all_findings: What was seen where a sensitive value could be.

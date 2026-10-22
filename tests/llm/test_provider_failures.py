@@ -10,6 +10,8 @@ import unittest
 from unittest import mock
 
 import httpx
+
+from ronin.utils.jev_deps import jev_available
 from fakes import rate_limited, refused
 from litellm import exceptions
 from pydantic import BaseModel, ValidationError
@@ -280,8 +282,12 @@ class DecisionModelTests(unittest.TestCase):
         self.assertNotIn("slow down", message)
 
 
+@unittest.skipUnless(jev_available(), "the jev extra is not installed")
 class DecisionSdkTests(unittest.TestCase):
     """The decision model's own SDK, classified by its own contract.
+
+    Skipped without the extra, so the suite stays runnable on a base
+    install. CI installs the extra, so these run there.
 
     It reports a status in a field of its own and raises transport errors of
     its own, so every one of its rate limits read as terminal. A 429 from the

@@ -34,13 +34,19 @@ from ronin.testing.models import (
     RuleVerification,
     RunEnvironment,
     ScenarioReport,
+    VerdictInputs,
 )
 from ronin.utils.secrets import SecretScrubber
 
 logger = logging.getLogger(__name__)
 
-SCHEMA = 1
-"""The version of this file's shape."""
+SCHEMA = 2
+"""The version of this file's shape.
+
+2 adds `verdict_inputs` to a scenario. A record written under 1 holds the
+verdict and the auditor's answers alone. Nothing can reach its verdict again
+from one.
+"""
 
 ABORTED = "ABORTED"
 """A run that was interrupted. It never reached a verdict of its own."""
@@ -97,6 +103,13 @@ class ScenarioEntry(BaseModel):
     )
     rule_verifications: List[RuleVerification] = Field(default_factory=list)
     detected_issues: List[QAIssue] = Field(default_factory=list)
+    verdict_inputs: Optional[VerdictInputs] = Field(
+        default=None,
+        description=(
+            "What the verdict was decided from. Absent on a row Ronin wrote "
+            "about itself, and on a scenario that never reached a judge."
+        ),
+    )
 
 
 class Subject(BaseModel):
@@ -247,8 +260,29 @@ class RunManifest:
             entry.steps = list(report.steps)
             entry.rule_verifications = list(report.rule_verifications)
             entry.detected_issues = list(report.detected_issues)
+            entry.verdict_inputs = self._masked(report.verdict_inputs)
             entry.finished_at = _now()
         self.write()
+
+    def _masked(self, inputs: Optional[VerdictInputs]) -> Optional[VerdictInputs]:
+        """The judge's inputs, with every declared value masked.
+
+        A finding quotes what was on screen, and a rule is written by whoever
+        wrote the journey. Both reach this file, so both go through the
+        scrubber like everything else in it.
+        """
+        if inputs is None:
+            return None
+        kept = inputs.model_copy(deep=True)
+        kept.stop_reason = self._scrub(kept.stop_reason)
+        kept.infeasibility_reason = self._scrub(kept.infeasibility_reason)
+        kept.security_rules = [self._scrub(rule) or "" for rule in kept.security_rules]
+        for outcome in kept.expected_outcomes:
+            outcome.statement = self._scrub(outcome.statement) or ""
+        for finding in kept.sensitive_findings:
+            finding.quoted = self._scrub(finding.quoted) or ""
+            finding.field = self._scrub(finding.field) or ""
+        return kept
 
     def spent(self, calls: List[CallRow]) -> None:
         """Takes the calls nothing in the run owns, such as generation."""

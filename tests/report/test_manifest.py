@@ -355,6 +355,55 @@ class SecretTests(unittest.TestCase):
         self.assertIn("{{password}}", body)
 
 
+    def test_a_declared_value_is_masked_in_what_the_judge_was_given(self):
+        """The inputs carry a finding's quoted text and the journey's rules.
+
+        Both are written by somebody else and both reach this file, so both
+        go through the scrubber like everything else in it.
+        """
+        from ronin.testing.models import (
+            ExpectedOutcome, Rendering, SensitiveFinding, VerdictInputs,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            record = manifest(
+                directory,
+                [scenario(1)],
+                scrubber=self._scrubber(),
+            )
+            record.record(
+                "TS_001",
+                ScenarioReport(
+                    test_id="TS_001",
+                    scenario_name="Scenario 1",
+                    cell="functional.happy_path.0",
+                    status="FAILED",
+                    verdict_inputs=VerdictInputs(
+                        run_status="goal_reached",
+                        stop_reason="stopped after typing password123",
+                        infeasibility_reason="4111222233334444 was refused",
+                        security_rules=["Never show 4111222233334444"],
+                        expected_outcomes=[
+                            ExpectedOutcome(statement="password123 is masked")
+                        ],
+                        sensitive_findings=[
+                            SensitiveFinding(
+                                field="Password",
+                                rendering=Rendering.VALUE,
+                                quoted="password123",
+                            )
+                        ],
+                    ),
+                ),
+            )
+            body = record.path.read_text()
+
+        self.assertNotIn("password123", body)
+        self.assertNotIn("4111222233334444", body)
+        self.assertIn("{{password}}", body)
+        self.assertIn("{{card_number}}", body)
+
+
 class GoalRunTests(unittest.TestCase):
     """`ronin run` writes one too, or it cannot be read back at all."""
 

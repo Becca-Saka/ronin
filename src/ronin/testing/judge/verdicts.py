@@ -6,13 +6,15 @@ stop and missing evidence lives in one place.
 """
 
 import logging
-from typing import List, Optional, Sequence
+from typing import TYPE_CHECKING, List, Optional, Sequence
 
 from ronin.agent.run.outcomes import DeviceRunResult
 from ronin.errors import Cause
 from ronin.testing.judge import rules
 from ronin.testing.models import ExpectedOutcome, QAIssue, RuleVerification, Status
-from ronin.testing.qa_planner import QAStepResponse
+
+if TYPE_CHECKING:
+    from ronin.testing.judge.decide import Feasibility
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +24,7 @@ def _terminal_outcome(
     stop_reason: Optional[str],
     verifications: List[RuleVerification],
     issues: List[QAIssue],
-    outputs: List[QAStepResponse],
+    outputs: Sequence["Feasibility"],
     findings: Optional[List] = None,
 ) -> Optional[tuple[Status, Optional[str], Optional[Cause]]]:
     """Classify outcomes that cannot become a successful verification."""

@@ -1,7 +1,7 @@
 """What a run leaves behind: the evidence, and the reports built from it.
 
 Split from `models.py`, which holds what a run is given. These are what it
-produces. One module answered both questions and grew past the file ceiling.
+produces, and the rules a run answers, which sit beside the answers to them. One module answered both questions and grew past the file ceiling.
 
 Every name here is re-exported by `models.py`, so no caller has to know
 which of the two it came from.
@@ -12,6 +12,8 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from ronin.agent.actuation.actions import CapabilityKind
+from ronin.agent.run.outcomes import RunStatus
 from ronin.agent.run.record import StepRecord
 from ronin.identity import AppIdentity, CiIdentity, DeviceIdentity, GitIdentity
 
@@ -152,6 +154,51 @@ STATUS_SPELLINGS = {
 """How a verdict's status is spelled, mapped to the three that are accepted."""
 
 
+class AssertionScope(str, Enum):
+    """What kind of evidence an expected outcome needs.
+
+    The auditor is handed one screenshot. Asked whether an app hung, or
+    whether it navigated somewhere, it answers from pixels that cannot carry
+    either fact. Both a false pass and a false missing-evidence follow. The
+    scope says which evidence settles the claim, so a claim nothing can settle
+    is visible instead of silently wrong.
+    """
+
+    CURRENT_SCREEN = "current_screen"
+    """True or false about what is on one screen. The auditor can see this."""
+
+    TRANSITION = "transition"
+    """The run reached a screen, or moved between two. The screens visited
+    carry this. A single screenshot does not."""
+
+    RUN_TIMING = "run_timing"
+    """How long the app took, or whether it stayed responsive. Nothing Ronin
+    records measures this today, so an outcome scoped here is reported as
+    unproven rather than counted either way."""
+
+
+class ExpectedOutcome(BaseModel):
+    """One thing a scenario must show, and what could show it."""
+
+    statement: str
+    scope: AssertionScope = Field(
+        default=AssertionScope.CURRENT_SCREEN,
+        description=(
+            "Which evidence settles this. 'current_screen' for anything visible "
+            "on a single screen. 'transition' for having reached or moved "
+            "between screens. 'run_timing' for speed or responsiveness."
+        ),
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_a_bare_statement(cls, value):
+        """A plain string is a claim about one screen, which is the common case."""
+        if isinstance(value, str):
+            return {"statement": value}
+        return value
+
+
 class RuleVerification(BaseModel):
     """Represents the status of verifying a specific journey expectation or custom rule."""
     rule: str = Field(
@@ -210,6 +257,56 @@ class RuleVerification(BaseModel):
     screen_name: Optional[str] = None
 
 
+class ReceiptRecord(BaseModel):
+    """What the device reported about one capability a scenario declared.
+
+    Two fields, because two are what the verdict reads: which capability, and
+    whether the device reported the state. The states themselves are left
+    out. A clipboard receipt carries whatever was copied, which can be a
+    password. The verdict never looks at the value.
+    """
+
+    capability: str
+    confirmed: bool
+
+
+class VerdictInputs(BaseModel):
+    """Everything a scenario's verdict was decided from.
+
+    The record kept the verdict and the auditor's answers, and not the rest
+    of what the judge was given. So the record could not reach its own
+    verdict again. A rule change could not be measured against a run that
+    already happened.
+
+    Held together rather than spread across the report, because they are one
+    thing: the question the judge was asked. A reader that wants to ask it
+    again needs all of them or none.
+
+    Each field is one the judge reads, and nothing here is kept for any
+    other reader.
+    """
+
+    run_status: RunStatus
+    stop_reason: Optional[str] = None
+    is_scenario_feasible: bool = Field(
+        default=True,
+        description=(
+            "What the planner last answered about proceeding. Named as the "
+            "planner names it, because this stands in for that answer when a "
+            "stored run is decided again."
+        ),
+    )
+    infeasibility_reason: Optional[str] = None
+    screens_judged: int = Field(
+        default=0, description="How many screens the auditor answered about."
+    )
+    expected_outcomes: List[ExpectedOutcome] = Field(default_factory=list)
+    security_rules: List[str] = Field(default_factory=list)
+    sensitive_findings: List[SensitiveFinding] = Field(default_factory=list)
+    required_capabilities: List[CapabilityKind] = Field(default_factory=list)
+    receipts: List[ReceiptRecord] = Field(default_factory=list)
+
+
 class ScenarioReport(BaseModel):
     """Represents the results of running an individual test scenario."""
     scenario_uuid: Optional[str] = Field(
@@ -247,6 +344,13 @@ class ScenarioReport(BaseModel):
         description="What each step of this scenario did, in order.",
     )
     failure_reason: Optional[str] = None
+    verdict_inputs: Optional[VerdictInputs] = Field(
+        default=None,
+        description=(
+            "What the verdict was decided from, so it can be decided again. "
+            "Absent on a report Ronin writes about itself, which no judge saw."
+        ),
+    )
 
 
 class RunEnvironment(BaseModel):

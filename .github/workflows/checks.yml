@@ -15,11 +15,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # git diff --check below needs the merge base
+          fetch-depth: 0 # git diff --check below needs the merge base
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --group dev
+
+      - run: uv sync --group dev --extra jev
       - run: uv run ruff check
       # Catches a conflict marker and whitespace no lint rule covers.
       - run: git diff --check "$(git merge-base origin/${{ github.event.repository.default_branch }} HEAD)"..HEAD

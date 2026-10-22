@@ -1,4 +1,3 @@
-from enum import Enum
 
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
@@ -19,6 +18,25 @@ from typing import Dict, FrozenSet, List, Optional
 from ronin.agent.actuation.actions import CapabilityKind
 from ronin.agent.device.launch import SetupMode  # noqa: F401
 from ronin.agent.memory.trail import SessionTrail, TrailElement, ScreenEntry  # noqa: F401
+
+# Re-exported so a caller reads one module. These live in evidence.py, which
+# holds what a run produces, and the rules it answers.
+from ronin.testing.evidence import (  # noqa: F401
+    AssertionScope,
+    BoundingBox,
+    ExpectedOutcome,
+    JourneyReport,
+    QAIssue,
+    ReceiptRecord,
+    Rendering,
+    RuleVerification,
+    RunEnvironment,
+    STATUS_SPELLINGS,
+    ScenarioReport,
+    SensitiveFinding,
+    Status,
+    VerdictInputs,
+)
 
 
 class Actor(BaseModel):
@@ -75,51 +93,6 @@ class UserJourney(BaseModel):
     )
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
-
-
-class AssertionScope(str, Enum):
-    """What kind of evidence an expected outcome needs.
-
-    The auditor is handed one screenshot. Asked whether an app hung, or
-    whether it navigated somewhere, it answers from pixels that cannot carry
-    either fact. Both a false pass and a false missing-evidence follow. The
-    scope says which evidence settles the claim, so a claim nothing can settle
-    is visible instead of silently wrong.
-    """
-
-    CURRENT_SCREEN = "current_screen"
-    """True or false about what is on one screen. The auditor can see this."""
-
-    TRANSITION = "transition"
-    """The run reached a screen, or moved between two. The screens visited
-    carry this. A single screenshot does not."""
-
-    RUN_TIMING = "run_timing"
-    """How long the app took, or whether it stayed responsive. Nothing Ronin
-    records measures this today, so an outcome scoped here is reported as
-    unproven rather than counted either way."""
-
-
-class ExpectedOutcome(BaseModel):
-    """One thing a scenario must show, and what could show it."""
-
-    statement: str
-    scope: AssertionScope = Field(
-        default=AssertionScope.CURRENT_SCREEN,
-        description=(
-            "Which evidence settles this. 'current_screen' for anything visible "
-            "on a single screen. 'transition' for having reached or moved "
-            "between screens. 'run_timing' for speed or responsiveness."
-        ),
-    )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _accept_a_bare_statement(cls, value):
-        """A plain string is a claim about one screen, which is the common case."""
-        if isinstance(value, str):
-            return {"statement": value}
-        return value
 
 
 class ScenarioDraft(BaseModel):
@@ -300,19 +273,3 @@ class GeneratedTestCase(ScenarioDraft):
             priority=cell.priority,
             **draft.model_dump(),
         )
-
-
-# Re-exported so a caller reads one module. These live in evidence.py, which
-# holds what a run produces rather than what it is given.
-from ronin.testing.evidence import (  # noqa: E402,F401
-    BoundingBox,
-    JourneyReport,
-    QAIssue,
-    Rendering,
-    RuleVerification,
-    STATUS_SPELLINGS,
-    ScenarioReport,
-    Status,
-    SensitiveFinding,
-    RunEnvironment,
-)

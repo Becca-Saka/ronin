@@ -22,9 +22,11 @@ from ronin.testing.models import (
     ExpectedOutcome,
     GeneratedTestCase,
     QAIssue,
+    ReceiptRecord,
     RuleVerification,
     ScenarioReport,
     SensitiveFinding,
+    VerdictInputs,
 )
 from ronin.agent.device import restoration
 from ronin.testing.judge.capabilities import target_of, unsupported_reason
@@ -41,6 +43,34 @@ from ronin.agent.actuation.actions import WaitAction
 logger = logging.getLogger(__name__)
 
 LAUNCH_RECHECK_WAIT = 1.5
+
+
+def _verdict_inputs(
+    run_result, stop_reason, qa_outputs, assessments, test_case,
+    security_rules, all_findings,
+) -> VerdictInputs:
+    """What the judge was given, kept so the verdict can be reached again.
+
+    Written beside the verdict rather than derived later. Nothing else in the
+    record holds the walk's own status, what the planner last said about
+    proceeding, or which device states the target reported back.
+    """
+    last = qa_outputs[-1] if qa_outputs else None
+    return VerdictInputs(
+        run_status=run_result.status,
+        stop_reason=stop_reason,
+        is_scenario_feasible=last.is_scenario_feasible if last else True,
+        infeasibility_reason=last.infeasibility_reason if last else None,
+        screens_judged=len(assessments),
+        expected_outcomes=list(test_case.expected_outcomes),
+        security_rules=list(security_rules),
+        sensitive_findings=list(all_findings),
+        required_capabilities=list(test_case.required_capabilities),
+        receipts=[
+            ReceiptRecord(capability=receipt.capability, confirmed=receipt.confirmed)
+            for receipt in run_result.capability_receipts
+        ],
+    )
 
 
 def _defer_first_look(step_response, assessment, first_look: bool) -> bool:
@@ -338,6 +368,7 @@ class QAAgent:
             required_outcomes=test_case.expected_outcomes,
             required_capabilities=test_case.required_capabilities,
             security_rules=security_rules,
+            all_findings=all_findings,
         )
 
         return ScenarioReport(
@@ -353,6 +384,10 @@ class QAAgent:
             detected_issues=all_issues,
             steps=list(run_result.steps),
             failure_reason=scrub(failure_reason or "") or None,
+            verdict_inputs=_verdict_inputs(
+                run_result, stop_reason, qa_outputs, assessments,
+                test_case, security_rules, all_findings,
+            ),
         )
 
     def _settled_transitions(

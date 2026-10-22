@@ -30,7 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from ronin.agent.actuation.actions import CapabilityKind
 from ronin.agent.device.receipts import Receipt
 from ronin.agent.memory.history import AgentHistory
-from ronin.agent.run.outcomes import DeviceRunResult
+from ronin.agent.run.outcomes import DeviceRunResult, RunStatus
 from ronin.errors import Cause
 from ronin.testing.models import (
     ExpectedOutcome,
@@ -131,9 +131,7 @@ class _Run(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    status: Literal[
-        "goal_reached", "step_limit", "loop_detected", "hook_stop", "exception"
-    ]
+    status: RunStatus
     steps_executed: int = 1
     failure_reason: Optional[str] = None
     cause: Optional[Cause] = None

@@ -35,13 +35,21 @@ word for what the screen holds.
 """
 
 
+RunStatus = Literal[
+    "goal_reached", "step_limit", "loop_detected", "hook_stop", "exception"
+]
+"""How a walk can end.
+
+Named because three places hold one of them: the result a walk returns, the
+record that keeps it, and the corpus that asserts on it.
+"""
+
+
 @dataclass
 class DeviceRunResult:
     """Outcome of a DeviceAgent.run() call."""
 
-    status: Literal[
-        "goal_reached", "step_limit", "loop_detected", "hook_stop", "exception"
-    ]
+    status: RunStatus
     steps_executed: int
     failure_reason: Optional[str]
     history: AgentHistory

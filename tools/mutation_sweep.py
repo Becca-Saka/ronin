@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -41,6 +42,8 @@ GATE_TESTS = (
     "tests/tools/test_eval_tiers.py",
     "tests/tools/test_eval_corpus.py",
     "tests/judge/test_auditor_answers.py",
+    "tests/report/test_rejudge.py",
+    "tests/report/test_manifest.py",
 )
 
 
@@ -88,11 +91,19 @@ def _applied(mutant: Mutant) -> tuple[bool, str]:
     return False, "nothing failed"
 
 
+SUMMARY = re.compile(r"^\d+ failed")
+
+
 def _told(output: str) -> str:
-    """The line of a failure worth putting in a sweep's own report."""
+    """The line of a failure worth putting in a sweep's own report.
+
+    Matched on the shape pytest ends with, not on the word. A docstring in
+    the test that just failed can hold "failed" and be reported instead.
+    """
     for line in output.splitlines():
-        if "wrong:" in line or "unanswered:" in line or " failed" in line:
-            return line.strip()
+        stripped = line.strip()
+        if "wrong:" in stripped or "unanswered:" in stripped or SUMMARY.match(stripped):
+            return stripped
     return "the check failed"
 
 

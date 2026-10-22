@@ -247,9 +247,9 @@
   {
     "name": "an-impossible-run-status-is-accepted",
     "owner": "gate",
-    "path": "tools/eval/corpus.py",
-    "find": "    status: Literal[\n        \"goal_reached\", \"step_limit\", \"loop_detected\", \"hook_stop\", \"exception\"\n    ]",
-    "replace": "    status: str"
+    "path": "src/ronin/agent/run/outcomes.py",
+    "find": "RunStatus = Literal[\n    \"goal_reached\", \"step_limit\", \"loop_detected\", \"hook_stop\", \"exception\"\n]",
+    "replace": "RunStatus = str"
   },
   {
     "name": "a-fixture-field-that-is-not-one-is-accepted",
@@ -348,5 +348,47 @@
     "path": "src/ronin/testing/judge/qa_auditor.py",
     "find": "        if self._asked and not self._any_listed(assessment):",
     "replace": "        if self._asked:"
+  },
+  {
+    "name": "the-findings-never-reach-the-judge",
+    "owner": "gate",
+    "path": "src/ronin/testing/qa_agent.py",
+    "find": "            security_rules=security_rules,\n            all_findings=all_findings,\n        )",
+    "replace": "            security_rules=security_rules,\n        )"
+  },
+  {
+    "name": "a-report-carries-no-record-of-its-inputs",
+    "owner": "gate",
+    "path": "src/ronin/testing/qa_agent.py",
+    "find": "            verdict_inputs=_verdict_inputs(",
+    "replace": "            verdict_inputs=None and _verdict_inputs("
+  },
+  {
+    "name": "the-planners-last-word-is-not-carried",
+    "owner": "gate",
+    "path": "src/ronin/testing/qa_agent.py",
+    "find": "    last = qa_outputs[-1] if qa_outputs else None",
+    "replace": "    last = qa_outputs[0] if qa_outputs else None"
+  },
+  {
+    "name": "an-old-record-is-decided-from-half-its-inputs",
+    "owner": "gate",
+    "path": "src/ronin/testing/rejudge.py",
+    "find": "    if schema < FIRST_WITH_INPUTS or not entry.get(\"verdict_inputs\"):",
+    "replace": "    if False:"
+  },
+  {
+    "name": "the-judges-inputs-reach-the-record-unmasked",
+    "owner": "gate",
+    "path": "src/ronin/testing/report/manifest.py",
+    "find": "            entry.verdict_inputs = self._masked(report.verdict_inputs)",
+    "replace": "            entry.verdict_inputs = report.verdict_inputs"
+  },
+  {
+    "name": "a-record-that-is-not-one-reads-as-a-run-with-no-scenarios",
+    "owner": "gate",
+    "path": "src/ronin/testing/rejudge.py",
+    "find": "    if not isinstance(record, dict) or \"scenarios\" not in record:\n        raise UsageError(f\"{path} does not hold a run record.\")",
+    "replace": "    if not isinstance(record, dict) or \"scenarios\" not in record:\n        return 0, []"
   }
 ]
