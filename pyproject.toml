@@ -103,6 +103,9 @@ venv = ".venv"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The test tree mirrors src/ronin, so a test file no longer sits beside
+# fakes.py and pytest no longer puts tests/ on the path by itself.
+pythonpath = ["tests"]
 
 [tool.coverage.run]
 branch = true

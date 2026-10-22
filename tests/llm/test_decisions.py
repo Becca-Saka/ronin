@@ -310,7 +310,7 @@ class SdkCompatibilityTests(unittest.TestCase):
 
         declared = re.search(
             r'"typesafe-sdk>=([\d.]+)"',
-            Path(__file__).resolve().parents[1].joinpath("pyproject.toml").read_text(),
+            Path(__file__).resolve().parents[2].joinpath("pyproject.toml").read_text(),
         )
         self.assertIsNotNone(declared)
         floor = tuple(int(part) for part in declared.group(1).split("."))

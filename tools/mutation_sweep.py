@@ -37,10 +37,10 @@ GATE = "gate"
 """Owned by the gate's own tests: pytest has to fail."""
 
 GATE_TESTS = (
-    "tests/test_eval_gate.py",
-    "tests/test_eval_tiers.py",
-    "tests/test_eval_corpus.py",
-    "tests/test_auditor_answers.py",
+    "tests/tools/test_eval_gate.py",
+    "tests/tools/test_eval_tiers.py",
+    "tests/tools/test_eval_corpus.py",
+    "tests/judge/test_auditor_answers.py",
 )
 
 
