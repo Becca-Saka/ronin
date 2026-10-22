@@ -81,7 +81,14 @@ def main(argv: list[str] | None = None) -> int:
         "paths",
         nargs="*",
         type=Path,
-        default=[REPOSITORY_ROOT / "src" / "ronin", REPOSITORY_ROOT / "tests"],
+        default=[
+            REPOSITORY_ROOT / "src" / "ronin",
+            REPOSITORY_ROOT / "tests",
+            # The eval harness, and not the rest of `tools`: `ste_lint.py` is
+            # vendored and sits above the ceiling.
+            REPOSITORY_ROOT / "tools" / "eval",
+            REPOSITORY_ROOT / "tools" / "eval_gate.py",
+        ],
         help="Python files or directories to inspect (default: src/ronin and tests)",
     )
     args = parser.parse_args(argv)

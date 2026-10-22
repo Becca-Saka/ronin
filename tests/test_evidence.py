@@ -47,7 +47,7 @@ class CrashRankingTests(unittest.TestCase):
 
     def _verdict_for(self, **overrides):
         from ronin.testing.models import QAIssue
-        from ronin.testing.qa_agent import _terminal_outcome
+        from ronin.testing.judge.verdicts import _terminal_outcome
 
         values = {
             "run_result": SimpleNamespace(status="hook_stop", failure_reason=None),
@@ -99,7 +99,7 @@ class DurableOutcomeEvidenceTests(unittest.TestCase):
         )
 
     def _missing(self, verifications):
-        from ronin.testing.qa_agent import _missing_required_ids
+        from ronin.testing.judge.verdicts import _missing_required_ids
 
         return _missing_required_ids(
             verifications, ["The address field accepts the long input"], []

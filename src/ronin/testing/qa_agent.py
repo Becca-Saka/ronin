@@ -27,17 +27,9 @@ from ronin.testing.models import (
     SensitiveFinding,
 )
 from ronin.agent.device import restoration
-from ronin.testing.judge.capabilities import (
-    target_of,
-    unconfirmed_capabilities,
-    unsupported_reason,
-)
+from ronin.testing.judge.capabilities import target_of, unsupported_reason
 from ronin.agent.plan.planner import GROUNDING_COORDINATES
-from ronin.testing.judge import rules
-from ronin.testing.judge.verdicts import (
-    _missing_required_ids,
-    _terminal_outcome,
-)
+from ronin.testing.judge import decide
 from ronin.testing.judge.qa_auditor import Assessment, QAAuditor, ScreenWatch
 from ronin.testing.qa_planner import QAPlanner, QAStepResponse
 from ronin.errors import Cause, cause_of
@@ -409,77 +401,21 @@ class QAAgent:
         all_findings: Optional[List[SensitiveFinding]] = None,
         required_capabilities: Sequence = (),
     ):
-        # Feasibility stays the planner's call: it is a statement about whether
-        # the agent can proceed, not about whether the app is correct.
-        terminal = _terminal_outcome(
-            run_result,
-            stop_reason,
-            all_verifications,
-            all_issues,
-            qa_outputs,
-            all_findings,
+        """The verdict for this scenario, decided in `judge.decide`.
+
+        Kept as a method because the decision is read here. Moved out because
+        it reads no part of this agent. The eval corpus calls the function
+        with stored evidence, and with no device.
+        """
+        return decide.determine_status(
+            run_result=run_result,
+            stop_reason=stop_reason,
+            all_verifications=all_verifications,
+            all_issues=all_issues,
+            qa_outputs=qa_outputs,
+            assessments=assessments,
+            required_outcomes=required_outcomes,
+            security_rules=security_rules,
+            all_findings=all_findings,
+            required_capabilities=required_capabilities,
         )
-        if terminal:
-            return terminal
-
-        if run_result.status != "goal_reached" or not assessments:
-            return (
-                "UNVERIFIED",
-                "The scenario did not produce verified completion evidence.",
-                Cause.AGENT,
-            )
-
-        # Completion is the planner's call, because it is the only one told what
-        # the scenario set out to do. The auditor is deliberately blind to the
-        # plan, so it cannot judge whether a plan finished.
-        #
-        # Independence is not lost. The expected outcomes reach the auditor as
-        # rules, and the checks below refuse the scenario unless the auditor
-        # evidenced every one of them on a screen it judged without the plan.
-        unprovable = rules.unprovable(required_outcomes)
-        if unprovable:
-            return (
-                "UNVERIFIED",
-                "Nothing recorded during a run can settle these outcomes: "
-                + ", ".join(unprovable)
-                + ". They ask how the app performed, and Ronin measures no part of that.",
-                Cause.SCENARIO,
-            )
-
-        # A declared capability that never reached the device leaves every
-        # outcome below it describing a state the run never entered.
-        unconfirmed = (
-            unconfirmed_capabilities(
-                required_capabilities, run_result.capability_receipts
-            )
-            if required_capabilities
-            else []
-        )
-        if unconfirmed:
-            return (
-                "UNVERIFIED",
-                "The scenario declared device states it never had confirmed: "
-                + ", ".join(unconfirmed),
-                Cause.EVIDENCE,
-            )
-
-        missing = _missing_required_ids(
-            all_verifications, required_outcomes, security_rules
-        )
-        if missing:
-            return (
-                "UNVERIFIED",
-                "Required verification evidence is missing or untested: " + ", ".join(missing),
-                Cause.EVIDENCE,
-            )
-
-        # Named last so a specific gap is reported in preference to this.
-        if not required_outcomes:
-            return (
-                "UNVERIFIED",
-                "The scenario declared no expected outcome, so reaching the goal "
-                "rests on the planner's own word.",
-                Cause.SCENARIO,
-            )
-
-        return "PASSED", None, None

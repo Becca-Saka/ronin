@@ -1,0 +1,352 @@
+[
+  {
+    "name": "crash-ranked-after-the-infeasible-stop",
+    "owner": "judge",
+    "path": "src/ronin/testing/judge/verdicts.py",
+    "find": "    if any(issue.issue_type == \"crash_screen\" for issue in issues):\n        return \"FAILED\", \"App crashed: crash screen detected.\", None\n",
+    "replace": ""
+  },
+  {
+    "name": "settled-reads-failed-instead-of-passed",
+    "owner": "judge",
+    "path": "src/ronin/testing/judge/verdicts.py",
+    "find": "        if verification.status == \"passed\"\n    }\n\n\ndef _violated_security_rule",
+    "replace": "        if verification.status == \"failed\"\n    }\n\n\ndef _violated_security_rule"
+  },
+  {
+    "name": "per-screen-collapses-the-screen",
+    "owner": "judge",
+    "path": "src/ronin/testing/judge/verdicts.py",
+    "find": "latest[(verification.rule_id, verification.screen_name or \"\")] = verification",
+    "replace": "latest[(verification.rule_id, \"\")] = verification"
+  },
+  {
+    "name": "unprovable-refuses-nothing",
+    "owner": "judge",
+    "path": "src/ronin/testing/judge/rules.py",
+    "find": "    return [\n        rule_id(EXPECTED, index)\n        for index, outcome in enumerate(outcomes or [])",
+    "replace": "    return [\n        rule_id(EXPECTED, index)\n        for index, outcome in enumerate(())"
+  },
+  {
+    "name": "unconfirmed-capabilities-reports-none",
+    "owner": "judge",
+    "path": "src/ronin/testing/judge/capabilities.py",
+    "find": "    confirmed = {receipt.capability for receipt in receipts if receipt.confirmed}",
+    "replace": "    confirmed = {kind.value for kind in required}\n    receipts = list(receipts)"
+  },
+  {
+    "name": "missing-required-ids-reports-none",
+    "owner": "judge",
+    "path": "src/ronin/testing/judge/verdicts.py",
+    "find": "    return sorted(required_ids - settled - (evidenced & security_ids))",
+    "replace": "    _ = required_ids, settled, evidenced, security_ids\n    return []"
+  },
+  {
+    "name": "an-exposure-claim-always-stands",
+    "owner": "judge",
+    "path": "src/ronin/testing/judge/verdicts.py",
+    "find": "    here = [finding for finding in (findings or []) if finding.screen_name == issue.current_screen]\n    return bool(here) and not any(finding.is_exposure() for finding in here)",
+    "replace": "    _ = findings\n    return False"
+  },
+  {
+    "name": "a-scenario-with-no-outcome-passes",
+    "owner": "judge",
+    "path": "src/ronin/testing/judge/decide.py",
+    "find": "    if not required_outcomes:\n        return Verdict(\n            \"UNVERIFIED\",\n            \"The scenario declared no expected outcome, so reaching the goal \"\n            \"rests on the planner's own word.\",\n            Cause.SCENARIO,\n        )\n",
+    "replace": ""
+  },
+  {
+    "name": "a-run-with-nothing-audited-passes",
+    "owner": "judge",
+    "path": "src/ronin/testing/judge/decide.py",
+    "find": "    if run_result.status != \"goal_reached\" or not assessments:",
+    "replace": "    if run_result.status != \"goal_reached\":"
+  },
+  {
+    "name": "the-planner's-infeasibility-is-ignored",
+    "owner": "judge",
+    "path": "src/ronin/testing/judge/verdicts.py",
+    "find": "    if outputs and not outputs[-1].is_scenario_feasible:",
+    "replace": "    if outputs and not outputs[-1].is_scenario_feasible and False:"
+  },
+  {
+    "name": "a-critical-issue-no-longer-fails",
+    "owner": "judge",
+    "path": "src/ronin/testing/judge/verdicts.py",
+    "find": "    if critical:\n        return \"FAILED\", f\"Critical QA issue: {critical.description}\", None",
+    "replace": "    if critical and False:\n        return \"FAILED\", f\"Critical QA issue: {critical.description}\", None"
+  },
+  {
+    "name": "a-security-violation-reads-as-any-failed-rule",
+    "owner": "judge",
+    "path": "src/ronin/testing/judge/verdicts.py",
+    "find": "    violated = _violated_security_rule(verifications)",
+    "replace": "    violated = None"
+  },
+  {
+    "name": "an-exception-loses-its-cause",
+    "owner": "judge",
+    "path": "src/ronin/testing/judge/decide.py",
+    "find": "    if terminal:\n        return Verdict(*terminal)",
+    "replace": "    if terminal:\n        status, reason, _cause = terminal\n        return Verdict(status, reason, None)"
+  },
+  {
+    "name": "the-baseline-tolerates-everything",
+    "owner": "gate",
+    "path": "tools/eval/baseline.py",
+    "find": "        entry = self._entry(answer)\n        return entry is not None and entry.covers(answer)",
+    "replace": "        return True"
+  },
+  {
+    "name": "an-exemption-ignores-the-fixture-it-covers",
+    "owner": "gate",
+    "path": "tools/eval/baseline.py",
+    "find": "    def covers(self, answer: Answer) -> bool:\n        return self.fixture == answer.digest",
+    "replace": "    def covers(self, answer: Answer) -> bool:\n        return True"
+  },
+  {
+    "name": "a-loose-entry-is-accepted",
+    "owner": "gate",
+    "path": "tools/eval/baseline.py",
+    "find": "        if not isinstance(given, dict) or \"reason\" not in given or \"fixture\" not in given:",
+    "replace": "        if False:"
+  },
+  {
+    "name": "a-deleted-fixture-no-longer-fails",
+    "owner": "gate",
+    "path": "tools/eval/baseline.py",
+    "find": "        return not self.regressions and not self.absent",
+    "replace": "        return not self.regressions"
+  },
+  {
+    "name": "nothing-is-ever-a-regression",
+    "owner": "gate",
+    "path": "tools/eval/baseline.py",
+    "find": "            if not answer.is_correct and not self.baseline.tolerates(answer)",
+    "replace": "            if False"
+  },
+  {
+    "name": "a-partly-wrong-answer-reads-as-correct",
+    "owner": "gate",
+    "path": "tools/eval/tiers.py",
+    "find": "    if all(matched):\n        return Answer(item, CORRECT, wanted, digest)",
+    "replace": "    if any(matched):\n        return Answer(item, CORRECT, wanted, digest)"
+  },
+  {
+    "name": "an-unanswered-rule-reads-as-correct",
+    "owner": "gate",
+    "path": "tools/eval/tiers.py",
+    "find": "    if any(answer is None for answer in given):\n        return Answer(item, UNANSWERED, f\"answered {_counted(given)}\", digest)",
+    "replace": "    if False:\n        pass"
+  },
+  {
+    "name": "partial-silence-reads-as-disagreement",
+    "owner": "gate",
+    "path": "tools/eval/tiers.py",
+    "find": "    if any(answer is None for answer in given):",
+    "replace": "    if all(answer is None for answer in given):"
+  },
+  {
+    "name": "a-raised-judge-is-swallowed",
+    "owner": "gate",
+    "path": "tools/eval/tiers.py",
+    "find": "            f\"the judge raised {type(exc).__name__}: {exc}\",",
+    "replace": "        return Answer(fixture.id, CORRECT, \"the judge raised\", fixture.digest)"
+  },
+  {
+    "name": "the-cache-is-consulted-between-replicates",
+    "owner": "gate",
+    "path": "tools/eval/tiers.py",
+    "find": "    assessment = auditor.audit(screenshot, None)",
+    "replace": "    assessment = auditor.audit(screenshot, fixture.id)"
+  },
+  {
+    "name": "one-auditor-serves-every-replicate",
+    "owner": "gate",
+    "path": "tools/eval/tiers.py",
+    "find": "        given, answer = _asked_once(fixture, auditor_for, screenshot)",
+    "replace": "        given, answer = _asked_once(fixture, lambda _f: _shared(fixture, auditor_for), screenshot)"
+  },
+  {
+    "name": "an-empty-corpus-is-allowed",
+    "owner": "gate",
+    "path": "tools/eval/corpus.py",
+    "find": "    if not found:\n        raise CorpusError(f\"no {kind} fixtures in {root}. A corpus is never empty.\")",
+    "replace": "    if False:\n        pass"
+  },
+  {
+    "name": "a-fixture-hashes-to-the-same-thing-however-it-reads",
+    "owner": "gate",
+    "path": "tools/eval/corpus.py",
+    "find": "    running = hashlib.sha256()\n    for part in parts:\n        running.update(part)\n        running.update(b\"\\0\")\n    return running.hexdigest()[:DIGEST_LENGTH]",
+    "replace": "    _ = parts\n    return \"0\" * DIGEST_LENGTH"
+  },
+  {
+    "name": "the-status-is-not-checked",
+    "owner": "gate",
+    "path": "tools/eval/corpus.py",
+    "find": "        if status != self.status:\n            return f\"status {status}, expected {self.status}\"",
+    "replace": "        pass"
+  },
+  {
+    "name": "a-flaky-item-needs-no-entry",
+    "owner": "gate",
+    "path": "tools/eval/baseline.py",
+    "find": "        if answer.state == FLAKY:\n            return self.known_flaky.get(answer.item)",
+    "replace": "        if answer.state == FLAKY:\n            return Exemption(reason='', fixture=answer.digest)"
+  },
+  {
+    "name": "an-exemption-covers-any-state",
+    "owner": "gate",
+    "path": "tools/eval/baseline.py",
+    "find": "        if answer.state == WRONG:\n            return self.known_wrong.get(answer.item)",
+    "replace": "        if answer.state != CORRECT:\n            return self.known_wrong.get(answer.item)"
+  },
+  {
+    "name": "a-repaired-item-is-never-reported",
+    "owner": "gate",
+    "path": "tools/eval/baseline.py",
+    "find": "            if answer.is_correct and self.baseline.tolerated_version(answer)",
+    "replace": "            if False"
+  },
+  {
+    "name": "a-lapsed-exemption-does-not-fail",
+    "owner": "gate",
+    "path": "tools/eval/baseline.py",
+    "find": "        return not self.regressions and not self.absent and not self.lapsed",
+    "replace": "        return not self.regressions and not self.absent"
+  },
+  {
+    "name": "repaired-ignores-the-fixture-version",
+    "owner": "gate",
+    "path": "tools/eval/baseline.py",
+    "find": "        entry = self.granted(answer.item)\n        return entry is not None and entry.covers(answer)\n\n    def lapsed",
+    "replace": "        return self.granted(answer.item) is not None\n\n    def lapsed"
+  },
+  {
+    "name": "absence-ignores-which-tiers-ran",
+    "owner": "gate",
+    "path": "tools/eval/baseline.py",
+    "find": "        return {item for item in self.baseline.items if _tier_of(item) in self.tiers}",
+    "replace": "        return set(self.baseline.items)"
+  },
+  {
+    "name": "a-screen-item-reads-as-a-verdict-item",
+    "owner": "gate",
+    "path": "tools/eval/baseline.py",
+    "find": "    return SCREEN_TIER if \"/\" in item else VERDICT_TIER",
+    "replace": "    return VERDICT_TIER"
+  },
+  {
+    "name": "a-missing-inverted-rule-is-allowed",
+    "owner": "gate",
+    "path": "tools/eval/corpus.py",
+    "find": "        if not any(rule.inverted for rule in rules):",
+    "replace": "        if False:"
+  },
+  {
+    "name": "an-impossible-run-status-is-accepted",
+    "owner": "gate",
+    "path": "tools/eval/corpus.py",
+    "find": "    status: Literal[\n        \"goal_reached\", \"step_limit\", \"loop_detected\", \"hook_stop\", \"exception\"\n    ]",
+    "replace": "    status: str"
+  },
+  {
+    "name": "a-fixture-field-that-is-not-one-is-accepted",
+    "owner": "gate",
+    "path": "tools/eval/corpus.py",
+    "find": "class _VerdictFile(BaseModel):\n    \"\"\"One verdict fixture, as it is written down.\"\"\"\n\n    model_config = ConfigDict(extra=\"forbid\")",
+    "replace": "class _VerdictFile(BaseModel):\n    \"\"\"One verdict fixture, as it is written down.\"\"\"\n\n    model_config = ConfigDict(extra=\"ignore\")"
+  },
+  {
+    "name": "a-malformed-fixture-reads-as-absent",
+    "owner": "gate",
+    "path": "tools/eval/corpus.py",
+    "find": "    except (OSError, ValidationError, ValueError) as exc:\n        raise CorpusError(f\"{path.name}: {_first_line(exc)}\") from exc",
+    "replace": "    except (OSError, ValidationError, ValueError):\n        return model()"
+  },
+  {
+    "name": "a-named-cause-is-not-checked",
+    "owner": "gate",
+    "path": "tools/eval/corpus.py",
+    "find": "        if self.checks_cause and named != wanted:",
+    "replace": "        if False and named != wanted:"
+  },
+  {
+    "name": "a-screenshot-may-sit-outside-the-corpus",
+    "owner": "gate",
+    "path": "tools/eval/corpus.py",
+    "find": "        if \"/\" in name or \"\\\\\" in name or name.startswith(\".\"):",
+    "replace": "        if False:"
+  },
+  {
+    "name": "a-screenshot-is-not-read-as-a-picture",
+    "owner": "gate",
+    "path": "tools/eval/corpus.py",
+    "find": "    with path.open(\"rb\") as handle:\n        if handle.read(len(PNG)) != PNG:",
+    "replace": "    with path.open(\"rb\") as handle:\n        if False and handle.read(len(PNG)) != PNG:"
+  },
+  {
+    "name": "a-resolved-path-is-not-checked",
+    "owner": "gate",
+    "path": "tools/eval/corpus.py",
+    "find": "    if path.parent != directory:",
+    "replace": "    if False:"
+  },
+  {
+    "name": "an-audit-forgets-which-fixture-it-answered",
+    "owner": "gate",
+    "path": "tools/eval/tiers.py",
+    "find": "            fixture=fixture.id, digest=fixture.digest, replicate=replicate,\n            answered=answered, assessment=whole,",
+    "replace": "            fixture=fixture.id, digest=\"\", replicate=replicate,\n            answered=answered, assessment=whole,"
+  },
+  {
+    "name": "a-quoted-rule-is-never-matched",
+    "owner": "gate",
+    "path": "src/ronin/testing/judge/qa_auditor.py",
+    "find": "            found = self._by_statement.get((verification.rule or \"\").strip())\n            if found:\n                verification.rule_id = found",
+    "replace": "            pass"
+  },
+  {
+    "name": "two-rules-reading-alike-are-resolved-anyway",
+    "owner": "gate",
+    "path": "src/ronin/testing/judge/rules.py",
+    "find": "    for text in twice:\n        found.pop(text, None)",
+    "replace": "    twice.clear()"
+  },
+  {
+    "name": "a-rules-words-map-to-the-wrong-kind",
+    "owner": "gate",
+    "path": "src/ronin/testing/judge/rules.py",
+    "find": "    for kind, listed in ((EXPECTED, expected_outcomes), (SECURITY, security_rules)):",
+    "replace": "    for kind, listed in ((EXPECTED, expected_outcomes), (EXPECTED, security_rules)):"
+  },
+  {
+    "name": "a-blanked-outcome-renumbers-the-rest",
+    "owner": "gate",
+    "path": "src/ronin/testing/judge/rules.py",
+    "find": "        for index, rule in enumerate(listed or []):\n            if rule is None:\n                continue\n            text = statement_of(rule).strip()",
+    "replace": "        for index, rule in enumerate([r for r in (listed or []) if r is not None]):\n            text = statement_of(rule).strip()"
+  },
+  {
+    "name": "an-audit-naming-nothing-is-not-asked-again",
+    "owner": "gate",
+    "path": "src/ronin/testing/judge/qa_auditor.py",
+    "find": "        if self._asked and not self._any_listed(assessment):",
+    "replace": "        if False:"
+  },
+  {
+    "name": "an-audit-is-asked-again-without-end",
+    "owner": "gate",
+    "path": "src/ronin/testing/judge/qa_auditor.py",
+    "find": "            assessment = self._answered(message)\n        self._clean(assessment)",
+    "replace": "            while not self._any_listed(assessment):\n                assessment = self._answered(message)\n        self._clean(assessment)"
+  },
+  {
+    "name": "an-audit-that-answered-is-asked-again",
+    "owner": "gate",
+    "path": "src/ronin/testing/judge/qa_auditor.py",
+    "find": "        if self._asked and not self._any_listed(assessment):",
+    "replace": "        if self._asked:"
+  }
+]

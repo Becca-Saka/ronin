@@ -11,7 +11,7 @@ from typing import List, Optional, Sequence
 from ronin.agent.run.outcomes import DeviceRunResult
 from ronin.errors import Cause
 from ronin.testing.judge import rules
-from ronin.testing.models import ExpectedOutcome, QAIssue, RuleVerification
+from ronin.testing.models import ExpectedOutcome, QAIssue, RuleVerification, Status
 from ronin.testing.qa_planner import QAStepResponse
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ def _terminal_outcome(
     issues: List[QAIssue],
     outputs: List[QAStepResponse],
     findings: Optional[List] = None,
-):
+) -> Optional[tuple[Status, Optional[str], Optional[Cause]]]:
     """Classify outcomes that cannot become a successful verification."""
 
     # Ranked first: a crash is something the app did, and the rest are

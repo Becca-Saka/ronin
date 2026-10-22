@@ -230,6 +230,7 @@ class QAAuditor:
         self._asked = rules.listed_ids(on_screen, rules.EXPECTED) | rules.listed_ids(
             security_rules, rules.SECURITY
         )
+        self._by_statement = rules.by_statement(on_screen, security_rules)
         self._scrubber = scrubber
         self._by_screen: dict[str, Assessment] = {}
 
@@ -254,13 +255,47 @@ class QAAuditor:
         message.add_text(PROMPT.format(rules=self._rules))
 
         logger.info("Auditing the current screen against the rules...")
-        assessment: Assessment = self._llm.generate_response([message], Assessment)
-        self._only_what_was_asked(assessment)
+        assessment = self._answered(message)
+        if self._asked and not self._any_listed(assessment):
+            # Every rule on this screen would otherwise report unevidenced,
+            # and the scenario would fail on evidence the app had given.
+            logger.warning("The audit named none of the rules it was given. Asking again.")
+            assessment = self._answered(message)
         self._clean(assessment)
 
         if screen_id:
             self._by_screen[screen_id] = assessment
         return self._kept(assessment)
+
+    def _answered(self, message: MultiPartMessage) -> Assessment:
+        """One answer, with each verdict matched to the rule it is about."""
+        assessment: Assessment = self._llm.generate_response([message], Assessment)
+        self._name_the_rule_answered(assessment)
+        self._only_what_was_asked(assessment)
+        return assessment
+
+    def _name_the_rule_answered(self, assessment: Assessment) -> None:
+        """Fills the id for a verdict that quoted its rule and left the id out.
+
+        Observed on a working model: every rule answered correctly, each one
+        quoted word for word, and `rule_id` null on all of them. Nothing
+        downstream reads such a verdict, because the gate matches a verdict to
+        its rule by id. The scenario then reports every outcome unevidenced,
+        which blames the run for an answer it was given.
+        """
+        for verification in assessment.rule_verifications:
+            if verification.rule_id:
+                continue
+            found = self._by_statement.get((verification.rule or "").strip())
+            if found:
+                verification.rule_id = found
+
+    def _any_listed(self, assessment: Assessment) -> bool:
+        """Whether any verdict names a rule this screen was shown."""
+        return any(
+            verification.rule_id in self._asked
+            for verification in assessment.rule_verifications
+        )
 
     def _only_what_was_asked(self, assessment: Assessment) -> None:
         """Drops verdicts naming a rule this screen was never shown.

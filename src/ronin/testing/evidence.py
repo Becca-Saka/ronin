@@ -108,6 +108,23 @@ class SensitiveFinding(BaseModel):
         return self.rendering is Rendering.VALUE
 
 
+Status = Literal[
+    "PASSED",
+    "FAILED",
+    "SKIPPED",
+    "ERROR",
+    "ABORTED",
+    "UNVERIFIED",
+    "UNSUPPORTED",
+]
+"""The words a scenario can end on.
+
+Named because two places hold one of them: the judge that decides it, and the
+report that carries it. A second copy of the list would let one grow a word
+the other refuses.
+"""
+
+
 class QAIssue(BaseModel):
     """Represents a visual, security, or logical issue found during testing."""
     issue_type: str = Field(
@@ -211,15 +228,7 @@ class ScenarioReport(BaseModel):
             "'infrastructure'."
         )
     )
-    status: Literal[
-        "PASSED",
-        "FAILED",
-        "SKIPPED",
-        "ERROR",
-        "ABORTED",
-        "UNVERIFIED",
-        "UNSUPPORTED",
-    ]
+    status: Status
     cause: Optional[str] = Field(
         default=None,
         description=(

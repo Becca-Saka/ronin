@@ -26,3 +26,6 @@ test_models/
 AGENTS.md
 CLAUDE.md
 .claude/
+
+# Eval sweeps: one run of the screen corpus, kept local like any other run
+sweeps/

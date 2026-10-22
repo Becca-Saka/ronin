@@ -312,6 +312,7 @@ from ronin.testing.evidence import (  # noqa: E402,F401
     RuleVerification,
     STATUS_SPELLINGS,
     ScenarioReport,
+    Status,
     SensitiveFinding,
     RunEnvironment,
 )

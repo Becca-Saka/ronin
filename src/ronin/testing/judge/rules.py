@@ -83,6 +83,32 @@ def labelled(rules: Iterable, kind: str) -> List[str]:
     ]
 
 
+def by_statement(expected_outcomes: Iterable, security_rules: Iterable) -> dict:
+    """The id for each rule's exact words.
+
+    A verdict names its rule by the id it was given. Some answers name it by
+    quoting the rule instead, with the id left out. The words are the words
+    this prompt listed, so the id is a lookup and not a guess.
+
+    A text listed twice is dropped rather than resolved. Two rules reading
+    alike cannot be told apart by their words, and settling the wrong one is
+    worse than settling neither.
+    """
+    found: dict = {}
+    twice = set()
+    for kind, listed in ((EXPECTED, expected_outcomes), (SECURITY, security_rules)):
+        for index, rule in enumerate(listed or []):
+            if rule is None:
+                continue
+            text = statement_of(rule).strip()
+            if text in found:
+                twice.add(text)
+            found[text] = rule_id(kind, index)
+    for text in twice:
+        found.pop(text, None)
+    return found
+
+
 def listed_ids(rules: Iterable, kind: str) -> Set[str]:
     """The ids actually put to a judge, blanks excluded.
 
