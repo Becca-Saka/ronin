@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "AI-driven mobile (Android and iOS) end-to-end testing agent"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 keywords = ["testing", "e2e", "mobile", "android", "ios", "appium", "llm", "agent"]
 classifiers = [
     "Development Status :: 3 - Alpha",

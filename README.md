@@ -1,6 +1,6 @@
 # Ronin
 
-Ronin is an AI-powered end-to-end testing agent for Android and iOS apps. Give it a user journey or a single goal and it will inspect the screen, plan actions, control an emulator or simulator through Appium, and verify the result.
+Ronin is an AI-powered end-to-end testing agent for Android and iOS apps. Give it a user journey or a single goal. It reads the screen, plans actions, and drives an emulator or a device through Appium. A separate component judges what the screen then shows.
 
 > Ronin is currently alpha software.
 
@@ -23,7 +23,7 @@ cd ronin
 uv sync --extra vision
 ```
 
-Run the guided setup, then verify your environment:
+Run the guided setup, then check your environment:
 
 ```bash
 uv run ronin setup
@@ -64,22 +64,26 @@ committed. Write a plain value for ordinary data, or give it a `value` and
 too. A `${VAR}` that is not set fails the journey rather than running as a
 blank value.
 
-Values declared as secret are masked by name in the Markdown and JUnit reports,
-the progress file, the logs and the perception scan dumps — all of which show
-`{{password}}` — and the screen regions holding them are blacked out in saved
-screenshots. Screen recordings are **not** redacted; turn recording off for a
-flow whose secrets must not be captured. The agent itself always receives the real values:
-it cannot type a password it was not given, and it cannot audit a rule like "the
-card number must never be shown in plain text" if the card number is hidden from
-it. Both blocks are optional.
+A declared secret is masked by name in everything Ronin writes down. The
+reports, the record, the logs and the scan dumps all show `{{password}}`, and
+the screen regions holding it are blacked out in saved screenshots. **A screen
+recording is not redacted.** A journey that declares a secret keeps no video
+unless you ask for one.
 
-Run it with:
+The agent itself always receives the real value. It cannot type a password it
+was not given. It cannot audit a rule like "the card number must never be
+shown in plain text" if the card number is hidden from it.
+
+There are two ways to run one. Point Ronin at a journey file:
 
 ```bash
 uv run ronin test path/to/journey.yaml --app-path path/to/app.apk
 ```
 
-See [`example/testing_app/ronin.yaml`](example/testing_app/ronin.yaml) for a complete example. One `ronin.yaml` holds the settings and the tests: a workflow owns an app, a device and an environment, and the journeys inside it are the tests. Run it from the directory that holds the file.
+Or keep the settings and the tests in one `ronin.yaml`, which is what a
+project does. A workflow owns an app, a device and an environment, and the
+journeys inside it are the tests. Run it from the directory that holds the
+file. See [`example/testing_app/ronin.yaml`](example/testing_app/ronin.yaml).
 
 ```bash
 cd example/testing_app
@@ -87,22 +91,56 @@ uv run ronin test                           # every workflow
 uv run ronin test --workflow notifications  # one
 ```
 
-Ronin writes Markdown and JUnit reports, LLM usage data, and annotated screenshots to `assets/` by default.
+## What Ronin generates
 
-Generated suites are capped at 10 scenarios. Ronin only generates assertions it
-can currently evidence from screenshots, detected UI text, action outcomes, and
-elapsed execution. Network traffic, HTTP headers, semantic accessibility trees,
-screen readers, focus order, and measured contrast ratios require separate
-specialist tooling and are reported as unsupported if supplied manually.
+A journey declares its **coverage**: which kinds of test to write, and how
+important each one is. Ronin enumerates the cells and asks for one scenario
+per cell.
 
-Scenario results distinguish app failures from harness and evidence failures:
-`FAILED` means an observed app assertion failed; `ERROR` and `ABORTED` identify
-infrastructure or interruption; `UNVERIFIED` means required proof was missing;
-and `UNSUPPORTED` means the runtime lacks the requested evidence source. Only
-`PASSED` counts as verified success. Progress, Markdown, JUnit, and usage files
-are written atomically, with partial Markdown/JUnit checkpoints maintained
-during a run. Values a journey declares as secret are masked by name in
-persisted text and covered in saved screenshots, except screen recordings.
+```yaml
+coverage:
+  - category: functional
+    types: [happy_path, negative]
+    priority: P0
+  - category: security
+    types: [negative]
+    priority: P1
+```
+
+A file that declares no coverage gets one cell: a P0 functional happy path.
+Such a file tells Ronin nothing about the app, so Ronin writes the most
+conservative test it can.
+
+Each cell keeps a stable name, such as `security.negative.0`, so the same
+test is the same test between runs. `ronin lock` writes those scenarios to
+`ronin.lock`. `ronin test --locked` runs the locked scenarios and refuses a
+lock that is missing or out of date, which is what a build should do.
+
+Ronin only writes assertions it can evidence from a screenshot, the detected
+text on it, and what an action did. Network traffic, HTTP headers,
+accessibility trees, screen readers, focus order and measured contrast need
+separate tooling. A scenario that asks for one is reported as unsupported
+rather than guessed at.
+
+## What a verdict means
+
+| Verdict | Meaning |
+|---|---|
+| `PASSED` | Every declared outcome was evidenced on a screen judged without the plan |
+| `FAILED` | The app. A crash, a critical defect, a broken rule, or a security rule violated |
+| `UNVERIFIED` | The walk finished and the proof did not arrive. The cause says whose problem that is |
+| `SKIPPED` | The planner reported that the scenario cannot be carried out here |
+| `UNSUPPORTED` | This target cannot give the scenario the state or the evidence it declared |
+| `ERROR` | Something outside the app failed: a device, a model provider, or Ronin |
+| `ABORTED` | The run was interrupted and the scenario never reached a verdict |
+
+Only `PASSED` is a verified success. `FAILED` is the only verdict that blames
+the app.
+
+Every run writes one `run.json`: the record of what was tested and what each
+model call asked. The Markdown and JUnit reports are views over it. All of
+them are written atomically, and the Markdown and JUnit are checkpointed
+during the run, so an interrupted run still leaves what it reached.
 
 ## Run a single goal
 
@@ -159,6 +197,7 @@ Configuration is resolved in this order: CLI flags, `RONIN_*` environment variab
 | `ronin devices` | List, create, and select devices |
 | `ronin config` | View or change settings |
 | `ronin test <file>` | Generate and run tests from a journey file |
+| `ronin lock` | Write the generated scenarios to `ronin.lock` |
 | `ronin run <goal>` | Drive an app toward a single goal |
 
 Run `uv run ronin <command> --help` for all options. Add `--log-level DEBUG` before the command for detailed logs.
@@ -168,18 +207,32 @@ Run `uv run ronin <command> --help` for all options. Add `--log-level DEBUG` bef
 Install the tooling, then run the checks that CI runs:
 
 ```bash
-uv sync --group dev
-uv run pytest
+uv sync --group dev --extra jev
 uv run ruff check
 uv run python tools/quality_gate.py
-uv run python tools/type_gate.py
+uv run python tools/ste_gate.py
+uv run python tools/emit_schema.py --check
 uv run coverage run -m pytest && uv run coverage report
+uv run python -m tools.eval_gate
+uv run python -m tools.mutation_sweep
 ```
 
-`tools/quality_gate.py` enforces the file-size limit and needs no dependencies.
-Complexity is ruff's `C901`. `tools/type_gate.py` runs Pyright and compares the
-per-file error counts against its baseline.
+The type gate runs in its own job, because Pyright reads imports the other
+checks do not install:
 
-Three places record the existing debt: `tools/quality-baseline.toml`,
-`tools/type-baseline.toml`, and `[tool.ruff.lint.per-file-ignores]`. All three
-are ratchets. Lower an entry when a file improves. Do not add new ones.
+```bash
+uv sync --group dev --extra vision --extra jev
+uv run python tools/type_gate.py
+```
+
+What each one holds:
+
+| Gate | Holds |
+|---|---|
+| `quality_gate.py` | 550 lines per file, tests included. No dependencies |
+| `ste_gate.py` | Controlled language in prose a model or a person under pressure reads |
+| `emit_schema.py --check` | The editor schema matches the models a `ronin.yaml` is read through |
+| `eval_gate.py` | The judging still answers a corpus of labelled cases as it should |
+| `mutation_sweep.py` | Deliberate defects are still caught by something |
+| `type_gate.py` | Pyright, against a per-file baseline |
+
